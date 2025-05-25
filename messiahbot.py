@@ -40,7 +40,5 @@ if __name__ == "__main__":
     else:
         bot.run(token)
 
-with open("/mnt/data/messiahbot.py", "w", encoding="utf-8") as f:
+with open(filename, "r", encoding="utf-8") as f:
     f.write(messiahbot_code)
-
-"/mnt/data/messiahbot.py"
