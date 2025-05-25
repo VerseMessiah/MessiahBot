@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 import json
 from datetime import datetime
-import os
+import io
 
 class ResetServer(commands.Cog):
     def __init__(self, bot):
@@ -21,7 +21,7 @@ class ResetServer(commands.Cog):
             return m.author == ctx.author and m.content.strip().upper() == "CONFIRM"
 
         try:
-            confirmation = await self.bot.wait_for("message", check=check, timeout=30.0)
+            await self.bot.wait_for("message", check=check, timeout=30.0)
         except Exception:
             await ctx.send("❌ Reset cancelled.")
             return
@@ -44,31 +44,39 @@ class ResetServer(commands.Cog):
                         "permissions": role.permissions.value,
                         "position": role.position
                     })
-                    print(f"✅ Exported role: {role.name}")
                 except Exception as e:
                     print(f"❌ Failed to export role {role.name}: {e}")
 
         for channel in guild.channels:
             try:
+                perms = {}
+                for overwrite_target, overwrite in channel.overwrites.items():
+                    if isinstance(overwrite_target, discord.Role):
+                        perms[overwrite_target.name] = {
+                            "view_channel": overwrite.view_channel,
+                            "send_messages": overwrite.send_messages,
+                            "manage_messages": overwrite.manage_messages,
+                            "read_message_history": overwrite.read_message_history
+                        }
+
                 backup["channels"].append({
                     "name": channel.name,
                     "type": str(channel.type),
-                    "category": channel.category.name if channel.category else None
+                    "category": channel.category.name if channel.category else None,
+                    "permissions": perms
                 })
-                print(f"✅ Exported channel: {channel.name}")
             except Exception as e:
                 print(f"❌ Failed to export channel {channel.name}: {e}")
 
-        filename = f"server_backup_{guild.id}.json"
-        filepath = f"/mnt/data/{filename}"
+        filename = f"server_backup_{guild.id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.json"
+        backup_bytes = json.dumps(backup, indent=2).encode("utf-8")
+        backup_file = discord.File(io.BytesIO(backup_bytes), filename=filename)
 
-        try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(backup, f, indent=2)
-            await ctx.send(f"✅ Backup saved: `{filename}`")
-        except Exception as e:
-            await ctx.send(f"❌ Failed to save backup: {e}")
-            return
+        # Find the channel named "papal-planning" or use current if not found
+        upload_channel = discord.utils.get(guild.text_channels, name="papal-planning") or ctx.channel
+        await upload_channel.send(content="🧾 Server backup file:", file=backup_file)
+
+        await ctx.send("🧨 Now resetting roles and channels...")
 
         core_roles = ["@everyone", "Anointed", "Disciple", "Priest", "Messiah", "Pilgrims"]
         core_channels = ["messiahs-commandments"]
@@ -77,14 +85,12 @@ class ResetServer(commands.Cog):
             if channel.name not in core_channels:
                 try:
                     await channel.delete()
-                    print(f"🗑️ Deleted channel: {channel.name}")
                 except Exception as e:
                     print(f"❌ Failed to delete channel {channel.name}: {e}")
 
         for category in guild.categories:
             try:
                 await category.delete()
-                print(f"🗑️ Deleted category: {category.name}")
             except Exception as e:
                 print(f"❌ Failed to delete category {category.name}: {e}")
 
@@ -92,11 +98,10 @@ class ResetServer(commands.Cog):
             if role.name not in core_roles and not role.managed and role != guild.default_role:
                 try:
                     await role.delete()
-                    print(f"🗑️ Deleted role: {role.name}")
                 except Exception as e:
                     print(f"❌ Failed to delete role {role.name}: {e}")
 
-        await ctx.send("✅ Server reset complete. Backup file is ready for download.")
+        await ctx.send("✅ Server reset complete. Backup has been uploaded.")
 
 async def setup(bot):
     await bot.add_cog(ResetServer(bot))
