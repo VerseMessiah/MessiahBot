@@ -10,7 +10,7 @@ class BuildServer(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def buildserver(self, ctx):
         guild = ctx.guild
-        await ctx.send("🛠️ Constructing The Vatican’t... (only missing items will be added)")
+        await ctx.send("🛠️ Constructing The Vatican’t...")
 
         role_colors = {
             "Anointed": discord.Color.from_rgb(173, 216, 230),
@@ -26,23 +26,13 @@ class BuildServer(commands.Cog):
             if role:
                 try:
                     await role.edit(colour=color)
-                    print(f"🎨 Updated role: {role_name}")
-                except Exception as e:
-                    print(f"⚠️ Could not update {role_name}: {e}")
+                except:
+                    pass
             else:
                 await guild.create_role(name=role_name, colour=color)
-                print(f"✅ Created role: {role_name}")
-
-        await ctx.send("📁 Roles created/updated. Now checking channels...")
 
         structure = {
             "📜 Sanctified Entry": ["📖・messiahs-commandments", "🕯️・baptismal-font", "🚪・pilgrim's-gate", "🌈・pick-your-aura"],
-            "🏛️ Messiah's Temple": ["💬・verse-chat", "🖼️・meme-scripture", "📸・altar-selfies", "🎞️・divine-clips", "🎙️ prayer-circle"],
-            "💔 Blessed & Distressed": ["📢・vent-confessional", "🧠・mental-wellness", "🌌・spiritual-gremlin-hours"],
-            "🎮 The Divine Queue": ["🗡️・fortnite-sacrifices", "📜・matchmaking-scrolls", "🕹️・gaymer-grail", "🎮 squad-up"],
-            "🎁 Tithes Before Lives": ["💸・offerings-box", "🎖️・blessed-boosters", "🌟・miracle-shoutouts"],
-            "📚 Scripture & Sound": ["📺・holy-streams", "📖・blasphemous-books", "🎧・hymns-and-bangers"],
-            "🔐 Disciple Sanctum": ["✨・divine-access", "👁️・behind-the-veil", "🛎️・tithe-support"],
             "⚖️ The Ministry of Mayhem": ["🗂️・papal-planning", "📢・divine-decrees", "⛔・banishment-records"]
         }
 
@@ -50,29 +40,27 @@ class BuildServer(commands.Cog):
             cat = discord.utils.get(guild.categories, name=category_name)
             if not cat:
                 cat = await guild.create_category(category_name)
-                print(f"📂 Created category: {category_name}")
 
-            for ch in channels:
-                if discord.utils.get(guild.channels, name=ch):
-                    print(f"⏩ Skipped existing channel: {ch}")
+            for ch_name in channels:
+                existing_ch = discord.utils.get(guild.channels, name=ch_name)
+                if existing_ch:
+                    if existing_ch.category != cat:
+                        await existing_ch.edit(category=cat)
+                        print(f"🔁 Moved {ch_name} to {category_name}")
                     continue
-                try:
-                    if ch == "📖・messiahs-commandments":
-                        await guild.create_text_channel(ch, category=cat)
-                    elif "prayer-circle" in ch or "squad-up" in ch:
-                        await guild.create_voice_channel(ch, category=cat)
-                    elif ch.startswith("📺") or ch.startswith("📖") or ch.startswith("🎧"):
-                        try:
-                            await guild.create_forum_channel(ch, category=cat)
-                        except:
-                            await guild.create_text_channel(ch, category=cat)
-                    else:
-                        await guild.create_text_channel(ch, category=cat)
-                    await asyncio.sleep(0.3)
-                except Exception as e:
-                    print(f"❌ Failed to create {ch}: {e}")
 
-        await ctx.send("🎉 Server setup complete. Only missing items were added.")
+                try:
+                    if ch_name == "📖・messiahs-commandments":
+                        await guild.create_text_channel(ch_name, category=cat)
+                    elif "decrees" in ch_name or "planning" in ch_name:
+                        await guild.create_text_channel(ch_name, category=cat)
+                    elif "banishment" in ch_name:
+                        await guild.create_text_channel(ch_name, category=cat)
+                    await asyncio.sleep(0.2)
+                except Exception as e:
+                    print(f"❌ Could not create or move channel {ch_name}: {e}")
+
+        await ctx.send("✅ Messiah’s infrastructure adjusted. Essentials are in place.")
 
 async def setup(bot):
     await bot.add_cog(BuildServer(bot))
