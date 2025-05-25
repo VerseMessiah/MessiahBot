@@ -39,7 +39,6 @@ if __name__ == "__main__":
         print("❌ DISCORD_BOT_TOKEN is not set.")
     else:
         bot.run(token)
-"""
 
 with open("/mnt/data/messiahbot.py", "w", encoding="utf-8") as f:
     f.write(messiahbot_code)
