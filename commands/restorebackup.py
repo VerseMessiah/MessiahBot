@@ -25,33 +25,39 @@ class RestoreBackup(commands.Cog):
             await ctx.send(f"❌ Failed to read backup file: {e}")
             return
 
-        await ctx.send("📥 Restoring from uploaded backup...")
+        await ctx.send("📥 Restoring from uploaded backup... (skipping existing items)")
 
         guild = ctx.guild
         role_map = {}
 
-        # Rebuild roles
+        # Rebuild roles (skip if already exists)
         for role_data in sorted(backup["roles"], key=lambda r: r["position"]):
             name = role_data["name"]
-            color = discord.Color.from_rgb(*role_data["color"])
-            perms = discord.Permissions(role_data["permissions"])
             existing = discord.utils.get(guild.roles, name=name)
             if not existing:
+                color = discord.Color.from_rgb(*role_data["color"])
+                perms = discord.Permissions(role_data["permissions"])
                 new_role = await guild.create_role(name=name, colour=color, permissions=perms)
                 role_map[name] = new_role
             else:
                 role_map[name] = existing
 
-        # Rebuild categories
+        # Rebuild categories (skip if already exists)
         category_map = {}
         for ch in backup["channels"]:
             if ch["type"] == "ChannelType.category":
-                cat = await guild.create_category(ch["name"])
-                category_map[ch["name"]] = cat
+                if not discord.utils.get(guild.categories, name=ch["name"]):
+                    cat = await guild.create_category(ch["name"])
+                    category_map[ch["name"]] = cat
+                else:
+                    category_map[ch["name"]] = discord.utils.get(guild.categories, name=ch["name"])
 
-        # Rebuild channels
+        # Rebuild channels (skip if already exists)
         for ch in backup["channels"]:
             if ch["type"] == "ChannelType.category":
+                continue
+            if discord.utils.get(guild.channels, name=ch["name"]):
+                print(f"⏩ Skipped existing channel: {ch['name']}")
                 continue
             cat = category_map.get(ch["category"])
             try:
@@ -67,7 +73,7 @@ class RestoreBackup(commands.Cog):
             except Exception as e:
                 print(f"❌ Failed to create channel {ch['name']}: {e}")
 
-        await ctx.send("✅ Restore complete!")
+        await ctx.send("✅ Restore complete! Only missing items were created.")
 
 async def setup(bot):
     await bot.add_cog(RestoreBackup(bot))
