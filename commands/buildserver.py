@@ -86,10 +86,7 @@ class BuildServer(commands.Cog):
         max_lines = 25
         for i in range(0, len(log_lines), max_lines):
             chunk = log_lines[i:i + max_lines]
-            await ctx.send("```
-" + "
-".join(chunk) + "
-```")
+            await ctx.send("```" + "".join(chunk) + "```")
 
         await ctx.send("✅ The Vatican’t is fully anointed and ready to slay.")
 
