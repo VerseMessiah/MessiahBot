@@ -14,7 +14,10 @@ class ReactionRoles(commands.Cog):
             "Aries", "Taurus", "Gemini", "Cancer", "Leo",
             "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn",
             "Aquarius", "Pisces", "PC", "Mac", "Playstation", "Xbox", "Switch",
-            "iOS", "Android"
+            "iOS", "Android", "ey/em/eir", "he/him/his", "hey/hem/heir", "she/her/hers",
+            "they/them/their", "xe/xem/xyr", "ze/zir/zir", "North America", "South America",
+            "Europe", "Asia", "Africa", "Australia", "Straight", "Gay", "Lesbian", "Bisexual",
+            "Asexual", "Pansexual", "Cisgender", "Non-binary", "Transgender"
         ]
 
         created = []
