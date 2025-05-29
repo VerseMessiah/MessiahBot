@@ -21,7 +21,7 @@ bot = commands.Bot(
 async def event_ready():
     print(f"✅ Twitch bot connected as {BOT_NICK}!")
 
-async def load_commands():
+def load_commands():
     loaded = set()
     commands_dir = "./commands_tw"
     for filename in os.listdir(commands_dir):
@@ -34,10 +34,5 @@ async def load_commands():
             except Exception as e:
                 print(f"❌ Failed to load cog {filename}: {e}")
 
-
-async def main():
-    await load_commands()
-    await bot.run()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    load_commands()
+    bot.run()
