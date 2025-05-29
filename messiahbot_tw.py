@@ -21,7 +21,9 @@ bot = commands.Bot(
 async def event_ready():
     print(f"✅ Twitch bot connected as {BOT_NICK}!")
 
-for filename in os.listdir(commands_dir):
+async def load_commands():
+    commands_dir = "./commands_tw"
+    for filename in os.listdir(commands_dir):
     if filename.endswith(".py") and filename not in loaded:
         try:
             module = importlib.import_module(f"commands_tw.{filename[:-3]}")
@@ -30,6 +32,7 @@ for filename in os.listdir(commands_dir):
             loaded.add(filename)
         except Exception as e:
             print(f"❌ Failed to load cog {filename}: {e}")
+
 
 async def main():
     await load_commands()
