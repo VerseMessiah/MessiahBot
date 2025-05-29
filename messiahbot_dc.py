@@ -17,7 +17,7 @@ async def on_ready():
 # Load each cog once from /commands
 @bot.event
 async def setup_hook():
-    commands_dir = "commands"
+    commands_dir = "commands_dc"
     loaded = set()
 
     for filename in os.listdir(commands_dir):
