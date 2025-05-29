@@ -22,6 +22,7 @@ async def event_ready():
     print(f"✅ Twitch bot connected as {BOT_NICK}!")
 
 async def load_commands():
+    lodaded = set()
     commands_dir = "./commands_tw"
     for filename in os.listdir(commands_dir):
         if filename.endswith(".py") and filename not in loaded:
