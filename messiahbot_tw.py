@@ -24,14 +24,14 @@ async def event_ready():
 async def load_commands():
     commands_dir = "./commands_tw"
     for filename in os.listdir(commands_dir):
-    if filename.endswith(".py") and filename not in loaded:
-        try:
-            module = importlib.import_module(f"commands_tw.{filename[:-3]}")
-            bot.add_cog(module.Pupperz(bot))  # <- no await here
-            print(f"✅ Loaded cog: {filename}")
-            loaded.add(filename)
-        except Exception as e:
-            print(f"❌ Failed to load cog {filename}: {e}")
+        if filename.endswith(".py") and filename not in loaded:
+            try:
+                module = importlib.import_module(f"commands_tw.{filename[:-3]}")
+                bot.add_cog(module.Pupperz(bot))  # <- no await here
+                print(f"✅ Loaded cog: {filename}")
+                loaded.add(filename)
+            except Exception as e:
+                print(f"❌ Failed to load cog {filename}: {e}")
 
 
 async def main():
