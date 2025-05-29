@@ -34,5 +34,5 @@ def load_commands():
             except Exception as e:
                 print(f"❌ Failed to load cog {filename}: {e}")
 
-    load_commands()
-    bot.run()
+load_commands()
+bot.run()
