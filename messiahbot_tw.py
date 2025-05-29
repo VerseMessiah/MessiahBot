@@ -29,8 +29,8 @@ async def load_commands():
                 await bot.add_cog(module.Pupperz(bot))
 
 async def main():
-    await load_extensions()
+    await load_commands()
     await bot.run()
 
-asyncio.run(main())
-
+if __name__ == "__main__":
+    asyncio.run(main())
