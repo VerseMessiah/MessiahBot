@@ -1,2 +1,3 @@
+twitchi==2.7.0
 discord.py 
 python-dotenv 
