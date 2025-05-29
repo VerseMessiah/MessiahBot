@@ -1,6 +1,7 @@
 # messiah_twitchbot.py
 import os
 import asyncio
+import importlib
 from twitchio.ext import commands
 from dotenv import load_dotenv
 
