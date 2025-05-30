@@ -5,7 +5,6 @@ import importlib
 from twitchio.ext import commands
 from dotenv import load_dotenv
 import threading
-from overlay_server import app
 
 load_dotenv()
 
@@ -36,11 +35,5 @@ def load_commands():
             except Exception as e:
                 print(f"❌ Failed to load cog {filename}: {e}")
 
-def run_overlay():
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-
-if __name__ == "__main__":
-    threading.Thread(target=run_overlay).start()  # Start Flask server
-    load_commands()
-    bot.run()
+load_commands()
+bot.run()

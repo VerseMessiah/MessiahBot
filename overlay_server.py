@@ -16,3 +16,8 @@ def pupperz_overlay():
 
 def update_overlay(new_url):
     latest_url["image"] = new_url
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    print(f"✅ Starting Flask server on port {port}")
+    app.run(host="0.0.0.0", port=port)
