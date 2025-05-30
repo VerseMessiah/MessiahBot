@@ -1,8 +1,9 @@
 import os
 from flask import Flask, render_template_string
+from flask import request
 
 app = Flask(__name__)
-latest_url = {"image": "https://i.imgur.com/default.png"}
+latest_url = {"image": None}
 
 @app.route("/pupperz-overlay")
 def pupperz_overlay():
@@ -15,8 +16,15 @@ def pupperz_overlay():
     </html>
     """, url=latest_url["image"])
 
-def update_overlay(new_url):
-    latest_url["image"] = new_url
+@app.route("/update-pupper", methods=["POST"])
+def update_pupper():
+    data = request.get_json()
+    new_url = data.get("url")
+    if new_url:
+        latest_url["image"] = new_url
+        print(f"✅ Overlay updated with: {new_url}")
+        return {"status": "success"}, 200
+    return {"status": "no url provided"}, 400
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
