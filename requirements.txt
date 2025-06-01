@@ -1,4 +1,4 @@
-Flask
+Flask>=2.0.0
 twitchio==2.7.0
 discord.py>=2.0.0 
 python-dotenv 
