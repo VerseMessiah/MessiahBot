@@ -35,14 +35,18 @@ async def setup_hook():
     loaded = set()
 
     for filename in os.listdir(commands_dir):
-        if filename.endswith(".py") and filename not in loaded:
-            try:
-                module_path = f"{commands_dir}.{filename[:-3]}"
-                await bot.load_extension(module_path)
-                print(f"✅ Loaded cog: {filename}")
-                loaded.add(filename)
-            except Exception as e:
-                print(f"❌ Failed to load cog {filename}: {e}")
+        # Only consider .py files, and skip __init__.py
+        if not filename.endswith(".py") or filename == "__init__.py":
+            continue
+
+        module_path = f"{commands_dir}.{filename[:-3]}"
+        try:
+            await bot.load_extension(module_path)
+            print(f"✅ Loaded cog: {filename}")
+            loaded.add(filename)
+        except Exception as e:
+            # Don’t raise—just log and keep going
+            print(f"⚠️ Skipped loading {filename}: {e}")
 
     print("[setup_hook] Finished loading cogs.")
 
