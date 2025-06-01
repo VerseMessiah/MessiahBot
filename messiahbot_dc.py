@@ -33,6 +33,9 @@ async def setup_hook():
             except Exception as e:
                 print(f"❌ Failed to load cog {filename}: {e}")
 
+                
+    print("[setup_hook] Finished loading cogs.")
+
 # Start Flask dashboard in a separate thread
 def run_flask():
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
