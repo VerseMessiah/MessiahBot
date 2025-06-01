@@ -2,7 +2,10 @@ import discord
 from discord.ext import commands
 import os
 import importlib.util
+import threading
+from dashboard_dc.app import app as flask_app  # ← Flask dashboard import
 
+# Set up Discord bot
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -14,7 +17,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     print(f"🕊️ {bot.user} is live.")
 
-# Load each cog once from /commands
+# Load cogs from /commands_dc
 @bot.event
 async def setup_hook():
     commands_dir = "commands_dc"
@@ -30,15 +33,20 @@ async def setup_hook():
             except Exception as e:
                 print(f"❌ Failed to load cog {filename}: {e}")
 
-# Run the bot with token from .env or Render env
+# Start Flask dashboard in a separate thread
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
 if __name__ == "__main__":
     import dotenv
     dotenv.load_dotenv()
     token = os.getenv("DISCORD_BOT_TOKEN")
+
+    # Start Flask first
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.start()
+
     if not token:
         print("❌ DISCORD_BOT_TOKEN is not set.")
     else:
         bot.run(token)
-
-with open(filename, "r", encoding="utf-8") as f:
-    f.write(messiahbot_code)
