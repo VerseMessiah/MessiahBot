@@ -5,6 +5,12 @@ import threading
 from dashboard_dc.app import app as flask_app
 import dotenv
 
+# ===== DEBUG LINES =====
+print("DEBUG: Current working directory:", os.getcwd())
+print("DEBUG: Files in cwd →", os.listdir(os.getcwd()))
+print("DEBUG: .env exists?", os.path.exists(".env"))
+# ===== END DEBUG =====
+
 # Load environment variables from .env
 dotenv.load_dotenv()
 print("DEBUG: After load_dotenv, DISCORD_BOT_TOKEN =", os.getenv("DISCORD_BOT_TOKEN"))
@@ -54,5 +60,6 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Run the bot
+    # Run the Discord bot
     bot.run(token)
+
