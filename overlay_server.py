@@ -10,11 +10,42 @@ def pupperz_overlay():
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <body style="margin:0;background:transparent;">
-      <img src="{{ url }}" style="max-width: 100vw; max-height: 100vh;" />
+    <head>
+        <style>
+            body {
+                margin: 0;
+                background: transparent;
+        }
+            #pupper {
+                max-width: 100vw;
+                max-height: 100vh;
+                opacity: 1;
+                transition: opacity 1s ease;
+        }
+        .hidden {
+        opacity: 0;
+        }
+    </style>
+    <script>
+        window.onload = function() {
+            const pupper = document.getElementById("pupper");
+            if (pupper && pupper.src) {
+                setTimeout(() => {
+                    pupper.classList.add("hidden");
+            }, 5000); // Hide after 5 seconds
+        }
+        };
+    </script>
+    </head>
+    <body>
+        {% if url %}
+            <img id="pupper" src="{{ url }}" />
+        {% endif %}
     </body>
     </html>
     """, url=latest_url["image"])
+
+
 
 @app.route("/update-pupper", methods=["POST"])
 def update_pupper():
