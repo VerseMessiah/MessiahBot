@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Channel Description Manager</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>📝 Channel Description Manager</h1>
+  <form method="POST">
+    {% for channel, desc in config.items() %}
+      <div class="channel-block">
+        <h2>#{{ channel }}</h2>
+        <textarea name="{{ channel }}">{{ desc }}</textarea>
+      </div>
+    {% endfor %}
+    <button type="submit">💾 Save Changes</button>
+  </form>
+</body>
+</html>
