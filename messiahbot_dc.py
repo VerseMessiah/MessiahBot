@@ -1,9 +1,12 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
 import threading
 from dashboard_dc.app import app as flask_app
 import dotenv
+import datetime
+import asyncio
+from twitch_api import TwitchAPI
 
 # ===== DEBUG LINES =====
 print("DEBUG: Current working directory:", os.getcwd())
@@ -23,9 +26,54 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+twitch = TwitchAPI()
+DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))  # Add this to your .env
+
+# Sync Twitch schedule on a daily timer (9am server time)
+@tasks.loop(time=datetime.time(hour=9, minute=0))
+async def sync_schedule_daily():
+    await sync_schedule()
+    print("✅ Daily Twitch schedule sync complete.")
+
+# Manual command to trigger sync
+@bot.command()
+async def syncschedule(ctx):
+    await sync_schedule()
+    await ctx.send("✅ Twitch schedule synced to Discord!")
+
+async def sync_schedule():
+    try:
+        segments = await twitch.get_schedule()
+        guild = discord.utils.get(bot.guilds, id=DISCORD_GUILD_ID)
+
+        for seg in segments:
+            start_time = datetime.datetime.fromisoformat(seg["start_time"].replace("Z", "+00:00"))
+            title = seg["title"]
+            location = f"https://twitch.tv/{os.getenv('TWITCH_USERNAME')}"
+            description = seg.get("canceled_until", None)
+            if description:
+                continue  # Skip cancelled segments
+
+            # Optional: Check for duplicates before creating new event
+
+            await guild.create_scheduled_event(
+                name=title,
+                start_time=start_time,
+                end_time=None,
+                description="Stream synced from Twitch schedule",
+                location=location,
+                privacy_level=discord.PrivacyLevel.guild_only,
+                entity_type=discord.EntityType.external
+            )
+
+        print("✅ Finished syncing Twitch segments to Discord.")
+    except Exception as e:
+        print(f"❌ Error syncing schedule: {e}")
+
 @bot.event
 async def on_ready():
     print(f"🕊️ {bot.user} is live.")
+    sync_schedule_daily.start()
 
 # Load cogs from /commands_dc
 @bot.event
@@ -35,7 +83,6 @@ async def setup_hook():
     loaded = set()
 
     for filename in os.listdir(commands_dir):
-        # Only consider .py files, and skip __init__.py
         if not filename.endswith(".py") or filename == "__init__.py":
             continue
 
@@ -45,7 +92,6 @@ async def setup_hook():
             print(f"✅ Loaded cog: {filename}")
             loaded.add(filename)
         except Exception as e:
-            # Don’t raise—just log and keep going
             print(f"⚠️ Skipped loading {filename}: {e}")
 
     print("[setup_hook] Finished loading cogs.")
@@ -60,10 +106,7 @@ if __name__ == "__main__":
         print("❌ DISCORD_BOT_TOKEN is not set. Exiting.")
         exit(1)
 
-    # Start the Flask server
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Run the Discord bot
     bot.run(token)
-
