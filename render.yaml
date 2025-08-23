@@ -3,7 +3,7 @@ services:
     name: messiahbot-dashboard
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.dashboard_messiah
+    startCommand: gunicorn "bot.dashboard_messiah:app" --bind 0.0.0.0:$PORT
     plan: starter
     autoDeploy: true
     envVars:
