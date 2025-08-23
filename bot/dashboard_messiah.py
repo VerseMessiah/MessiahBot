@@ -14,6 +14,21 @@ if DATABASE_URL:
 
 app = Flask(__name__)
 
+@app.get("/dbcheck")
+def dbcheck():
+    ok_env = bool(os.getenv("DATABASE_URL"))
+    try:
+        import psycopg2  # type: ignore
+        ok_driver = True
+    except Exception:
+        ok_driver = False
+    status = {
+        "database_url_present": ok_env,
+        "psycopg2_available": ok_driver,
+    }
+    code = 200 if (ok_env and ok_driver) else 500
+    return status, code
+
 def _db_exec(q: str, p=()):
     if not (_psyco_ok and DATABASE_URL):
         raise RuntimeError("DATABASE_URL not configured or psycopg2 not available")
