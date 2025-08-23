@@ -1,0 +1,414 @@
+{
+  "mode": "update",
+  "roles": [
+    {
+      "old_name": "Entertainer",
+      "name": "Entertainer",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Insta Notis",
+      "name": "Insta Notis",
+      "color": "#000000"
+    },
+    {
+      "old_name": "TikTok Notis",
+      "name": "TikTok Notis",
+      "color": "#000000"
+    },
+    {
+      "old_name": "PickeCrew Lives",
+      "name": "PickeCrew Lives",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Pickeman Lives",
+      "name": "Pickeman Lives",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Announcements",
+      "name": "Announcements",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Competitive",
+      "name": "Competitive",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Ranked",
+      "name": "Ranked",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Rocket Racing",
+      "name": "Rocket Racing",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Festival",
+      "name": "Festival",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Blitz",
+      "name": "Blitz",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Reload Zero Build",
+      "name": "Reload Zero Build",
+      "color": "#000000"
+    },
+    {
+      "old_name": "Reload",
+      "name": "Reload",
+      "color": "#000000"
+    },
+    {
+      "old_name": "OG Zero Build",
+      "name": "OG Zero Build",
+      "color": "#000000"
+    },
+    {
+      "old_name": "OG",
+      "name": "OG",
+      "color": "#000000"
+    },
+    {
+      "old_name": "BR Zero Build",
+      "name": "BR Zero Build",
+      "color": "#0056d6"
+    },
+    {
+      "old_name": "BR Build",
+      "name": "BR Build",
+      "color": "#ff69b3"
+    },
+    {
+      "old_name": "Verified",
+      "name": "Verified",
+      "color": "#63f58c"
+    },
+    {
+      "old_name": "Crewmate",
+      "name": "Crewmate",
+      "color": "#0060c7"
+    },
+    {
+      "old_name": "Mod",
+      "name": "Mod",
+      "color": "#0056d6"
+    },
+    {
+      "old_name": "PickePolice",
+      "name": "PickePolice",
+      "color": "#ff69b3"
+    },
+    {
+      "old_name": "Picke",
+      "name": "Picke",
+      "color": "#f9c80e"
+    },
+    {
+      "old_name": "QOTD Bot",
+      "name": "QOTD Bot",
+      "color": "#000000"
+    },
+    {
+      "old_name": "MEE6",
+      "name": "MEE6",
+      "color": "#000000"
+    },
+    {
+      "old_name": "LupinBot",
+      "name": "LupinBot",
+      "color": "#000000"
+    }
+  ],
+  "categories": [
+    {
+      "old_name": "Crew Recruits",
+      "name": "Crew Recruits"
+    },
+    {
+      "old_name": "It's Me! Hi!",
+      "name": "It's Me! Hi!"
+    },
+    {
+      "old_name": "MrPickeman Live",
+      "name": "MrPickeman Live"
+    },
+    {
+      "old_name": "PickeCrew Lounge",
+      "name": "PickeCrew Lounge"
+    },
+    {
+      "old_name": "PickeCrew Gametime",
+      "name": "PickeCrew Gametime"
+    },
+    {
+      "old_name": "Events",
+      "name": "Events"
+    },
+    {
+      "old_name": "Mod Zone",
+      "name": "Mod Zone"
+    }
+  ],
+  "channels": [
+    {
+      "old_name": "join-the-crew-verify",
+      "name": "join-the-crew-verify",
+      "type": "text",
+      "category": "Crew Recruits",
+      "desc": ""
+    },
+    {
+      "old_name": "crew-manual-rules",
+      "name": "crew-manual-rules",
+      "type": "text",
+      "category": "Crew Recruits",
+      "desc": "Rules Channel"
+    },
+    {
+      "old_name": "crew-assignments-roles",
+      "name": "crew-assignments-roles",
+      "type": "text",
+      "category": "Crew Recruits",
+      "desc": "Role Picker"
+    },
+    {
+      "old_name": "intros-and-selfies",
+      "name": "intros-and-selfies",
+      "type": "text",
+      "category": "It's Me! Hi!",
+      "desc": ""
+    },
+    {
+      "old_name": "show-and-tell",
+      "name": "show-and-tell",
+      "type": "text",
+      "category": "It's Me! Hi!",
+      "desc": ""
+    },
+    {
+      "old_name": "stream-updates",
+      "name": "stream-updates",
+      "type": "text",
+      "category": "MrPickeman Live",
+      "desc": ""
+    },
+    {
+      "old_name": "stream-chat",
+      "name": "stream-chat",
+      "type": "text",
+      "category": "MrPickeman Live",
+      "desc": ""
+    },
+    {
+      "old_name": "vods-clips-and-vids",
+      "name": "vods-clips-and-vids",
+      "type": "text",
+      "category": "MrPickeman Live",
+      "desc": ""
+    },
+    {
+      "old_name": "intro-song-poll",
+      "name": "intro-song-poll",
+      "type": "text",
+      "category": "MrPickeman Live",
+      "desc": ""
+    },
+    {
+      "old_name": "stream-suggestions",
+      "name": "stream-suggestions",
+      "type": "text",
+      "category": "MrPickeman Live",
+      "desc": "Suggestions for the stream - activities, games, challenges, etc."
+    },
+    {
+      "old_name": "qotd",
+      "name": "qotd",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": "Question of the day."
+    },
+    {
+      "old_name": "book-club",
+      "name": "book-club",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "pet-royale",
+      "name": "pet-royale",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "foodie-corner",
+      "name": "foodie-corner",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "popcorn-time",
+      "name": "popcorn-time",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "music-hub",
+      "name": "music-hub",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "birthday-besties",
+      "name": "birthday-besties",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "pickeman-pals",
+      "name": "pickeman-pals",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": "Self-promo, notis for Crewmates"
+    },
+    {
+      "old_name": "meme-dump",
+      "name": "meme-dump",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "unleash-the-beast-nsfw",
+      "name": "unleash-the-beast-nsfw",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": "NSFW content - 18 and up only."
+    },
+    {
+      "old_name": "squad-up",
+      "name": "squad-up",
+      "type": "text",
+      "category": "PickeCrew Gametime",
+      "desc": ""
+    },
+    {
+      "old_name": "giveaways",
+      "name": "giveaways",
+      "type": "text",
+      "category": "Events",
+      "desc": ""
+    },
+    {
+      "old_name": "bingo-nights",
+      "name": "bingo-nights",
+      "type": "text",
+      "category": "Events",
+      "desc": ""
+    },
+    {
+      "old_name": "mod-chat",
+      "name": "mod-chat",
+      "type": "text",
+      "category": "Mod Zone",
+      "desc": "Mod only chat."
+    },
+    {
+      "old_name": "mod-logs-tickets",
+      "name": "mod-logs-tickets",
+      "type": "text",
+      "category": "Mod Zone",
+      "desc": ""
+    },
+    {
+      "old_name": "bot-setup",
+      "name": "bot-setup",
+      "type": "text",
+      "category": "Mod Zone",
+      "desc": ""
+    },
+    {
+      "old_name": "unleash-the-beast-nsfw",
+      "name": "unleash-the-beast-nsfw",
+      "type": "text",
+      "category": "PickeCrew Lounge",
+      "desc": "NSFW content - 18 and up only."
+    },
+    {
+      "old_name": "stream-vc",
+      "name": "stream-vc",
+      "type": "voice",
+      "category": "MrPickeman Live",
+      "desc": ""
+    },
+    {
+      "old_name": "offline-chit-chat",
+      "name": "offline-chit-chat",
+      "type": "voice",
+      "category": "PickeCrew Lounge",
+      "desc": ""
+    },
+    {
+      "old_name": "crew-comms-1",
+      "name": "crew-comms-1",
+      "type": "voice",
+      "category": "PickeCrew Gametime",
+      "desc": ""
+    },
+    {
+      "old_name": "crew-comms-2",
+      "name": "crew-comms-2",
+      "type": "voice",
+      "category": "PickeCrew Gametime",
+      "desc": ""
+    },
+    {
+      "old_name": "crew-comms-3",
+      "name": "crew-comms-3",
+      "type": "voice",
+      "category": "PickeCrew Gametime",
+      "desc": ""
+    },
+    {
+      "old_name": "crew-comms-4",
+      "name": "crew-comms-4",
+      "type": "voice",
+      "category": "PickeCrew Gametime",
+      "desc": ""
+    },
+    {
+      "old_name": "crew-comms-5",
+      "name": "crew-comms-5",
+      "type": "voice",
+      "category": "PickeCrew Gametime",
+      "desc": ""
+    },
+    {
+      "old_name": "watch-party",
+      "name": "watch-party",
+      "type": "voice",
+      "category": "Events",
+      "desc": ""
+    },
+    {
+      "old_name": "mod-vc",
+      "name": "mod-vc",
+      "type": "voice",
+      "category": "Mod Zone",
+      "desc": ""
+    }
+  ]
+}

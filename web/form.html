@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Server Layout Form</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #f9f9f9;
+    }
+    fieldset {
+      margin-bottom: 2rem;
+      padding: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+    }
+    legend {
+      font-weight: bold;
+      padding: 0 10px;
+    }
+    input, select, button {
+      margin: 0.5rem 0.5rem 0.5rem 0;
+      padding: 0.4rem;
+    }
+    button.remove {
+      background: #e74c3c;
+      color: white;
+      border: none;
+      padding: 0.4rem 0.6rem;
+      cursor: pointer;
+    }
+    button.add {
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      margin-top: 0.5rem;
+    }
+    button[type="submit"] {
+      background: #2ecc71;
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      cursor: pointer;
+      display: block;
+      margin: 2rem auto 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧱 Submit Server Layout</h1>
+  <form id="layoutForm">
+
+    <!-- ✅ Guild ID field -->
+    <fieldset>
+      <legend>🔑 Guild ID</legend>
+      <input type="text" id="guild_id" placeholder="Enter your Discord Server (Guild) ID" required>
+    </fieldset>
+
+    <fieldset>
+      <legend>🧭 Build Mode</legend>
+      <label><input type="radio" name="mode" value="build" checked> Full Build</label>
+      <label><input type="radio" name="mode" value="update"> Update Only</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>🧑‍🤝‍🧑 Roles</legend>
+      <div id="roles">
+        <div>
+          <input type="text" name="role_name" placeholder="Role Name">
+          <input type="color" name="role_color" value="#000000">
+          <button type="button" class="remove" onclick="this.parentElement.remove()">Remove</button>
+        </div>
+      </div>
+      <button type="button" class="add" onclick="addRole()">Add Role</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>📁 Categories</legend>
+      <div id="categories">
+        <div>
+          <input type="text" name="category" placeholder="Category Name">
+          <button type="button" class="remove" onclick="this.parentElement.remove()">Remove</button>
+        </div>
+      </div>
+      <button type="button" class="add" onclick="addCategory()">Add Category</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>💬 Channels</legend>
+      <div id="channels">
+        <div>
+          <input type="text" name="channel_name" placeholder="Channel Name">
+          <select name="channel_type">
+            <option value="text">Text</option>
+            <option value="voice">Voice</option>
+            <option value="forum">Forum</option>
+          </select>
+          <input type="text" name="channel_category" placeholder="Parent Category">
+          <button type="button" class="remove" onclick="this.parentElement.remove()">Remove</button>
+        </div>
+      </div>
+      <button type="button" class="add" onclick="addChannel()">Add Channel</button>
+    </fieldset>
+
+    <button type="submit">📤 Submit Layout</button>
+  </form>
+
+  <script>
+    function addRole() {
+      const container = document.getElementById("roles");
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <input type="text" name="role_name" placeholder="Role Name">
+        <input type="color" name="role_color" value="#000000">
+        <button type="button" class="remove" onclick="this.parentElement.remove()">Remove</button>
+      `;
+      container.appendChild(div);
+    }
+
+    function addCategory() {
+      const container = document.getElementById("categories");
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <input type="text" name="category" placeholder="Category Name">
+        <button type="button" class="remove" onclick="this.parentElement.remove()">Remove</button>
+      `;
+      container.appendChild(div);
+    }
+
+    function addChannel() {
+      const container = document.getElementById("channels");
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <input type="text" name="channel_name" placeholder="Channel Name">
+        <select name="channel_type">
+          <option value="text">Text</option>
+          <option value="voice">Voice</option>
+          <option value="forum">Forum</option>
+        </select>
+        <input type="text" name="channel_category" placeholder="Parent Category">
+        <button type="button" class="remove" onclick="this.parentElement.remove()">Remove</button>
+      `;
+      container.appendChild(div);
+    }
+
+    document.getElementById("layoutForm").addEventListener("submit", async function(e) {
+      e.preventDefault();
+
+      const form = e.target;
+      const guildId = document.getElementById("guild_id").value.trim();
+      if (!guildId) {
+        alert("Please enter a Guild ID.");
+        return;
+      }
+
+      const roles = [];
+      const categories = [];
+      const channels = [];
+
+      const mode = form.mode.value;
+
+      const roleNames = form.querySelectorAll('input[name="role_name"]');
+      const roleColors = form.querySelectorAll('input[name="role_color"]');
+      for (let i = 0; i < roleNames.length; i++) {
+        if (roleNames[i].value)
+          roles.push({ name: roleNames[i].value, color: roleColors[i].value });
+      }
+
+      const catInputs = form.querySelectorAll('input[name="category"]');
+      catInputs.forEach(input => {
+        if (input.value) categories.push(input.value);
+      });
+
+      const chanNames = form.querySelectorAll('input[name="channel_name"]');
+      const chanTypes = form.querySelectorAll('select[name="channel_type"]');
+      const chanCats = form.querySelectorAll('input[name="channel_category"]');
+      for (let i = 0; i < chanNames.length; i++) {
+        if (chanNames[i].value)
+          channels.push({
+            name: chanNames[i].value,
+            type: chanTypes[i].value,
+            category: chanCats[i].value
+          });
+      }
+
+      const payload = { mode, roles, categories, channels };
+
+      const res = await fetch(`/api/layout/${guildId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      alert(data.message || (data.ok ? "Saved!" : "Error submitting layout"));
+    });
+  </script>
+</body>
+</html>
