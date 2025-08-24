@@ -24,4 +24,8 @@ typing_extensions==4.14.1
 Werkzeug==3.1.3
 yarl==1.20.1
 psycopg[binary]==3.2.9
+<<<<<<< HEAD
 gunicorn==21.2.0
+=======
+gunicorn==21.2.0
+>>>>>>> d02cf2f5f25663398a762823cfc05504f8eb32ce
