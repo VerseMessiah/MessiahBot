@@ -1,94 +1,150 @@
 # bot/dashboard_messiah.py
-import os, json
+import os
+import json
 from flask import Flask, request, jsonify, render_template_string
 
-# Optional Postgres (recommended in production)
+# --- Config / DB driver detection ---
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-import os, json
-from flask import Flask, request, jsonify, render_template_string
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Use psycopg v3
-_psyco_ok = False
+_psycopg_ok = False
 try:
-    import psycopg
+    import psycopg  # psycopg v3
     from psycopg.rows import dict_row
-    _psyco_ok = True
+    _psycopg_ok = True
 except Exception:
-    _psyco_ok = False
+    _psycopg_ok = False
 
 app = Flask(__name__)
 
+# --- Helpers ---------------------------------------------------------------
+
 def _db_exec(q: str, p=()):
-    if not (_psyco_ok and DATABASE_URL):
+    """
+    Execute a statement (INSERT/UPDATE/DDL). Requires psycopg v3 and DATABASE_URL.
+    """
+    if not (_psycopg_ok and DATABASE_URL):
         raise RuntimeError("DATABASE_URL not configured or psycopg not available")
+    # autocommit=True for simple one-off statements
     with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute(q, p)
 
 def _db_one(q: str, p=()):
-    if not (_psyco_ok and DATABASE_URL):
+    """
+    Fetch a single row as a dict. Returns None if DB not configured/available or no row.
+    """
+    if not (_psycopg_ok and DATABASE_URL):
         return None
     with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(q, p)
             return cur.fetchone()
 
+# --- Probe / utility routes ------------------------------------------------
+
+@app.get("/ping")
+def ping():
+    return "pong", 200, {"Content-Type": "text/plain"}
+
+@app.get("/routes")
+def routes():
+    return {"routes": sorted([str(r.rule) for r in app.url_map.iter_rules()])}
+
 @app.get("/dbcheck")
 def dbcheck():
-    ok_env = bool(os.getenv("DATABASE_URL"))
+    """
+    Quick probe to verify the web service sees DATABASE_URL and has psycopg v3 installed.
+    """
+    ok_env = bool(DATABASE_URL)
     try:
-        import psycopg  # v3
+        import psycopg  # noqa: F401  (re-check at runtime)
         ok_driver = True
+        driver_version = psycopg.__version__
     except Exception:
         ok_driver = False
-    status = {"database_url_present": ok_env, "psycopg_available": ok_driver}
-    code = 200 if (ok_env and ok_driver) else 500
+        driver_version = None
+
+    # Optional: try a trivial connection if both look OK
+    ok_connect = False
+    if ok_env and ok_driver:
+        try:
+            with psycopg.connect(DATABASE_URL, sslmode="require") as _conn:
+                ok_connect = True
+        except Exception:
+            ok_connect = False
+
+    status = {
+        "database_url_present": ok_env,
+        "psycopg_available": ok_driver,
+        "psycopg_version": driver_version,
+        "can_connect": ok_connect,
+    }
+    code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
 
+# --- API routes ------------------------------------------------------------
 
 @app.post("/api/layout/<guild_id>")
-def save_layout(guild_id):
-    """Save a new version of the layout payload for a guild."""
-    if not (_psyco_ok and DATABASE_URL):
+def save_layout(guild_id: str):
+    """
+    Save a NEW versioned layout payload for the given guild_id.
+    Body: JSON with keys: mode, roles[], categories[], channels[]
+    """
+    if not (_psycopg_ok and DATABASE_URL):
         return jsonify({"ok": False, "error": "Database not configured"}), 500
 
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"ok": False, "error": "No JSON payload"}), 400
 
-    row = _db_one("SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s", (guild_id,))
-    version = (row or {}).get("v", 1)
+    # Next version number
+    row = _db_one(
+        "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM builder_layouts WHERE guild_id = %s",
+        (guild_id,),
+    )
+    version = int((row or {}).get("v", 1))
 
     _db_exec(
-        "INSERT INTO builder_layouts(guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
+        "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s, %s, %s::jsonb)",
         (guild_id, version, json.dumps(data)),
     )
-    return jsonify({"ok": True, "version": int(version)})
+    return jsonify({"ok": True, "version": version})
 
 @app.get("/api/layout/<guild_id>/latest")
-def get_latest_layout(guild_id):
-    """Fetch latest saved layout for a guild."""
-    if not (_psyco_ok and DATABASE_URL):
+def get_latest_layout(guild_id: str):
+    """
+    Return the latest saved layout for the guild_id.
+    """
+    if not (_psycopg_ok and DATABASE_URL):
         return jsonify({"ok": False, "error": "Database not configured"}), 500
 
     row = _db_one(
-        "SELECT version, payload FROM builder_layouts WHERE guild_id=%s ORDER BY version DESC LIMIT 1",
+        "SELECT version, payload FROM builder_layouts WHERE guild_id = %s ORDER BY version DESC LIMIT 1",
         (guild_id,),
     )
     if not row:
         return jsonify({"ok": False, "error": "No layout"}), 404
     return jsonify({"ok": True, "version": int(row["version"]), "payload": row["payload"]})
 
-# Simple built-in form for quick testing
+# --- Simple form UI (for manual testing) -----------------------------------
+
 _FORM_HTML = r"""
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>MessiahBot — Submit Server Layout</title></head>
+<head>
+  <meta charset="utf-8">
+  <title>MessiahBot — Submit Server Layout</title>
+  <style>body{font-family:sans-serif;max-width:900px;margin:24px auto;padding:0 12px}</style>
+</head>
 <body>
   <h1>🧱 MessiahBot — Submit Server Layout</h1>
+  <p>Enter your Guild ID, define roles/categories/channels, and submit.</p>
+
+  <p>
+    <a href="/dbcheck" target="_blank">/dbcheck</a> •
+    <a href="/routes" target="_blank">/routes</a>
+  </p>
+
   <form id="layoutForm">
     <label>Guild ID <input type="text" id="guild_id" required></label>
 
@@ -116,12 +172,15 @@ _FORM_HTML = r"""
   <script>
     function addRole(){
       const d=document.createElement('div');
-      d.innerHTML=`<input placeholder="Role" name="role_name"> <input type="color" name="role_color" value="#000000"> <button type=button onclick="this.parentElement.remove()">x</button>`;
+      d.innerHTML=`<input placeholder="Role" name="role_name">
+                   <input type="color" name="role_color" value="#000000">
+                   <button type=button onclick="this.parentElement.remove()">x</button>`;
       document.getElementById('roles').appendChild(d);
     }
     function addCat(){
       const d=document.createElement('div');
-      d.innerHTML=`<input placeholder="Category" name="category"> <button type=button onclick="this.parentElement.remove()">x</button>`;
+      d.innerHTML=`<input placeholder="Category" name="category">
+                   <button type=button onclick="this.parentElement.remove()">x</button>`;
       document.getElementById('cats').appendChild(d);
     }
     function addChan(){
@@ -141,10 +200,10 @@ _FORM_HTML = r"""
       const roles=[], cats=[], chans=[];
       const mode=f.mode.value;
 
-      const rnames=f.querySelectorAll('input[name="role_name"]');
-      const rcolors=f.querySelectorAll('input[name="role_color"]');
-      for(let i=0;i<rnames.length;i++){
-        if(rnames[i].value){ roles.push({name:rnames[i].value, color:rcolors[i].value}); }
+      const rn=f.querySelectorAll('input[name="role_name"]');
+      const rc=f.querySelectorAll('input[name="role_color"]');
+      for(let i=0;i<rn.length;i++){
+        if(rn[i].value){ roles.push({name: rn[i].value, color: rc[i].value}); }
       }
 
       f.querySelectorAll('input[name="category"]').forEach(el=>{ if(el.value) cats.push(el.value); });
@@ -153,11 +212,10 @@ _FORM_HTML = r"""
       const ct=f.querySelectorAll('select[name="channel_type"]');
       const cc=f.querySelectorAll('input[name="channel_category"]');
       for(let i=0;i<cn.length;i++){
-        if(cn[i].value){ chans.push({ name:cn[i].value, type:ct[i].value, category:cc[i].value }); }
+        if(cn[i].value){ chans.push({ name: cn[i].value, type: ct[i].value, category: cc[i].value }); }
       }
 
       const payload={ mode, roles, categories: cats, channels: chans };
-
       const res = await fetch(`/api/layout/${gid}`, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -171,9 +229,21 @@ _FORM_HTML = r"""
 </html>
 """
 
+@app.get("/")
+def index():
+    return (
+        '<h1>MessiahBot Dashboard</h1>'
+        '<p>Go to <a href="/form">/form</a> to submit a layout.</p>',
+        200,
+        {"Content-Type": "text/html"},
+    )
+
 @app.get("/form")
 def form():
     return render_template_string(_FORM_HTML)
 
+# --- Entrypoint ------------------------------------------------------------
+
 if __name__ == "__main__":
+    # Local dev runner. On Render, prefer: gunicorn "bot.dashboard_messiah:app" --bind 0.0.0.0:$PORT
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5050)))
