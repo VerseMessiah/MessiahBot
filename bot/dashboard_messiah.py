@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify, render_template_string
 
 # --- Config / DB driver detection ---
 DATABASE_URL = os.getenv("DATABASE_URL")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # <-- needed to read live server via REST
 
 _psycopg_ok = False
 try:
@@ -34,11 +35,19 @@ def _db_one(q: str, p=()):
             return cur.fetchone()
 
 def _json_equal(a, b) -> bool:
-    """Stable compare two JSON-like objects."""
     try:
         return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
     except Exception:
         return False
+
+def _discord_headers():
+    if not DISCORD_BOT_TOKEN:
+        raise RuntimeError("DISCORD_BOT_TOKEN not set on web service")
+    return {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "User-Agent": "MessiahBotDashboard (https://example, 1.0)",
+        "Content-Type": "application/json",
+    }
 
 # --- Probe / utility routes ------------------------------------------------
 
@@ -74,11 +83,91 @@ def dbcheck():
         "psycopg_available": ok_driver,
         "psycopg_version": driver_version,
         "can_connect": ok_connect,
+        "has_discord_bot_token": bool(DISCORD_BOT_TOKEN),
     }
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
 
-# --- API routes ------------------------------------------------------------
+# --- NEW: Live snapshot from Discord REST ---------------------------------
+
+@app.get("/api/live_layout/<guild_id>")
+def live_layout(guild_id: str):
+    """
+    Build a layout from the current live Discord server using the REST API.
+    Requires DISCORD_BOT_TOKEN and that the bot is in the guild.
+    """
+    try:
+        import requests
+    except Exception:
+        return jsonify({"ok": False, "error": "Python 'requests' not installed; add requests to requirements.txt"}), 500
+
+    if not DISCORD_BOT_TOKEN:
+        return jsonify({"ok": False, "error": "DISCORD_BOT_TOKEN not set on web service"}), 500
+
+    base = "https://discord.com/api/v10"
+    headers = _discord_headers()
+
+    # roles
+    r_roles = requests.get(f"{base}/guilds/{guild_id}/roles", headers=headers, timeout=20)
+    if r_roles.status_code == 403:
+        return jsonify({"ok": False, "error": "Forbidden: bot lacks permission or is not in this guild"}), 403
+    if r_roles.status_code == 404:
+        return jsonify({"ok": False, "error": "Guild not found (check Guild ID)"}), 404
+    if r_roles.status_code >= 400:
+        return jsonify({"ok": False, "error": f"Discord roles error {r_roles.status_code}: {r_roles.text}"}), 502
+    roles_json = r_roles.json()
+
+    # channels
+    r_channels = requests.get(f"{base}/guilds/{guild_id}/channels", headers=headers, timeout=20)
+    if r_channels.status_code >= 400:
+        return jsonify({"ok": False, "error": f"Discord channels error {r_channels.status_code}: {r_channels.text}"}), 502
+    channels_json = r_channels.json()
+
+    # Convert to our schema
+    # Skip @everyone and managed roles (like integrations)
+    roles = []
+    for r in roles_json:
+        if r.get("managed"):
+            continue
+        if r.get("name") == "@everyone":
+            continue
+        color_int = r.get("color") or 0
+        roles.append({"name": r.get("name", ""), "color": f"#{color_int:06x}"})
+
+    # Channels: types → 0=text, 2=voice, 4=category, 15=forum
+    categories = [c["name"] for c in channels_json if c.get("type") == 4]
+    # Build a map id->name for parent category lookup
+    cat_map = {c["id"]: c["name"] for c in channels_json if c.get("type") == 4}
+
+    chans = []
+    # Sort by (parent category position then channel position) approximately:
+    # Discord REST doesn't include positions for categories in one call on all clients,
+    # but usually 'position' is present. We'll sort by type then by 'position'.
+    def pos(x): return x.get("position", 0)
+    channels_sorted = sorted(channels_json, key=pos)
+
+    for ch in channels_sorted:
+        t = ch.get("type")
+        name = ch.get("name", "")
+        parent_id = ch.get("parent_id")
+        parent_name = cat_map.get(parent_id, "") if parent_id else ""
+        if t == 0:   # text
+            chans.append({"name": name, "type": "text", "category": parent_name})
+        elif t == 2: # voice
+            chans.append({"name": name, "type": "voice", "category": parent_name})
+        elif t == 15:  # forum
+            chans.append({"name": name, "type": "forum", "category": parent_name})
+        # categories (type 4) are handled in categories list
+
+    payload = {
+        "mode": "update",
+        "roles": roles,
+        "categories": categories,
+        "channels": chans
+    }
+    return jsonify({"ok": True, "payload": payload})
+
+# --- API routes (DB-backed) -----------------------------------------------
 
 @app.post("/api/layout/<guild_id>")
 def save_layout(guild_id: str):
@@ -94,17 +183,13 @@ def save_layout(guild_id: str):
     if not incoming:
         return jsonify({"ok": False, "error": "No JSON payload"}), 400
 
-    # Fetch latest to compare
     latest = _db_one(
         "SELECT version, payload FROM builder_layouts WHERE guild_id = %s ORDER BY version DESC LIMIT 1",
         (guild_id,),
     )
-
     if latest and _json_equal(incoming, latest["payload"]):
-        # No change — return current version, mark no_change
         return jsonify({"ok": True, "version": int(latest["version"]), "no_change": True})
 
-    # Compute next version
     row = _db_one(
         "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM builder_layouts WHERE guild_id = %s",
         (guild_id,),
@@ -127,7 +212,7 @@ def get_latest_layout(guild_id: str):
         return jsonify({"ok": False, "error": "No layout"}), 404
     return jsonify({"ok": True, "version": int(row["version"]), "payload": row["payload"]})
 
-# --- Simple form UI (for manual testing) -----------------------------------
+# --- Form UI ---------------------------------------------------------------
 
 _FORM_HTML = r"""
 <!DOCTYPE html>
@@ -143,7 +228,7 @@ _FORM_HTML = r"""
 </head>
 <body>
   <h1>🧱 MessiahBot — Submit Server Layout</h1>
-  <p>Enter your Guild ID, load the latest layout (optional), edit, then <strong>Save Layout</strong>.</p>
+  <p>Enter your Guild ID, then you can <strong>Load From Live Server</strong> or <strong>Load Latest From DB</strong>, edit, and <strong>Save Layout</strong>.</p>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
@@ -153,8 +238,10 @@ _FORM_HTML = r"""
   <form id="layoutForm">
     <label>Guild ID <input type="text" id="guild_id" required></label>
 
-    <!-- Load from DB -->
-    <p><button type="button" id="loadLatestBtn">Load Latest From DB</button></p>
+    <p>
+      <button type="button" id="loadLiveBtn">Load From Live Server</button>
+      <button type="button" id="loadLatestBtn">Load Latest From DB</button>
+    </p>
 
     <fieldset>
       <legend>Mode</legend>
@@ -247,7 +334,22 @@ _FORM_HTML = r"""
       const data = await res.json();
       if (!data.ok) { alert(data.error || 'No layout'); return; }
       const p = data.payload || {};
+      hydrateForm(p);
+      alert(`Loaded version ${data.version} from DB`);
+    }
 
+    // NEW: Load from live Discord server
+    async function loadLive() {
+      const gid = document.getElementById('guild_id').value.trim();
+      if (!gid) { alert('Enter Guild ID'); return; }
+      const res = await fetch(`/api/live_layout/${gid}`);
+      const data = await res.json();
+      if (!data.ok) { alert(data.error || 'Failed to load live server'); return; }
+      hydrateForm(data.payload || {});
+      alert('Loaded from live server');
+    }
+
+    function hydrateForm(p) {
       const mode = (p.mode || 'build');
       const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
       if (radio) radio.checked = true;
@@ -263,12 +365,12 @@ _FORM_HTML = r"""
       clearSection('chans');
       (p.channels || []).forEach(ch => addChanRow(ch.name || "", (ch.type||'text'), ch.category || ""));
       if ((p.channels || []).length === 0) addChanRow();
-
-      alert(`Loaded version ${data.version}`);
     }
-    document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
 
-    // Save layout (explicit)
+    document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
+    document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
+
+    // Save layout
     async function saveLayout(){
       const form = document.getElementById('layoutForm');
       const gid = document.getElementById('guild_id').value.trim();
