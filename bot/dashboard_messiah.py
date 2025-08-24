@@ -4,52 +4,50 @@ from flask import Flask, request, jsonify, render_template_string
 
 # Optional Postgres (recommended in production)
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+import os, json
+from flask import Flask, request, jsonify, render_template_string
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Use psycopg v3
 _psyco_ok = False
-if DATABASE_URL:
-    try:
-        import psycopg2, psycopg2.extras  # type: ignore
-        _psyco_ok = True
-    except Exception:
-        _psyco_ok = False
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+    _psyco_ok = True
+except Exception:
+    _psyco_ok = False
 
 app = Flask(__name__)
+
+def _db_exec(q: str, p=()):
+    if not (_psyco_ok and DATABASE_URL):
+        raise RuntimeError("DATABASE_URL not configured or psycopg not available")
+    with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(q, p)
+
+def _db_one(q: str, p=()):
+    if not (_psyco_ok and DATABASE_URL):
+        return None
+    with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(q, p)
+            return cur.fetchone()
 
 @app.get("/dbcheck")
 def dbcheck():
     ok_env = bool(os.getenv("DATABASE_URL"))
     try:
-        import psycopg2  # type: ignore
+        import psycopg  # v3
         ok_driver = True
     except Exception:
         ok_driver = False
-    status = {
-        "database_url_present": ok_env,
-        "psycopg2_available": ok_driver,
-    }
+    status = {"database_url_present": ok_env, "psycopg_available": ok_driver}
     code = 200 if (ok_env and ok_driver) else 500
     return status, code
 
-def _db_exec(q: str, p=()):
-    if not (_psyco_ok and DATABASE_URL):
-        raise RuntimeError("DATABASE_URL not configured or psycopg2 not available")
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    try:
-        cur = conn.cursor()
-        cur.execute(q, p)
-        conn.commit()
-    finally:
-        conn.close()
-
-def _db_one(q: str, p=()):
-    if not (_psyco_ok and DATABASE_URL):
-        return None
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(q, p)
-        return cur.fetchone()
-    finally:
-        conn.close()
 
 @app.post("/api/layout/<guild_id>")
 def save_layout(guild_id):

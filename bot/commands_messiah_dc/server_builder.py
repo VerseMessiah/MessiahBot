@@ -9,33 +9,27 @@ from discord import app_commands
 # Optional Postgres support (used if DATABASE_URL is set)
 DATABASE_URL = os.getenv("DATABASE_URL")
 _psyco_ok = False
-if DATABASE_URL:
-    try:
-        import psycopg2, psycopg2.extras  # type: ignore
-        _psyco_ok = True
-    except Exception:
-        _psyco_ok = False
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+    _psyco_ok = True
+except Exception:
+    _psyco_ok = False
 
-def _db_one(q: str, params=()):
-    if not (_psyco_ok and DATABASE_URL):
-        return None
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(q, params)
-        return cur.fetchone()
-    finally:
-        conn.close()
-
-def _load_layout_for_guild(guild_id: int) -> Optional[Dict[str, Any]]:
-    """Try DB first, then fallback to local latest_config.json."""
+def _load_layout_for_guild(guild_id: int):
     if _psyco_ok and DATABASE_URL:
-        row = _db_one(
-            "SELECT payload FROM builder_layouts WHERE guild_id=%s ORDER BY version DESC LIMIT 1",
-            (str(guild_id),),
-        )
-        if row and "payload" in row and row["payload"]:
-            return row["payload"]  # row already comes as dict via RealDictCursor (JSONB -> dict)
+        with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT payload FROM builder_layouts WHERE guild_id=%s ORDER BY version DESC LIMIT 1",
+                    (str(guild_id),),
+                )
+                row = cur.fetchone()
+                if row and row.get("payload"):
+                    return row["payload"]
+    # fallback to local file...
+
+        
     # Fallback for local testing
     path = os.getenv("LOCAL_LATEST_CONFIG", "latest_config.json")
     if os.path.exists(path):
