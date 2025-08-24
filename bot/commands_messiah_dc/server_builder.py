@@ -166,6 +166,84 @@ async def _apply_channel_renames(guild: discord.Guild, renames: List[dict]):
             except Exception as e:
                 print(f"[Messiah] channel rename failed {getattr(ch,'name',src)} -> {dst}: {e}")
 
+async def _delete_roles(guild: discord.Guild, names: list[str]):
+    wanted = { _norm(n) for n in (names or []) if n }
+    for r in guild.roles:
+        if r.is_default() or r.managed:
+            continue
+        if _norm(r.name) in wanted:
+            try:
+                await r.delete(reason="Messiah explicit delete (layout)")
+            except Exception as e:
+                print(f"[Messiah] role delete failed {r.name}: {e}")
+
+async def _delete_channels(guild: discord.Guild, items: list[dict]):
+    # items: [{name,type,category}]
+    def cat_name(ch): return ch.category.name if getattr(ch, "category", None) else ""
+    wanted = set()
+    for it in (items or []):
+        nm = _norm(it.get("name",""))
+        tp = (it.get("type") or "text").lower()
+        cat = _norm(it.get("category",""))
+        if nm:
+            wanted.add((nm,tp,cat))
+
+    # text
+    for ch in list(guild.text_channels):
+        key = (_norm(ch.name), "text", _norm(cat_name(ch)))
+        if key in wanted:
+            try:
+                await ch.delete(reason="Messiah explicit delete (layout)")
+            except Exception as e:
+                print(f"[Messiah] text delete failed {ch.name}: {e}")
+    # voice
+    for ch in list(guild.voice_channels):
+        key = (_norm(ch.name), "voice", _norm(cat_name(ch)))
+        if key in wanted:
+            try:
+                await ch.delete(reason="Messiah explicit delete (layout)")
+            except Exception as e:
+                print(f"[Messiah] voice delete failed {ch.name}: {e}")
+    # forums
+    try:
+        forums = list(guild.forums)
+    except Exception:
+        forums = []
+    for ch in forums:
+        key = (_norm(ch.name), "forum", _norm(cat_name(ch)))
+        if key in wanted:
+            try:
+                await ch.delete(reason="Messiah explicit delete (layout)")
+            except Exception as e:
+                print(f"[Messiah] forum delete failed {ch.name}: {e}")
+
+async def _delete_categories_with_reassign(guild: discord.Guild, items: list[dict]):
+    # items: [{"name": str, "reassign_to": str|""}]
+    # move channels out, then delete the category
+    # Build a name->category map for quick lookup
+    by_name = { _norm(c.name): c for c in guild.categories }
+    for it in (items or []):
+        name = _norm(it.get("name",""))
+        if not name: continue
+        cat = by_name.get(name)
+        if not cat: continue
+
+        target_name = _norm(it.get("reassign_to",""))
+        target_cat = by_name.get(target_name) if target_name else None
+
+        # Move channels if any
+        for ch in list(cat.channels):
+            try:
+                await ch.edit(category=target_cat, reason="Messiah reassign before category delete")
+            except Exception as e:
+                print(f"[Messiah] failed to reassign channel {getattr(ch,'name','?')} from {cat.name}: {e}")
+
+        # Delete the now-empty category
+        try:
+            await cat.delete(reason="Messiah explicit delete (layout)")
+        except Exception as e:
+            print(f"[Messiah] category delete failed {cat.name}: {e}")
+
 
 # -------------------------
 # PRUNE helpers (module-level, so they can be called from commands)
@@ -254,6 +332,13 @@ class ServerBuilder(commands.Cog):
 
         # Apply layout (create/update/move)
         await self._apply_layout(interaction.guild, layout, update_only=False)
+
+        # Explicit deletions (safe order): channels -> categories (with reassign) -> roles
+        dels = (layout.get("deletions") or {})
+        await _delete_channels(interaction.guild, dels.get("channels") or [])
+        await _delete_categories_with_reassign(interaction.guild, dels.get("categories") or [])
+        await _delete_roles(interaction.guild, dels.get("roles") or [])
+
 
         await interaction.followup.send("✅ Build complete.", ephemeral=True)
 
