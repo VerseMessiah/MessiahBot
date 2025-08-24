@@ -1,31 +1,50 @@
 # bot/messiahbot_dc.py
 import os
+import asyncio
 import discord
 from discord.ext import commands
-from discord import app_commands
 from dotenv import load_dotenv
 
 load_dotenv()
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
+# Intents
 INTENTS = discord.Intents.default()
 INTENTS.guilds = True
-INTENTS.members = True  # needed for some operations (nicknames, etc.)
+INTENTS.members = True                   # some ops need this
+INTENTS.guild_scheduled_events = True    # needed for Discord Events sync
 
 class MessiahBot(commands.Bot):
+    def __init__(self):
+        super().__init__(
+            command_prefix="!",  # only used for legacy cmds; slash commands are primary
+            intents=INTENTS,
+            help_command=None,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
     async def setup_hook(self):
-        # Load cogs
-        await self.load_extension("bot.commands_messiah_dc.server_builder")
-        # Sync slash commands
+        # Load cogs (server builder + schedule sync)
+        extensions = [
+            "bot.commands_messiah_dc.server_builder",
+            "bot.commands_messiah_dc.schedule_sync",   # <-- make sure this file exists
+        ]
+        for ext in extensions:
+            try:
+                await self.load_extension(ext)
+                print(f"✅ Loaded extension: {ext}")
+            except Exception as e:
+                print(f"❌ Failed to load {ext}: {type(e).__name__}: {e}")
+
+        # Sync slash commands globally
         try:
             await self.tree.sync()
             print("✅ Slash commands synced")
         except Exception as e:
             print("❌ Slash sync error:", e)
 
-bot = MessiahBot(command_prefix="!", intents=INTENTS)
+bot = MessiahBot()
 
-# somewhere central (e.g., in messiahbot_dc.py after creating bot)
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: Exception):
     print(f"[Messiah] app command error: {type(error).__name__}: {error}")
@@ -45,4 +64,5 @@ if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
         raise SystemExit("❌ Missing DISCORD_BOT_TOKEN")
     bot.run(DISCORD_BOT_TOKEN)
+
 
