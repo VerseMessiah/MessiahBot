@@ -148,6 +148,9 @@ _FORM_HTML = r"""
   <form id="layoutForm">
     <label>Guild ID <input type="text" id="guild_id" required></label>
 
+    <!-- ✅ NEW: Load latest from DB -->
+    <p><button type="button" id="loadLatestBtn">Load Latest From DB</button></p>
+
     <fieldset>
       <legend>Mode</legend>
       <label><input type="radio" name="mode" value="build" checked> Build</label>
@@ -170,6 +173,7 @@ _FORM_HTML = r"""
   </form>
 
   <script>
+    // Existing add* helpers
     function addRole(){
       const d=document.createElement('div');
       d.innerHTML=`<input placeholder="Role" name="role_name">
@@ -191,6 +195,71 @@ _FORM_HTML = r"""
                    <button type=button onclick="this.parentElement.remove()">x</button>`;
       document.getElementById('chans').appendChild(d);
     }
+
+    // ✅ NEW: Prefill helpers + loader
+    function clearSection(id) {
+      const el = document.getElementById(id);
+      while (el.firstChild) el.removeChild(el.firstChild);
+    }
+    function addRoleRow(name = "", color = "#000000") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="Role" name="role_name" value="${name}">
+                     <input type="color" name="role_color" value="${color || '#000000'}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('roles').appendChild(d);
+    }
+    function addCatRow(name = "") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="Category" name="category" value="${name}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('cats').appendChild(d);
+    }
+    function addChanRow(name = "", type = "text", category = "") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="Channel" name="channel_name" value="${name}">
+                     <select name="channel_type">
+                       <option ${type==='text'?'selected':''}>text</option>
+                       <option ${type==='voice'?'selected':''}>voice</option>
+                       <option ${type==='forum'?'selected':''}>forum</option>
+                     </select>
+                     <input placeholder="Parent Category" name="channel_category" value="${category}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('chans').appendChild(d);
+    }
+
+    async function loadLatest() {
+      const gid = document.getElementById('guild_id').value.trim();
+      if (!gid) { alert('Enter Guild ID'); return; }
+      const res = await fetch(`/api/layout/${gid}/latest`);
+      const data = await res.json();
+      if (!data.ok) { alert(data.error || 'No layout'); return; }
+      const p = data.payload || {};
+
+      // Mode
+      const mode = (p.mode || 'build');
+      const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
+      if (radio) radio.checked = true;
+
+      // Roles
+      clearSection('roles');
+      (p.roles || []).forEach(r => addRoleRow(r.name || "", r.color || "#000000"));
+      if ((p.roles || []).length === 0) addRoleRow();
+
+      // Categories
+      clearSection('cats');
+      (p.categories || []).forEach(c => addCatRow(c));
+      if ((p.categories || []).length === 0) addCatRow();
+
+      // Channels
+      clearSection('chans');
+      (p.channels || []).forEach(ch => addChanRow(ch.name || "", (ch.type||'text'), ch.category || ""));
+      if ((p.channels || []).length === 0) addChanRow();
+
+      alert(`Loaded version ${data.version}`);
+    }
+    document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
+
+    // Existing submit handler
     document.getElementById('layoutForm').addEventListener('submit', async (e)=>{
       e.preventDefault();
       const f=e.target;
@@ -228,7 +297,6 @@ _FORM_HTML = r"""
 </body>
 </html>
 """
-
 @app.get("/")
 def index():
     return (

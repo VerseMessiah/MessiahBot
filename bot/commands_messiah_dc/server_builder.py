@@ -68,6 +68,44 @@ def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChanne
     nl = name.lower()
     return next((c for c in guild.forums if c.name.lower() == nl), None)
 
+def _db_exec(q: str, params=()):
+    if not (_psyco_ok and DATABASE_URL):
+        raise RuntimeError("DATABASE_URL not configured or psycopg not available")
+    with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(q, params)
+
+def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
+    """Build a layout dict from the live guild."""
+    # Roles: skip @everyone and managed integration roles
+    roles = []
+    for r in sorted(guild.roles, key=lambda x: x.position, reverse=True):
+        if r.is_default() or r.managed:
+            continue
+        roles.append({"name": r.name, "color": f"#{r.colour.value:06x}"})
+
+    # Categories in display order
+    categories = [c.name for c in sorted(guild.categories, key=lambda x: x.position)]
+
+    # Channels with type + parent category
+    channels = []
+    # text
+    for ch in sorted(guild.text_channels, key=lambda x: (x.category.position if x.category else -1, x.position)):
+        channels.append({"name": ch.name, "type": "text", "category": ch.category.name if ch.category else ""})
+    # voice
+    for ch in sorted(guild.voice_channels, key=lambda x: (x.category.position if x.category else -1, x.position)):
+        channels.append({"name": ch.name, "type": "voice", "category": ch.category.name if ch.category else ""})
+    # forums (if available)
+    try:
+        forums = list(guild.forums)
+    except Exception:
+        forums = []
+    for ch in sorted(forums, key=lambda x: (x.category.position if x.category else -1, getattr(x, "position", 0))):
+        channels.append({"name": ch.name, "type": "forum", "category": ch.category.name if ch.category else ""})
+
+    return {"mode": "update", "roles": roles, "categories": categories, "channels": channels}
+
+
 class ServerBuilder(commands.Cog):
     """MessiahBot: build/update server from form JSON (roles/categories/channels)."""
 
@@ -95,6 +133,33 @@ class ServerBuilder(commands.Cog):
             return
         await self._apply_layout(interaction.guild, layout, update_only=True)
         await interaction.followup.send("✅ Update complete.", ephemeral=True)
+
+    @app_commands.command(name="snapshot_layout", description="Messiah: Save current server structure as a new layout version")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def snapshot_layout(self, interaction: discord.Interaction):
+        if not (_psyco_ok and DATABASE_URL):
+            await interaction.response.send_message("❌ Database not configured on worker.", ephemeral=True)
+            return
+
+        await interaction.response.send_message("📸 Snapshotting current server…", ephemeral=True)
+        layout = _snapshot_guild(interaction.guild)
+
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
+                    (str(interaction.guild.id),),
+                )
+                ver = int((cur.fetchone() or {}).get("v", 1))
+                cur.execute(
+                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
+                    (str(interaction.guild.id), ver, json.dumps(layout)),
+                )
+
+        await interaction.followup.send(
+            f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Latest From DB** to edit.",
+            ephemeral=True
+        )
 
     async def _apply_layout(self, guild: discord.Guild, layout: Dict[str, Any], update_only: bool):
         """
