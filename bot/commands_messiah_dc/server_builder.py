@@ -77,6 +77,51 @@ def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChanne
     except Exception:
         return None
 
+def _filtered_for_upsert(layout: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of layout with items marked for explicit deletion removed,
+    so upsert doesn't recreate them."""
+    out = {
+        "mode": layout.get("mode"),
+        "roles": list(layout.get("roles") or []),
+        "categories": list(layout.get("categories") or []),
+        "channels": list(layout.get("channels") or []),
+        "renames": layout.get("renames") or {},
+        "deletions": layout.get("deletions") or {},
+        "prune": layout.get("prune") or {},
+    }
+
+    dels = out["deletions"]
+    # Roles: remove by name
+    del_role_names = { _norm(n) for n in (dels.get("roles") or []) if n }
+    if del_role_names:
+        out["roles"] = [r for r in out["roles"] if _norm(r.get("name")) not in del_role_names]
+
+    # Categories: remove by name
+    del_cat_names = { _norm(d.get("name","")) for d in (dels.get("categories") or []) if d.get("name") }
+    if del_cat_names:
+        out["categories"] = [c for c in out["categories"] if _norm(c) not in del_cat_names]
+        # Also remove channels whose parent category is being deleted (they’ll be handled by delete + reassign)
+        out["channels"] = [ch for ch in out["channels"] if _norm(ch.get("category")) not in del_cat_names]
+
+    # Channels: remove by (name,type,category)
+    del_chan_keys = set()
+    for d in (dels.get("channels") or []):
+        nm = _norm(d.get("name",""))
+        tp = (d.get("type") or "text").lower()
+        cat = _norm(d.get("category",""))
+        if nm:
+            del_chan_keys.add((nm,tp,cat))
+
+    if del_chan_keys:
+        kept = []
+        for ch in out["channels"]:
+            key = (_norm(ch.get("name","")), (ch.get("type") or "text").lower(), _norm(ch.get("category","")))
+            if key not in del_chan_keys:
+                kept.append(ch)
+        out["channels"] = kept
+
+    return out
+
 def _db_exec(q: str, params=()):
     if not (_psyco_ok and DATABASE_URL):
         raise RuntimeError("DATABASE_URL not configured or psycopg not available")
@@ -330,15 +375,37 @@ class ServerBuilder(commands.Cog):
         await _apply_category_renames(interaction.guild, ren.get("categories") or [])
         await _apply_channel_renames(interaction.guild, ren.get("channels") or [])
 
-        # Apply layout (create/update/move)
-        await self._apply_layout(interaction.guild, layout, update_only=False)
-
         # Explicit deletions (safe order): channels -> categories (with reassign) -> roles
         dels = (layout.get("deletions") or {})
         await _delete_channels(interaction.guild, dels.get("channels") or [])
         await _delete_categories_with_reassign(interaction.guild, dels.get("categories") or [])
         await _delete_roles(interaction.guild, dels.get("roles") or [])
 
+        # UPSERT with a filtered layout that excludes anything you just deleted
+        filtered = _filtered_for_upsert(layout)
+        await self._apply_layout(interaction.guild, filtered, update_only=True)
+
+        # Apply layout (create/update/move)
+        await self._apply_layout(interaction.guild, layout, update_only=False)
+
+        # OPTIONAL: global prune of anything else not listed
+        prune = (layout.get("prune") or {})
+        if prune.get("roles"):
+            wanted_roles = { _norm(r.get("name","")) for r in (filtered.get("roles") or []) if r.get("name") }
+        await _prune_roles(interaction.guild, wanted_roles)
+
+        if prune.get("categories"):
+            wanted_cats = { _norm(n) for n in (filtered.get("categories") or []) if n }
+        await _prune_categories(interaction.guild, wanted_cats)
+
+        if prune.get("channels"):
+            wanted_triplets = set()
+            for ch in (filtered.get("channels") or []):
+                nm = _norm(ch.get("name",""))
+                tp = (ch.get("type") or "text").lower()
+                cat = _norm(ch.get("category",""))
+                if nm: wanted_triplets.add((nm,tp,cat))
+            await _prune_channels(interaction.guild, wanted_triplets)
 
         await interaction.followup.send("✅ Build complete.", ephemeral=True)
 

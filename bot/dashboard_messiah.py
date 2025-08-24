@@ -228,6 +228,10 @@ _FORM_HTML = r"""
 
     <h3>Danger Zone</h3>
     <p class="small">Per-item controls below let you mark deletions or renames. If you delete a category that still has channels, you must choose a reassignment category.</p>
+    <p class="small"><strong>Global prune (optional):</strong> delete anything in the server that is <em>not</em> listed in this layout.</p>
+    <label><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
+    <label><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
+    <label><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
 
     <p><button type="button" id="saveBtn">Save Layout</button></p>
   </form>
