@@ -409,61 +409,81 @@ class ServerBuilder(commands.Cog):
     @app_commands.command(name="update_server", description="Messiah: Update server to match latest saved layout")
     @app_commands.checks.has_permissions(administrator=True)
     async def update_server(self, interaction: discord.Interaction):
+        # Send an immediate ephemeral response so the token is valid
         await interaction.response.send_message("🔧 Messiah applying **update**…", ephemeral=True)
 
-        layout = _load_layout_for_guild(interaction.guild.id)
-        if not layout:
-            await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
-            return
+        ok = False
+        err_txt = None
+        try:
+            layout = _load_layout_for_guild(interaction.guild.id)
+            if not layout:
+                await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
+                return
 
-        print("[Messiah] update_server: START guild=", interaction.guild.id)
-        print("[Messiah] update_server: layout keys:", list((layout or {}).keys()))
-        print("[Messiah] update_server: renames:", (layout or {}).get("renames"))
-        print("[Messiah] update_server: deletions:", (layout or {}).get("deletions"))
-        print("[Messiah] update_server: prune:", (layout or {}).get("prune"))
+            print("[Messiah] update_server: START guild=", interaction.guild.id)
+            print("[Messiah] update_server: layout keys:", list((layout or {}).keys()))
+            print("[Messiah] update_server: renames:", (layout or {}).get("renames"))
+            print("[Messiah] update_server: deletions:", (layout or {}).get("deletions"))
+            print("[Messiah] update_server: prune:", (layout or {}).get("prune"))
 
-        # 1) RENAMES (first)
-        print("[Messiah] stage: RENAMES")
-        ren = (layout or {}).get("renames", {})
-        await _apply_role_renames(interaction.guild, ren.get("roles") or [])
-        await _apply_category_renames(interaction.guild, ren.get("categories") or [])
-        await _apply_channel_renames(interaction.guild, ren.get("channels") or [])
+            # 1) RENAMES (first)
+            print("[Messiah] stage: RENAMES")
+            ren = (layout or {}).get("renames", {})
+            await _apply_role_renames(interaction.guild, ren.get("roles") or [])
+            await _apply_category_renames(interaction.guild, ren.get("categories") or [])
+            await _apply_channel_renames(interaction.guild, ren.get("channels") or [])
 
-        # 2) EXPLICIT DELETES (before upsert to avoid respawn)
-        print("[Messiah] stage: EXPLICIT DELETES")
-        dels = (layout.get("deletions") or {})
-        await _delete_channels(interaction.guild, dels.get("channels") or [])
-        await _delete_categories_with_reassign(interaction.guild, dels.get("categories") or [])
-        await _delete_roles(interaction.guild, dels.get("roles") or [])
+            # 2) EXPLICIT DELETES
+            print("[Messiah] stage: EXPLICIT DELETES")
+            dels = (layout.get("deletions") or {})
+            await _delete_channels(interaction.guild, dels.get("channels") or [])
+            await _delete_categories_with_reassign(interaction.guild, dels.get("categories") or [])
+            await _delete_roles(interaction.guild, dels.get("roles") or [])
 
-        # 3) UPSERT on FILTERED layout
-        filtered = _filtered_for_upsert(layout)
-        print("[Messiah] stage: UPSERT (filtered sizes)",
-              len(filtered.get("roles",[])),
-              len(filtered.get("categories",[])),
-              len(filtered.get("channels",[])))
-        await self._apply_layout(interaction.guild, filtered, update_only=True)
+            # 3) UPSERT (filtered)
+            filtered = _filtered_for_upsert(layout)
+            print("[Messiah] stage: UPSERT (filtered sizes)",
+                  len(filtered.get("roles",[])),
+                  len(filtered.get("categories",[])),
+                  len(filtered.get("channels",[])))
+            await self._apply_layout(interaction.guild, filtered, update_only=True)
 
-        # 4) Optional PRUNE of anything else not listed
-        prune = (layout.get("prune") or {})
-        print("[Messiah] stage: PRUNE flags", prune)
-        if prune.get("roles"):
-            wanted_roles = { _norm(r.get("name","")) for r in (filtered.get("roles") or []) if r.get("name") }
-            await _prune_roles(interaction.guild, wanted_roles)
-        if prune.get("categories"):
-            wanted_cats = { _norm(n) for n in (filtered.get("categories") or []) if n }
-            await _prune_categories(interaction.guild, wanted_cats)
-        if prune.get("channels"):
-            wanted_triplets: Set[Tuple[str,str,str]] = set()
-            for ch in (filtered.get("channels") or []):
-                nm = _norm(ch.get("name",""))
-                tp = (ch.get("type") or "text").lower()
-                cat = _norm(ch.get("category",""))
-                if nm:
-                    wanted_triplets.add((nm, tp, cat))
-            await _prune_channels(interaction.guild, wanted_triplets)
+            # 4) PRUNE
+            prune = (layout.get("prune") or {})
+            print("[Messiah] stage: PRUNE flags", prune)
+            if prune.get("roles"):
+                wanted_roles = { _norm(r.get("name","")) for r in (filtered.get("roles") or []) if r.get("name") }
+                await _prune_roles(interaction.guild, wanted_roles)
+            if prune.get("categories"):
+                wanted_cats = { _norm(n) for n in (filtered.get("categories") or []) if n }
+                await _prune_categories(interaction.guild, wanted_cats)
+            if prune.get("channels"):
+                wanted_triplets = set()
+                for ch in (filtered.get("channels") or []):
+                    nm = _norm(ch.get("name",""))
+                    tp = (ch.get("type") or "text").lower()
+                    cat = _norm(ch.get("category",""))
+                    if nm:
+                        wanted_triplets.add((nm,tp,cat))
+                await _prune_channels(interaction.guild, wanted_triplets)
 
-        await interaction.followup.send("✅ Update complete.", ephemeral=True)
+            ok = True
+
+        except Exception as e:
+            err_txt = f"{type(e).__name__}: {e}"
+            print(f"[Messiah] update_server ERROR: {err_txt}")
+
+        finally:
+            # Always send a final follow-up if we got past the initial response
+            try:
+                if ok:
+                    await interaction.followup.send("✅ Update complete.", ephemeral=True)
+                else:
+                    await interaction.followup.send(f"❌ Update failed.\n```\n{err_txt or 'unknown error'}\n```", ephemeral=True)
+            except Exception as e2:
+                # Even if the followup itself fails (rare), we still log it
+                print(f"[Messiah] followup send failed: {type(e2).__name__}: {e2}")
+
 
     @app_commands.command(name="snapshot_layout", description="Messiah: Save current server structure as a new layout version")
     @app_commands.checks.has_permissions(administrator=True)

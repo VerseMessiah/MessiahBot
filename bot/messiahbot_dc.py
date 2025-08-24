@@ -25,6 +25,18 @@ class MessiahBot(commands.Bot):
 
 bot = MessiahBot(command_prefix="!", intents=INTENTS)
 
+# somewhere central (e.g., in messiahbot_dc.py after creating bot)
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: Exception):
+    print(f"[Messiah] app command error: {type(error).__name__}: {error}")
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ Something went wrong running that command.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Something went wrong running that command.", ephemeral=True)
+    except Exception:
+        pass
+
 @bot.event
 async def on_ready():
     print(f"✨ MessiahBot is online as {bot.user} (ID: {bot.user.id})")
