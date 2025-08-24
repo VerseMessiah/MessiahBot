@@ -261,6 +261,25 @@ _FORM_HTML = r"""
     <div id="chans"></div>
     <button type="button" onclick="addChan()">Add Channel</button>
 
+    <h3>Danger Zone</h3>
+    <p><em>These options can delete or rename live items. Use carefully.</em></p>
+    <label><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
+    <label><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
+    <label><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
+
+    <h4>Role Renames</h4>
+    <div id="roleRenames"></div>
+    <button type="button" onclick="addRename('roleRenames')">Add Role Rename</button>
+
+    <h4>Category Renames</h4>
+    <div id="catRenames"></div>
+    <button type="button" onclick="addRename('catRenames')">Add Category Rename</button>
+
+    <h4>Channel Renames</h4>
+    <div id="chanRenames"></div>
+    <button type="button" onclick="addRename('chanRenames')">Add Channel Rename</button>
+
+
     <p><button type="button" id="saveBtn">Save Layout</button></p>
   </form>
 
@@ -326,6 +345,26 @@ _FORM_HTML = r"""
       document.getElementById('chans').appendChild(d);
     }
 
+        function addRename(containerId, fromVal="", toVal="") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="From name" class="rename_from" value="${fromVal}">
+                     <span>→</span>
+                     <input placeholder="To name" class="rename_to" value="${toVal}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById(containerId).appendChild(d);
+    }
+
+    function collectRenames(containerId){
+      const out = [];
+      document.querySelectorAll(`#${containerId} .rename_from`).forEach((fromEl, idx) => {
+        const toEl = document.querySelectorAll(`#${containerId} .rename_to`)[idx];
+        const from = (fromEl.value || "").trim();
+        const to = (toEl.value || "").trim();
+        if (from && to) out.push({from, to});
+      });
+      return out;
+    }
+
     // Load latest from DB
     async function loadLatest() {
       const gid = document.getElementById('guild_id').value.trim();
@@ -350,6 +389,15 @@ _FORM_HTML = r"""
     }
 
     function hydrateForm(p) {
+      // Clear danger-zone state
+      document.getElementById('prune_roles').checked = false;
+      document.getElementById('prune_categories').checked = false;
+      document.getElementById('prune_channels').checked = false;
+      ['roleRenames','catRenames','chanRenames'].forEach(id => {
+        const el = document.getElementById(id);
+        while (el.firstChild) el.removeChild(el.firstChild);
+      });
+
       const mode = (p.mode || 'build');
       const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
       if (radio) radio.checked = true;
@@ -396,7 +444,29 @@ _FORM_HTML = r"""
         if (cn[i].value) channels.push({ name: cn[i].value, type: ct[i].value, category: cc[i].value });
       }
 
-      const payload = { mode, roles, categories, channels };
+      const prune_roles = document.getElementById('prune_roles').checked;
+      const prune_categories = document.getElementById('prune_categories').checked;
+      const prune_channels = document.getElementById('prune_channels').checked;
+
+      const roles_rename = collectRenames('roleRenames');
+      const categories_rename = collectRenames('catRenames');
+      const channels_rename = collectRenames('chanRenames');
+
+      const payload = {
+      mode,
+      roles, categories, channels,
+        prune: {
+          roles: prune_roles,
+          categories: prune_categories,
+          channels: prune_channels
+        },
+        renames: {
+          roles: roles_rename,
+          categories: categories_rename,
+          channels: channels_rename
+        }
+      };
+
       const res = await fetch(`/api/layout/${gid}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

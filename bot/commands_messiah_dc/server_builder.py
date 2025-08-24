@@ -16,7 +16,12 @@ try:
 except Exception:
     _psyco_ok = False
 
+
+# -------------------------
+# DB / layout loader
+# -------------------------
 def _load_layout_for_guild(guild_id: int):
+    """Load latest saved layout for a guild from DB, else fallback to local JSON."""
     if _psyco_ok and DATABASE_URL:
         with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -27,9 +32,7 @@ def _load_layout_for_guild(guild_id: int):
                 row = cur.fetchone()
                 if row and row.get("payload"):
                     return row["payload"]
-    # fallback to local file...
 
-        
     # Fallback for local testing
     path = os.getenv("LOCAL_LATEST_CONFIG", "latest_config.json")
     if os.path.exists(path):
@@ -37,8 +40,12 @@ def _load_layout_for_guild(guild_id: int):
             return json.load(f)
     return None
 
-def _norm(s: Optional[str]) -> str:
-    return (s or "").strip()
+
+# -------------------------
+# Helpers
+# -------------------------
+def _norm(name: str) -> str:
+    return (name or "").strip().lower()
 
 def _hex_to_color(hex_str: Optional[str]) -> discord.Color:
     s = (hex_str or "").strip().lstrip("#")
@@ -64,9 +71,11 @@ def _find_voice(guild: discord.Guild, name: str) -> Optional[discord.VoiceChanne
     return next((c for c in guild.voice_channels if c.name.lower() == nl), None)
 
 def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChannel]:
-    # discord.py 2.5 has Guild.forums
     nl = name.lower()
-    return next((c for c in guild.forums if c.name.lower() == nl), None)
+    try:
+        return next((c for c in guild.forums if c.name.lower() == nl), None)
+    except Exception:
+        return None
 
 def _db_exec(q: str, params=()):
     if not (_psyco_ok and DATABASE_URL):
@@ -75,6 +84,10 @@ def _db_exec(q: str, params=()):
         with conn.cursor() as cur:
             cur.execute(q, params)
 
+
+# -------------------------
+# Snapshot (used by /snapshot_layout)
+# -------------------------
 def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
     """Build a layout dict from the live guild."""
     # Roles: skip @everyone and managed integration roles
@@ -106,6 +119,117 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
     return {"mode": "update", "roles": roles, "categories": categories, "channels": channels}
 
 
+# -------------------------
+# Rename helpers
+# -------------------------
+async def _apply_role_renames(guild: discord.Guild, renames: List[dict]):
+    by_name = { _norm(r.name): r for r in guild.roles }
+    for m in renames or []:
+        src, dst = _norm(m.get("from")), (m.get("to") or "").strip()
+        if not src or not dst:
+            continue
+        role = by_name.get(src)
+        if role and not role.managed and not role.is_default():
+            try:
+                await role.edit(name=dst, reason="Messiah rename (layout)")
+            except Exception as e:
+                print(f"[Messiah] role rename failed {getattr(role,'name',src)} -> {dst}: {e}")
+
+async def _apply_category_renames(guild: discord.Guild, renames: List[dict]):
+    by_name = { _norm(c.name): c for c in guild.categories }
+    for m in renames or []:
+        src, dst = _norm(m.get("from")), (m.get("to") or "").strip()
+        if not src or not dst:
+            continue
+        cat = by_name.get(src)
+        if cat:
+            try:
+                await cat.edit(name=dst, reason="Messiah rename (layout)")
+            except Exception as e:
+                print(f"[Messiah] category rename failed {getattr(cat,'name',src)} -> {dst}: {e}")
+
+async def _apply_channel_renames(guild: discord.Guild, renames: List[dict]):
+    all_chans = list(guild.text_channels) + list(guild.voice_channels)
+    try:
+        all_chans += list(guild.forums)
+    except Exception:
+        pass
+    by_name = { _norm(c.name): c for c in all_chans }
+    for m in renames or []:
+        src, dst = _norm(m.get("from")), (m.get("to") or "").strip()
+        if not src or not dst:
+            continue
+        ch = by_name.get(src)
+        if ch:
+            try:
+                await ch.edit(name=dst, reason="Messiah rename (layout)")
+            except Exception as e:
+                print(f"[Messiah] channel rename failed {getattr(ch,'name',src)} -> {dst}: {e}")
+
+
+# -------------------------
+# PRUNE helpers (module-level, so they can be called from commands)
+# -------------------------
+async def _prune_roles(guild: discord.Guild, desired_names: set[str]):
+    for r in guild.roles:
+        if r.is_default() or r.managed:
+            continue
+        if _norm(r.name) not in desired_names:
+            try:
+                await r.delete(reason="Messiah prune (not in layout)")
+            except Exception as e:
+                print(f"[Messiah] role delete failed {r.name}: {e}")
+
+async def _prune_categories(guild: discord.Guild, desired_names: set[str]):
+    for c in guild.categories:
+        if _norm(c.name) not in desired_names:
+            # only delete if empty (safer)
+            if len(c.channels) == 0:
+                try:
+                    await c.delete(reason="Messiah prune (not in layout)")
+                except Exception as e:
+                    print(f"[Messiah] category delete failed {c.name}: {e}")
+
+async def _prune_channels(guild: discord.Guild, desired_triplets: set[tuple]):
+    # Compare by (name, type, parent-category-name)
+    def cat_name(ch):
+        return ch.category.name if getattr(ch, "category", None) else ""
+
+    # text
+    for ch in list(guild.text_channels):
+        key = (_norm(ch.name), "text", _norm(cat_name(ch)))
+        if key not in desired_triplets:
+            try:
+                await ch.delete(reason="Messiah prune (not in layout)")
+            except Exception as e:
+                print(f"[Messiah] text delete failed {ch.name}: {e}")
+
+    # voice
+    for ch in list(guild.voice_channels):
+        key = (_norm(ch.name), "voice", _norm(cat_name(ch)))
+        if key not in desired_triplets:
+            try:
+                await ch.delete(reason="Messiah prune (not in layout)")
+            except Exception as e:
+                print(f"[Messiah] voice delete failed {ch.name}: {e}")
+
+    # forums
+    try:
+        forums = list(guild.forums)
+    except Exception:
+        forums = []
+    for ch in forums:
+        key = (_norm(ch.name), "forum", _norm(cat_name(ch)))
+        if key not in desired_triplets:
+            try:
+                await ch.delete(reason="Messiah prune (not in layout)")
+            except Exception as e:
+                print(f"[Messiah] forum delete failed {ch.name}: {e}")
+
+
+# -------------------------
+# COG
+# -------------------------
 class ServerBuilder(commands.Cog):
     """MessiahBot: build/update server from form JSON (roles/categories/channels)."""
 
@@ -116,22 +240,62 @@ class ServerBuilder(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def build_server(self, interaction: discord.Interaction):
         await interaction.response.send_message("🏗️ Messiah starting **full build**…", ephemeral=True)
+
         layout = _load_layout_for_guild(interaction.guild.id)
         if not layout:
             await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
             return
+
+        # Apply renames first (safe if not provided)
+        ren = (layout or {}).get("renames", {})
+        await _apply_role_renames(interaction.guild, ren.get("roles") or [])
+        await _apply_category_renames(interaction.guild, ren.get("categories") or [])
+        await _apply_channel_renames(interaction.guild, ren.get("channels") or [])
+
+        # Apply layout (create/update/move)
         await self._apply_layout(interaction.guild, layout, update_only=False)
+
         await interaction.followup.send("✅ Build complete.", ephemeral=True)
 
     @app_commands.command(name="update_server", description="Messiah: Update server to match latest saved layout")
     @app_commands.checks.has_permissions(administrator=True)
     async def update_server(self, interaction: discord.Interaction):
         await interaction.response.send_message("🔧 Messiah applying **update**…", ephemeral=True)
+
         layout = _load_layout_for_guild(interaction.guild.id)
         if not layout:
             await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
             return
+
+        # Apply renames first
+        ren = (layout or {}).get("renames", {})
+        await _apply_role_renames(interaction.guild, ren.get("roles") or [])
+        await _apply_category_renames(interaction.guild, ren.get("categories") or [])
+        await _apply_channel_renames(interaction.guild, ren.get("channels") or [])
+
+        # Upsert (create/update/move)
         await self._apply_layout(interaction.guild, layout, update_only=True)
+
+        # PRUNE (after upsert) if requested
+        prune = (layout.get("prune") or {})
+        if prune.get("roles"):
+            wanted_roles = { _norm(r.get("name","")) for r in (layout.get("roles") or []) if r.get("name") }
+            await _prune_roles(interaction.guild, wanted_roles)
+
+        if prune.get("categories"):
+            wanted_cats = { _norm(n) for n in (layout.get("categories") or []) if n }
+            await _prune_categories(interaction.guild, wanted_cats)
+
+        if prune.get("channels"):
+            wanted_triplets: set[tuple] = set()
+            for ch in (layout.get("channels") or []):
+                nm = _norm(ch.get("name",""))
+                tp = (ch.get("type") or "text").lower()
+                cat = _norm(ch.get("category",""))
+                if nm:
+                    wanted_triplets.add((nm, tp, cat))
+            await _prune_channels(interaction.guild, wanted_triplets)
+
         await interaction.followup.send("✅ Update complete.", ephemeral=True)
 
     @app_commands.command(name="snapshot_layout", description="Messiah: Save current server structure as a new layout version")
@@ -161,6 +325,9 @@ class ServerBuilder(commands.Cog):
             ephemeral=True
         )
 
+    # -------------------------
+    # Core upsert logic
+    # -------------------------
     async def _apply_layout(self, guild: discord.Guild, layout: Dict[str, Any], update_only: bool):
         """
         layout = {
@@ -174,7 +341,8 @@ class ServerBuilder(commands.Cog):
 
         # ROLES
         for r in layout.get("roles", []):
-            name = _norm(r.get("name"))
+            raw_name = r.get("name")
+            name = _norm(raw_name)
             if not name:
                 continue
             color = _hex_to_color(r.get("color"))
@@ -236,6 +404,8 @@ class ServerBuilder(commands.Cog):
             elif chtype == "voice":
                 existing = _find_voice(guild, chname)
             elif chtype == "forum":
+                # NOTE: discord.py may require create_forum_channel for creation;
+                # we still match existing by name if property available
                 existing = _find_forum(guild, chname)
             else:
                 existing = _find_text(guild, chname)
@@ -248,10 +418,17 @@ class ServerBuilder(commands.Cog):
                     elif chtype == "voice":
                         await guild.create_voice_channel(chname, category=parent, reason="MessiahBot builder")
                     elif chtype == "forum":
-                        await guild.create_forum(name=chname, category=parent, reason="MessiahBot builder")
+                        # Some versions use create_forum_channel
+                        create_forum = getattr(guild, "create_forum", None) or getattr(guild, "create_forum_channel", None)
+                        if create_forum:
+                            await create_forum(name=chname, category=parent, reason="MessiahBot builder")
+                        else:
+                            raise RuntimeError("This discord.py version lacks forum creation API")
                     logs.append(f"✅ Channel created: **#{chname}** [{chtype}]{' → ' + parent.name if parent else ''}")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create channel: **{chname}**")
+                except Exception as e:
+                    logs.append(f"❌ Failed to create channel **{chname}**: {e}")
             else:
                 try:
                     need_parent_id = parent.id if parent else None
@@ -264,9 +441,10 @@ class ServerBuilder(commands.Cog):
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to move channel: **{chname}**")
 
-        # Optional: print summary in console (you can later post to an admin log channel)
+        # Optional: print summary in console
         if logs:
             print(f"[MessiahBot Builder] {guild.name}:\n - " + "\n - ".join(logs))
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerBuilder(bot))
