@@ -260,38 +260,59 @@ _FORM_HTML = r"""
 <html>
 <head>
   <meta charset="utf-8">
-  <title>MessiahBot — Server Layout</title>
+  <title>MessiahBot — Server Builder</title>
   <style>
+    :root { --card:#f7f7fb; --border:#e3e3ee; --muted:#666; }
     body{font-family:sans-serif;max-width:1100px;margin:24px auto;padding:0 12px}
-    fieldset{margin:16px 0;padding:12px;border-radius:8px;border:1px solid #ddd}
+    h1{margin-bottom:8px}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .stack{display:flex;flex-direction:column;gap:8px}
+    fieldset{margin:16px 0;padding:12px;border-radius:8px;border:1px solid var(--border)}
     button{margin-top:6px}
-    .row{display:flex;gap:8px;align-items:center;margin:6px 0}
-    .row input[type="text"]{min-width:180px}
-    .row textarea{min-width:320px;min-height:60px}
-    .mini{width:70px}
-    .topic{min-width:280px}
-    .section{border:1px solid #eee;padding:10px;border-radius:8px;margin:10px 0}
-    .muted{color:#666}
-    .controls button{margin-left:4px}
-    .pill{display:inline-block;padding:2px 8px;background:#eef;border:1px solid #99c;border-radius:999px;font-size:12px}
+    .pill{font-size:12px;padding:2px 8px;border-radius:999px;background:#eef}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px}
+    .cat-header{display:flex;align-items:center;gap:8px;justify-content:space-between}
+    .cat-title{display:flex;gap:8px;align-items:center}
+    .muted{color:var(--muted);font-size:12px}
+    .handle{cursor:grab;user-select:none}
+    .small{font-size:12px}
+    .danger{color:#b00}
+    .inline{display:inline-flex;gap:6px;align-items:center}
+    .list{display:flex;flex-direction:column;gap:8px;min-height:4px}
+    .chan{background:white;border:1px dashed var(--border);border-radius:10px;padding:8px;display:flex;gap:8px;align-items:center;justify-content:space-between}
+    .chan-left{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .section{margin-top:20px}
+    input[type="text"]{padding:6px 8px;border:1px solid var(--border);border-radius:8px;min-width:160px}
+    select{padding:6px 8px;border:1px solid var(--border);border-radius:8px}
+    details summary{cursor:pointer;user-select:none}
+    .note{background:#fffbdd;border:1px solid #ffe08a;padding:8px;border-radius:8px}
   </style>
+  <!-- SortableJS for drag & drop -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 </head>
 <body>
-  <h1>🧱 MessiahBot — Server Layout</h1>
-  <p>Enter your Guild ID, then <strong>Load From Live Server</strong> or <strong>Load Latest From DB</strong>, edit, and <strong>Save Layout</strong>.</p>
+  <h1>🧱 MessiahBot — Server Builder</h1>
+  <p class="muted">Reorder categories by dragging their card. Drag channels inside a category or between categories. Optional rename/delete are inline.</p>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
     <a href="/routes" target="_blank">/routes</a>
   </p>
 
-  <form id="layoutForm">
-    <label>Guild ID <input type="text" id="guild_id" required></label>
+  <form id="layoutForm" class="stack">
+    <div class="row">
+      <label>Guild ID <input type="text" id="guild_id" required></label>
+      <span class="pill" id="loadHint">Load “Live” to pull current server structure.</span>
+    </div>
 
-    <p>
+    <div class="row">
       <button type="button" id="loadLiveBtn">Load From Live Server</button>
       <button type="button" id="loadLatestBtn">Load Latest From DB</button>
-    </p>
+      <button type="button" id="addCategoryBtn">Add Category</button>
+      <button type="button" id="addRoleBtn">Add Role</button>
+      <button type="button" id="saveBtn">Save Layout</button>
+    </div>
 
     <fieldset>
       <legend>Mode</legend>
@@ -299,297 +320,331 @@ _FORM_HTML = r"""
       <label><input type="radio" name="mode" value="update"> Update</label>
     </fieldset>
 
-    <div class="section">
-      <h3>Roles <span class="pill">name, color, permissions</span></h3>
-      <div id="roles"></div>
-      <button type="button" onclick="addRole()">Add Role</button>
-      <div class="muted">Permissions is a bitfield (integer). You can leave 0 to not change perms.</div>
-    </div>
+    <!-- ROLES -->
+    <section class="section">
+      <h3>Roles</h3>
+      <div id="roles" class="list"></div>
+      <p class="small muted">Drag to reorder is not required for roles; order doesn’t affect Discord role hierarchy here. Set colors / rename / delete as needed.</p>
+    </section>
 
-    <div class="section">
-      <h3>Categories <span class="pill">name, position, overwrites JSON</span></h3>
-      <div id="cats"></div>
-      <button type="button" onclick="addCat()">Add Category</button>
-      <div class="muted">Overwrites JSON = <code>[{ "type":"role|member","id":"123","allow":0,"deny":0,"name":"Role (optional)"}, ...]</code></div>
-    </div>
+    <!-- CATEGORIES + CHANNELS -->
+    <section class="section">
+      <h3>Categories & Channels</h3>
+      <div id="categories" class="stack"></div>
+    </section>
 
-    <div class="section">
-      <h3>Channels <span class="pill">name, type, category, position, topic, overwrites JSON</span></h3>
-      <div id="chans"></div>
-      <button type="button" onclick="addChan()">Add Channel</button>
-    </div>
-
-    <div class="section">
+    <!-- Danger -->
+    <section class="section">
       <h3>Danger Zone</h3>
-      <p><em>These options can delete or rename live items. Use carefully.</em></p>
-      <label><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
-      <label><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
-      <label><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
-
-      <h4>Role Renames</h4>
-      <div id="roleRenames"></div>
-      <button type="button" onclick="addRename('roleRenames')">Add Role Rename</button>
-
-      <h4>Category Renames</h4>
-      <div id="catRenames"></div>
-      <button type="button" onclick="addRename('catRenames')">Add Category Rename</button>
-
-      <h4>Channel Renames</h4>
-      <div id="chanRenames"></div>
-      <button type="button" onclick="addRename('chanRenames')">Add Channel Rename</button>
-    </div>
-
-    <p><button type="button" id="saveBtn">Save Layout</button></p>
+      <p class="note small">
+        <strong>Delete not listed</strong>: if enabled, items you do not include here will be removed on update. Use cautiously.
+      </p>
+      <label class="inline"><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
+      <label class="inline"><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
+      <label class="inline"><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
+    </section>
   </form>
 
-  <script>
-    // Prevent Enter from auto-submitting the form
-    document.getElementById('layoutForm').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
-        e.preventDefault();
-      }
+<script>
+/* ============ Utilities ============ */
+const $ = sel => document.querySelector(sel);
+const el = (tag, attrs={}, children=[]) => {
+  const node = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k === 'dataset') Object.assign(node.dataset, v);
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.substring(2), v);
+    else if (k === 'html') node.innerHTML = v;
+    else node.setAttribute(k, v);
+  }
+  (Array.isArray(children)?children:[children]).forEach(c=>{
+    if (c==null) return;
+    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return node;
+};
+const norm = s => (s||'').trim();
+
+/* ============ Roles UI ============ */
+function roleRow(name="", color="#000000", renameTo="", del=false) {
+  const row = el('div', {class:'chan'});
+  const left = el('div', {class:'chan-left'}, [
+    el('span', {class:'handle', title:'Drag'}, '⠿'),
+    el('input', {type:'text', placeholder:'Role name', value:name, class:'role-name'}),
+    el('input', {type:'color', value:color || '#000000', class:'role-color'}),
+    el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'role-rename small', style:'min-width:140px'})
+  ]);
+  const right = el('div', {}, [
+    el('label', {class:'inline small danger'}, [
+      el('input', {type:'checkbox', class:'role-delete', checked:del}),
+      ' delete'
+    ]),
+    el('button', {type:'button', class:'small', onclick:()=>row.remove()}, 'x')
+  ]);
+  row.append(left, right);
+  return row;
+}
+
+/* ============ Channels UI ============ */
+function channelRow(name="", type="text", categoryName="", renameTo="", del=false) {
+  const row = el('div', {class:'chan', dataset:{channelType:type}});
+  const left = el('div', {class:'chan-left'}, [
+    el('span', {class:'handle', title:'Drag'}, '⠿'),
+    el('input', {type:'text', placeholder:'Channel name', value:name, class:'ch-name'}),
+    el('select', {class:'ch-type'}, [
+      el('option', {value:'text', ...(type==='text'?{selected:true}:{})}, 'text'),
+      el('option', {value:'voice', ...(type==='voice'?{selected:true}:{})}, 'voice'),
+      el('option', {value:'forum', ...(type==='forum'?{selected:true}:{})}, 'forum'),
+    ]),
+    el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'ch-rename small', style:'min-width:140px'}),
+  ]);
+  const right = el('div', {}, [
+    el('label', {class:'inline small danger'}, [
+      el('input', {type:'checkbox', class:'ch-delete', checked:del}),
+      ' delete'
+    ]),
+    el('button', {type:'button', class:'small', onclick:()=>row.remove()}, 'x')
+  ]);
+  row.append(left, right);
+  row.dataset.parentCategory = categoryName || "";
+  return row;
+}
+
+/* ============ Categories UI (with nested channels sortable) ============ */
+function categoryCard(name="", renameTo="", del=false) {
+  const card = el('div', {class:'card cat', draggable:false});
+  const header = el('div', {class:'cat-header'}, [
+    el('div', {class:'cat-title'}, [
+      el('span', {class:'handle', title:'Drag'}, '⠿'),
+      el('input', {type:'text', placeholder:'Category name', value:name, class:'cat-name'}),
+      el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'cat-rename small', style:'min-width:160px'})
+    ]),
+    el('div', {}, [
+      el('label', {class:'inline small danger'}, [
+        el('input', {type:'checkbox', class:'cat-delete', checked:del}),
+        ' delete'
+      ]),
+      el('button', {type:'button', class:'small', onclick:()=>card.remove()}, 'x')
+    ])
+  ]);
+  const chanList = el('div', {class:'list channels'});
+  const addChanBtn = el('button', {type:'button', class:'small', onclick:()=>chanList.appendChild(channelRow("", "text", name))}, '+ add channel');
+  card.append(header, chanList, el('div', {class:'muted small'}, 'Drag channels here to move them into this category.'), addChanBtn);
+
+  // Nested sortable for channels
+  new Sortable(chanList, {
+    group: 'channels',
+    animation: 150,
+    handle: '.handle',
+    onAdd: (evt)=> {
+      // Update dataset parent for moved channel
+      const parentName = card.querySelector('.cat-name').value || "";
+      evt.item.dataset.parentCategory = parentName;
+    }
+  });
+  return card;
+}
+
+/* ============ Wire up top-level sortables ============ */
+function makeSortable() {
+  // roles (simple vertical drag)
+  new Sortable($('#roles'), {
+    animation: 150,
+    handle: '.handle'
+  });
+
+  // categories (each card moves as a unit)
+  new Sortable($('#categories'), {
+    animation: 150,
+    handle: '.handle',
+    onEnd: ()=> fixChannelParentNames()
+  });
+}
+
+/* Keep channels’ stored parent name in sync when a category name changes or card moves */
+function fixChannelParentNames() {
+  document.querySelectorAll('#categories .card').forEach(card=>{
+    const cname = card.querySelector('.cat-name').value || "";
+    card.querySelectorAll('.channels .chan').forEach(ch=>{
+      ch.dataset.parentCategory = cname;
     });
+  });
+}
+document.addEventListener('input', (e)=>{
+  if (e.target && e.target.classList.contains('cat-name')) fixChannelParentNames();
+});
 
-    // --- Utilities ---
-    function moveUp(btn){ const row = btn.closest('.row'); if(row && row.previousElementSibling){ row.parentElement.insertBefore(row, row.previousElementSibling); } }
-    function moveDown(btn){ const row = btn.closest('.row'); if(row && row.nextElementSibling){ row.parentElement.insertBefore(row.nextElementSibling, row); } }
+/* ============ Adders ============ */
+$('#addCategoryBtn').addEventListener('click', ()=>{
+  $('#categories').appendChild(categoryCard());
+  fixChannelParentNames();
+});
+$('#addRoleBtn').addEventListener('click', ()=>{
+  $('#roles').appendChild(roleRow());
+});
 
-    function addRole(name="", color="#000000", perms="0"){
-      const d=document.createElement('div');
-      d.className="row";
-      d.innerHTML=`<input placeholder="Role" name="role_name" value="${name}">
-                   <input type="color" name="role_color" value="${color||'#000000'}">
-                   <input class="mini" type="text" name="role_perms" value="${perms||'0'}" title="permissions bitfield">
-                   <span class="controls">
-                     <button type="button" onclick="moveUp(this)">↑</button>
-                     <button type="button" onclick="moveDown(this)">↓</button>
-                     <button type="button" onclick="this.closest('.row').remove()">x</button>
-                   </span>`;
-      document.getElementById('roles').appendChild(d);
-    }
+/* ============ Hydration from payload ============ */
+function clearList(node){ while(node.firstChild) node.removeChild(node.firstChild); }
 
-    function addCat(name="", position="", overwrites=""){
-      const d=document.createElement('div');
-      d.className="row";
-      const owStr = overwrites ? JSON.stringify(overwrites) : "";
-      d.innerHTML=`<input placeholder="Category" name="category" value="${name}">
-                   <input class="mini" placeholder="pos" name="category_position" value="${position!==undefined? position : ''}">
-                   <textarea name="category_overwrites" placeholder='[{"type":"role","id":"...","allow":0,"deny":0}]'>${owStr}</textarea>
-                   <span class="controls">
-                     <button type="button" onclick="moveUp(this)">↑</button>
-                     <button type="button" onclick="moveDown(this)">↓</button>
-                     <button type="button" onclick="this.closest('.row').remove()">x</button>
-                   </span>`;
-      document.getElementById('cats').appendChild(d);
-    }
+function hydrate(payload) {
+  const mode = (payload.mode || 'build');
+  const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
 
-    function addChan(name="", type="text", category="", position="", topic="", overwrites=""){
-      const d=document.createElement('div');
-      d.className="row";
-      const owStr = overwrites ? JSON.stringify(overwrites) : "";
-      d.innerHTML=`<input placeholder="Channel" name="channel_name" value="${name}">
-                   <select name="channel_type">
-                     <option ${type==='text'?'selected':''}>text</option>
-                     <option ${type==='voice'?'selected':''}>voice</option>
-                     <option ${type==='forum'?'selected':''}>forum</option>
-                   </select>
-                   <input placeholder="Parent Category" name="channel_category" value="${category}">
-                   <input class="mini" placeholder="pos" name="channel_position" value="${position!==undefined? position : ''}">
-                   <input class="topic" placeholder="Topic/Description" name="channel_topic" value="${(topic||'').replace(/"/g,'&quot;')}">
-                   <textarea name="channel_overwrites" placeholder='[{"type":"role","id":"...","allow":0,"deny":0}]'>${owStr}</textarea>
-                   <span class="controls">
-                     <button type="button" onclick="moveUp(this)">↑</button>
-                     <button type="button" onclick="moveDown(this)">↓</button>
-                     <button type="button" onclick="this.closest('.row').remove()">x</button>
-                   </span>`;
-      document.getElementById('chans').appendChild(d);
-    }
+  clearList($('#roles'));
+  (payload.roles || []).forEach(r=>{
+    $('#roles').appendChild(roleRow(r.name||"", r.color||"#000000", "", false));
+  });
+  if ((payload.roles||[]).length===0) $('#roles').appendChild(roleRow());
 
-    function addRename(containerId, fromVal="", toVal=""){
-      const d = document.createElement('div');
-      d.className="row";
-      d.innerHTML = `<input placeholder="From name" class="rename_from" value="${fromVal}">
-                     <span>→</span>
-                     <input placeholder="To name" class="rename_to" value="${toVal}">
-                     <button type="button" onclick="this.closest('.row').remove()">x</button>`;
-      document.getElementById(containerId).appendChild(d);
-    }
+  clearList($('#categories'));
+  const cats = (payload.categories || []);
+  const channels = (payload.channels || []);
 
-    function collectRenames(containerId){
-      const out = [];
-      const root = document.getElementById(containerId);
-      if (!root) return out;
-      const fromEls = root.querySelectorAll('.rename_from');
-      const toEls   = root.querySelectorAll('.rename_to');
-      for (let i=0;i<fromEls.length;i++){
-        const from = (fromEls[i].value||"").trim();
-        const to   = (toEls[i].value||"").trim();
-        if (from && to) out.push({from, to});
+  // Preserve order: build cards first
+  cats.forEach(cn=>{
+    $('#categories').appendChild(categoryCard(cn, "", false));
+  });
+  // Then place channels into their parent card (or uncategorized)
+  channels.forEach(ch=>{
+    const parent = norm(ch.category||"");
+    const name = ch.name||"";
+    const type = (ch.type||'text');
+    // find matching category card by current value of cat-name
+    let target = null;
+    document.querySelectorAll('#categories .card').forEach(card=>{
+      const cname = norm(card.querySelector('.cat-name').value);
+      if (cname === parent) target = card;
+    });
+    if (!target) {
+      // Make an "Uncategorized" holder if needed
+      let unc = document.querySelector('#categories .card[data-unc="1"]');
+      if (!unc) {
+        unc = categoryCard("Uncategorized", "", false);
+        unc.dataset.unc = "1";
+        $('#categories').appendChild(unc);
       }
-      return out;
+      target = unc;
     }
+    target.querySelector('.channels').appendChild(channelRow(name, type, parent));
+  });
 
-    function clearSection(id) {
-      const el = document.getElementById(id);
-      while (el.firstChild) el.removeChild(el.firstChild);
-    }
+  // Danger flags default off
+  $('#prune_roles').checked = !!(payload.prune && payload.prune.roles);
+  $('#prune_categories').checked = !!(payload.prune && payload.prune.categories);
+  $('#prune_channels').checked = !!(payload.prune && payload.prune.channels);
 
-    function hydrateForm(p) {
-      // Reset danger-zone
-      document.getElementById('prune_roles').checked = false;
-      document.getElementById('prune_categories').checked = false;
-      document.getElementById('prune_channels').checked = false;
-      ['roleRenames','catRenames','chanRenames'].forEach(id => {
-        const el = document.getElementById(id);
-        while (el.firstChild) el.removeChild(el.firstChild);
-      });
+  fixChannelParentNames();
+}
 
-      const mode = (p.mode || 'build');
-      const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
-      if (radio) radio.checked = true;
+/* ============ Collect back into payload ============ */
+function collectPayload() {
+  const form = $('#layoutForm');
+  const gid = $('#guild_id').value.trim();
+  if (!gid) { alert('Enter Guild ID'); throw new Error('no gid'); }
+  const mode = form.mode.value;
 
-      clearSection('roles');
-      (p.roles || []).forEach(r => addRole(r.name || "", r.color || "#000000", (r.permissions ?? 0)));
-      if ((p.roles || []).length === 0) addRole();
+  // roles
+  const roles = [];
+  document.querySelectorAll('#roles .chan').forEach(row=>{
+    const name = norm(row.querySelector('.role-name').value);
+    const color = row.querySelector('.role-color').value || '#000000';
+    const renameTo = norm(row.querySelector('.role-rename').value);
+    const del = row.querySelector('.role-delete').checked;
+    if (name) roles.push({ name, color, _renameTo: renameTo||null, _delete: del||false });
+  });
 
-      clearSection('cats');
-      (p.categories || []).forEach(c => addCat(c.name || "", (c.position ?? ""), (c.overwrites || "")));
-      if ((p.categories || []).length === 0) addCat();
+  // categories + channels
+  const categories = [];
+  const channels = [];
+  const renames = { roles:[], categories:[], channels:[] };
+  const prune = {
+    roles: $('#prune_roles').checked,
+    categories: $('#prune_categories').checked,
+    channels: $('#prune_channels').checked
+  };
 
-      clearSection('chans');
-      (p.channels || []).forEach(ch => addChan(
-        ch.name || "",
-        (ch.type || 'text'),
-        (ch.category || ""),
-        (ch.position ?? ""),
-        (ch.topic || ""),
-        (ch.overwrites || "")
-      ));
-      if ((p.channels || []).length === 0) addChan();
-    }
+  document.querySelectorAll('#categories .card').forEach(card=>{
+    const name = norm(card.querySelector('.cat-name').value);
+    const renameTo = norm(card.querySelector('.cat-rename').value);
+    const del = card.querySelector('.cat-delete').checked;
 
-    // Load latest from DB
-    async function loadLatest() {
-      const gid = document.getElementById('guild_id').value.trim();
-      if (!gid) { alert('Enter Guild ID'); return; }
-      const res = await fetch(`/api/layout/${gid}/latest`);
-      const data = await res.json();
-      if (!data.ok) { alert(data.error || 'No layout'); return; }
-      const p = data.payload || {};
-      hydrateForm(p);
-      alert(`Loaded version ${data.version} from DB`);
-    }
+    if (name) categories.push(name);
+    if (renameTo) renames.categories.push({from: name, to: renameTo});
+    if (del) renames.categories.push({from: name, to: ""}); // delete signal (handled by bot)
 
-    // Load from live Discord server
-    async function loadLive() {
-      const gid = document.getElementById('guild_id').value.trim();
-      if (!gid) { alert('Enter Guild ID'); return; }
-      const res = await fetch(`/api/live_layout/${gid}`);
-      const data = await res.json();
-      if (!data.ok) { alert(data.error || 'Failed to load live server'); return; }
-      hydrateForm(data.payload || {});
-      alert('Loaded from live server');
-    }
+    // channels within
+    card.querySelectorAll('.channels .chan').forEach(row=>{
+      const chName = norm(row.querySelector('.ch-name').value);
+      const chType = row.querySelector('.ch-type').value;
+      const parent = norm(card.querySelector('.cat-name').value);
+      const renameC = norm(row.querySelector('.ch-rename').value);
+      const delC = row.querySelector('.ch-delete').checked;
 
-    document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
-    document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
+      if (chName) channels.push({ name: chName, type: chType, category: parent });
+      if (renameC) renames.channels.push({from: chName, to: renameC, category: parent});
+      if (delC) renames.channels.push({from: chName, to: "", category: parent}); // delete signal
+    });
+  });
 
-    // Save layout
-    async function saveLayout(){
-      const form = document.getElementById('layoutForm');
-      const gid = document.getElementById('guild_id').value.trim();
-      if (!gid) { alert('Enter Guild ID'); return; }
+  // turn role-level _renameTo/_delete into renames
+  roles.forEach(r=>{
+    if (r._renameTo) renames.roles.push({from: r.name, to: r._renameTo});
+    if (r._delete) renames.roles.push({from: r.name, to: ""});
+    delete r._renameTo; delete r._delete;
+  });
 
-      const roles = [], categories = [], channels = [];
-      const mode = form.mode.value;
+  return { mode, roles, categories, channels, prune, renames };
+}
 
-      // ROLES in DOM order
-      document.querySelectorAll('#roles .row').forEach(row => {
-        const name = row.querySelector('input[name="role_name"]').value.trim();
-        const color = row.querySelector('input[name="role_color"]').value || "#000000";
-        const perms = row.querySelector('input[name="role_perms"]').value.trim();
-        if (name){
-          roles.push({
-            name, color,
-            permissions: (perms === "" ? 0 : Number(perms)||0)
-          });
-        }
-      });
+/* ============ Load buttons ============ */
+async function loadLatest() {
+  const gid = $('#guild_id').value.trim();
+  if (!gid) { alert('Enter Guild ID'); return; }
+  const res = await fetch(`/api/layout/${gid}/latest`);
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || 'No layout'); return; }
+  hydrate(data.payload || {});
+  alert(`Loaded version ${data.version} from DB`);
+}
+async function loadLive() {
+  const gid = $('#guild_id').value.trim();
+  if (!gid) { alert('Enter Guild ID'); return; }
+  const res = await fetch(`/api/live_layout/${gid}`);
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || 'Failed to load live server'); return; }
+  hydrate(data.payload || {});
+  alert('Loaded from live server');
+}
+document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
+document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
 
-      // CATEGORIES in DOM order; position = index if not provided
-      document.querySelectorAll('#cats .row').forEach((row, idx) => {
-        const name = row.querySelector('input[name="category"]').value.trim();
-        const posStr = row.querySelector('input[name="category_position"]').value.trim();
-        const owStr  = row.querySelector('textarea[name="category_overwrites"]').value.trim();
-        if (name){
-          let overwrites = [];
-          if (owStr){
-            try{ overwrites = JSON.parse(owStr); } catch(e){ alert('Bad category overwrites JSON for '+name); throw e; }
-          }
-          let position = posStr !== "" ? Number(posStr) : idx;
-          categories.push({ name, position, overwrites });
-        }
-      });
+/* ============ Save ============ */
+async function saveLayout() {
+  try{
+    const gid = $('#guild_id').value.trim();
+    const payload = collectPayload();
+    const res = await fetch(`/api/layout/${gid}`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.ok && data.no_change) alert(`No changes detected. Current version is still ${data.version}.`);
+    else if (data.ok) alert(`Saved version ${data.version}`);
+    else alert(data.error || 'Error');
+  }catch(e){ /* already alerted */ }
+}
+document.getElementById('saveBtn').addEventListener('click', saveLayout);
 
-      // CHANNELS in DOM order; position = index within list if not provided
-      document.querySelectorAll('#chans .row').forEach((row, idx) => {
-        const name = row.querySelector('input[name="channel_name"]').value.trim();
-        const type = row.querySelector('select[name="channel_type"]').value;
-        const category = row.querySelector('input[name="channel_category"]').value.trim();
-        const posStr = row.querySelector('input[name="channel_position"]').value.trim();
-        const topic = row.querySelector('input[name="channel_topic"]').value;
-        const owStr = row.querySelector('textarea[name="channel_overwrites"]').value.trim();
-        if (name){
-          let overwrites = [];
-          if (owStr){
-            try{ overwrites = JSON.parse(owStr); } catch(e){ alert('Bad channel overwrites JSON for '+name); throw e; }
-          }
-          let position = posStr !== "" ? Number(posStr) : idx;
-          channels.push({ name, type, category, position, topic, overwrites });
-        }
-      });
-
-      // Danger zone flags
-      const prune_roles = document.getElementById('prune_roles').checked;
-      const prune_categories = document.getElementById('prune_categories').checked;
-      const prune_channels = document.getElementById('prune_channels').checked;
-
-      // Renames
-      const roles_rename = collectRenames('roleRenames');
-      const categories_rename = collectRenames('catRenames');
-      const channels_rename = collectRenames('chanRenames');
-
-      const payload = {
-        mode,
-        roles, categories, channels,
-        prune: {
-          roles: prune_roles,
-          categories: prune_categories,
-          channels: prune_channels
-        },
-        renames: {
-          roles: roles_rename,
-          categories: categories_rename,
-          channels: channels_rename
-        }
-      };
-
-      const res = await fetch(`/api/layout/${gid}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.ok && data.no_change) {
-        alert(`No changes detected. Current version is still ${data.version}.`);
-      } else if (data.ok) {
-        alert(`Saved version ${data.version}`);
-      } else {
-        alert(data.error || 'Error');
-      }
-    }
-    document.getElementById('saveBtn').addEventListener('click', saveLayout);
-  </script>
+/* ============ Init ============ */
+document.addEventListener('DOMContentLoaded', ()=>{
+  // Seed with empty cards/rows so user sees structure immediately
+  $('#roles').appendChild(roleRow());
+  $('#categories').appendChild(categoryCard("General"));
+  makeSortable();
+});
+</script>
 </body>
 </html>
 """
