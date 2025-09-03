@@ -276,7 +276,6 @@ _FORM_HTML = r"""
     .muted{color:var(--muted);font-size:12px}
     .handle{cursor:grab;user-select:none}
     .small{font-size:12px}
-    .danger{color:#b00}
     .inline{display:inline-flex;gap:6px;align-items:center}
     .list{display:flex;flex-direction:column;gap:8px;min-height:4px}
     .chan{background:white;border:1px dashed var(--border);border-radius:10px;padding:8px;display:flex;gap:8px;align-items:center;justify-content:space-between}
@@ -284,15 +283,13 @@ _FORM_HTML = r"""
     .section{margin-top:20px}
     input[type="text"]{padding:6px 8px;border:1px solid var(--border);border-radius:8px;min-width:160px}
     select{padding:6px 8px;border:1px solid var(--border);border-radius:8px}
-    details summary{cursor:pointer;user-select:none}
     .note{background:#fffbdd;border:1px solid #ffe08a;padding:8px;border-radius:8px}
   </style>
-  <!-- SortableJS for drag & drop -->
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 </head>
 <body>
   <h1>🧱 MessiahBot — Server Builder</h1>
-  <p class="muted">Reorder categories by dragging their card. Drag channels within a category or between categories. Optional rename/delete are inline.</p>
+  <p class="muted">Reorder categories by dragging their card. Drag channels within/between categories. Use the <strong>x</strong> to remove items from the payload; global prune toggles control deletion on update.</p>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
@@ -319,24 +316,22 @@ _FORM_HTML = r"""
       <label><input type="radio" name="mode" value="update"> Update</label>
     </fieldset>
 
-    <!-- ROLES -->
     <section class="section">
       <h3>Roles</h3>
       <div id="roles" class="list"></div>
-      <p class="small muted">Drag to reorder is not required for roles; order doesn’t affect Discord role hierarchy here. Set colors / rename / delete as needed.</p>
+      <p class="small muted">Order is mostly cosmetic here. Set colors and optional rename.</p>
     </section>
 
-    <!-- CATEGORIES + CHANNELS -->
     <section class="section">
       <h3>Categories & Channels</h3>
       <div id="categories" class="stack"></div>
     </section>
 
-    <!-- Danger -->
     <section class="section">
       <h3>Danger Zone</h3>
       <p class="note small">
-        <strong>Delete not listed</strong>: if enabled, items you do not include here will be removed on update. Use cautiously.
+        <strong>Delete not listed</strong>: when enabled, anything you don’t include in this form will be removed on update.
+        Use carefully.
       </p>
       <label class="inline"><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
       <label class="inline"><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
@@ -345,7 +340,6 @@ _FORM_HTML = r"""
   </form>
 
 <script>
-/* ============ Utilities ============ */
 const $ = sel => document.querySelector(sel);
 const el = (tag, attrs={}, children=[]) => {
   const node = document.createElement(tag);
@@ -364,8 +358,8 @@ const el = (tag, attrs={}, children=[]) => {
 };
 const norm = s => (s||'').trim();
 
-/* ============ Roles UI ============ */
-function roleRow(name="", color="#000000", renameTo="", del=false) {
+/* ---- UI rows/cards (no per-item delete checkboxes) ---- */
+function roleRow(name="", color="#000000", renameTo="") {
   const row = el('div', {class:'chan'});
   const left = el('div', {class:'chan-left'}, [
     el('span', {class:'handle', title:'Drag'}, '⠿'),
@@ -374,18 +368,13 @@ function roleRow(name="", color="#000000", renameTo="", del=false) {
     el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'role-rename small', style:'min-width:140px'})
   ]);
   const right = el('div', {}, [
-    el('label', {class:'inline small danger'}, [
-      el('input', {type:'checkbox', class:'role-delete', checked:del}),
-      ' delete'
-    ]),
     el('button', {type:'button', class:'small', onclick:()=>row.remove()}, 'x')
   ]);
   row.append(left, right);
   return row;
 }
 
-/* ============ Channels UI ============ */
-function channelRow(name="", type="text", categoryName="", renameTo="", del=false) {
+function channelRow(name="", type="text", categoryName="", renameTo="") {
   const row = el('div', {class:'chan', dataset:{channelType:type}});
   const left = el('div', {class:'chan-left'}, [
     el('span', {class:'handle', title:'Drag'}, '⠿'),
@@ -398,10 +387,6 @@ function channelRow(name="", type="text", categoryName="", renameTo="", del=fals
     el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'ch-rename small', style:'min-width:140px'}),
   ]);
   const right = el('div', {}, [
-    el('label', {class:'inline small danger'}, [
-      el('input', {type:'checkbox', class:'ch-delete', checked:del}),
-      ' delete'
-    ]),
     el('button', {type:'button', class:'small', onclick:()=>row.remove()}, 'x')
   ]);
   row.append(left, right);
@@ -409,8 +394,7 @@ function channelRow(name="", type="text", categoryName="", renameTo="", del=fals
   return row;
 }
 
-/* ============ Categories UI (with nested channels sortable) ============ */
-function categoryCard(name="", renameTo="", del=false) {
+function categoryCard(name="", renameTo="") {
   const card = el('div', {class:'card cat', draggable:false});
   const header = el('div', {class:'cat-header'}, [
     el('div', {class:'cat-title'}, [
@@ -419,10 +403,6 @@ function categoryCard(name="", renameTo="", del=false) {
       el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'cat-rename small', style:'min-width:160px'})
     ]),
     el('div', {}, [
-      el('label', {class:'inline small danger'}, [
-        el('input', {type:'checkbox', class:'cat-delete', checked:del}),
-        ' delete'
-      ]),
       el('button', {type:'button', class:'small', onclick:()=>card.remove()}, 'x')
     ])
   ]);
@@ -430,13 +410,11 @@ function categoryCard(name="", renameTo="", del=false) {
   const addChanBtn = el('button', {type:'button', class:'small', onclick:()=>chanList.appendChild(channelRow("", "text", name))}, '+ add channel');
   card.append(header, chanList, el('div', {class:'muted small'}, 'Drag channels here to move them into this category.'), addChanBtn);
 
-  // Nested sortable for channels
   new Sortable(chanList, {
     group: 'channels',
     animation: 150,
     handle: '.handle',
     onAdd: (evt)=> {
-      // Update dataset parent for moved channel
       const parentName = card.querySelector('.cat-name').value || "";
       evt.item.dataset.parentCategory = parentName;
     }
@@ -444,23 +422,15 @@ function categoryCard(name="", renameTo="", del=false) {
   return card;
 }
 
-/* ============ Wire up top-level sortables ============ */
+/* ---- Sortables ---- */
 function makeSortable() {
-  // roles (simple vertical drag)
-  new Sortable($('#roles'), {
-    animation: 150,
-    handle: '.handle'
-  });
-
-  // categories (each card moves as a unit)
+  new Sortable($('#roles'), { animation:150, handle:'.handle' });
   new Sortable($('#categories'), {
-    animation: 150,
-    handle: '.handle',
+    animation:150,
+    handle:'.handle',
     onEnd: ()=> fixChannelParentNames()
   });
 }
-
-/* Keep channels’ stored parent name in sync when a category name changes or card moves */
 function fixChannelParentNames() {
   document.querySelectorAll('#categories .card').forEach(card=>{
     const cname = card.querySelector('.cat-name').value || "";
@@ -473,7 +443,7 @@ document.addEventListener('input', (e)=>{
   if (e.target && e.target.classList.contains('cat-name')) fixChannelParentNames();
 });
 
-/* ============ Adders ============ */
+/* ---- Adders ---- */
 $('#addCategoryBtn').addEventListener('click', ()=>{
   $('#categories').appendChild(categoryCard());
   fixChannelParentNames();
@@ -482,7 +452,7 @@ $('#addRoleBtn').addEventListener('click', ()=>{
   $('#roles').appendChild(roleRow());
 });
 
-/* ============ Hydration from payload (FIXED for object categories) ============ */
+/* ---- Hydration (supports string or object categories) ---- */
 function clearList(node){ while(node.firstChild) node.removeChild(node.firstChild); }
 
 function hydrate(payload) {
@@ -490,25 +460,21 @@ function hydrate(payload) {
   const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
   if (radio) radio.checked = true;
 
-  // Roles
   clearList($('#roles'));
   (payload.roles || []).forEach(r=>{
-    $('#roles').appendChild(roleRow(r.name||"", r.color||"#000000", "", false));
+    $('#roles').appendChild(roleRow(r.name||"", r.color||"#000000", ""));
   });
   if ((payload.roles||[]).length===0) $('#roles').appendChild(roleRow());
 
-  // Categories + Channels
   clearList($('#categories'));
   const cats = (payload.categories || []);
   const channels = (payload.channels || []);
 
-  // Create category cards (support string or object)
   cats.forEach(c=>{
     const name = (typeof c === 'string') ? c : (c && c.name ? c.name : "");
-    $('#categories').appendChild(categoryCard(name, "", false));
+    $('#categories').appendChild(categoryCard(name, ""));
   });
 
-  // Place channels under their parent category (by name)
   channels.forEach(ch=>{
     const parent = (ch.category || "").toLowerCase();
     const name = ch.name || "";
@@ -519,10 +485,9 @@ function hydrate(payload) {
       if (cname === parent) target = card;
     });
     if (!target) {
-      // fallback bucket
       let unc = document.querySelector('#categories .card[data-unc="1"]');
       if (!unc) {
-        unc = categoryCard("Uncategorized", "", false);
+        unc = categoryCard("Uncategorized", "");
         unc.dataset.unc = "1";
         $('#categories').appendChild(unc);
       }
@@ -531,7 +496,6 @@ function hydrate(payload) {
     target.querySelector('.channels').appendChild(channelRow(name, type, parent));
   });
 
-  // Danger flags
   $('#prune_roles').checked = !!(payload.prune && payload.prune.roles);
   $('#prune_categories').checked = !!(payload.prune && payload.prune.categories);
   $('#prune_channels').checked = !!(payload.prune && payload.prune.channels);
@@ -539,24 +503,23 @@ function hydrate(payload) {
   fixChannelParentNames();
 }
 
-/* ============ Collect back into payload ============ */
+/* ---- Collect payload (no per-item delete flags) ---- */
 function collectPayload() {
   const form = $('#layoutForm');
   const gid = $('#guild_id').value.trim();
   if (!gid) { alert('Enter Guild ID'); throw new Error('no gid'); }
   const mode = form.mode.value;
 
-  // roles
   const roles = [];
   document.querySelectorAll('#roles .chan').forEach(row=>{
     const name = norm(row.querySelector('.role-name').value);
     const color = row.querySelector('.role-color').value || '#000000';
     const renameTo = norm(row.querySelector('.role-rename').value);
-    const del = row.querySelector('.role-delete').checked;
-    if (name) roles.push({ name, color, _renameTo: renameTo||null, _delete: del||false });
+    const r = { name, color };
+    if (renameTo) r._renameTo = renameTo; // converted to renames below
+    if (name) roles.push(r);
   });
 
-  // categories + channels
   const categories = [];
   const channels = [];
   const renames = { roles:[], categories:[], channels:[] };
@@ -569,37 +532,29 @@ function collectPayload() {
   document.querySelectorAll('#categories .card').forEach(card=>{
     const name = norm(card.querySelector('.cat-name').value);
     const renameTo = norm(card.querySelector('.cat-rename').value);
-    const del = card.querySelector('.cat-delete').checked;
-
     if (name) categories.push(name);
     if (renameTo) renames.categories.push({from: name, to: renameTo});
-    if (del) renames.categories.push({from: name, to: ""}); // delete signal
 
-    // channels within
     card.querySelectorAll('.channels .chan').forEach(row=>{
       const chName = norm(row.querySelector('.ch-name').value);
       const chType = row.querySelector('.ch-type').value;
       const parent = norm(card.querySelector('.cat-name').value);
       const renameC = norm(row.querySelector('.ch-rename').value);
-      const delC = row.querySelector('.ch-delete').checked;
-
       if (chName) channels.push({ name: chName, type: chType, category: parent });
       if (renameC) renames.channels.push({from: chName, to: renameC, category: parent});
-      if (delC) renames.channels.push({from: chName, to: "", category: parent}); // delete signal
     });
   });
 
-  // turn role-level _renameTo/_delete into renames
+  // turn role-level _renameTo into renames
   roles.forEach(r=>{
     if (r._renameTo) renames.roles.push({from: r.name, to: r._renameTo});
-    if (r._delete) renames.roles.push({from: r.name, to: ""});
-    delete r._renameTo; delete r._delete;
+    delete r._renameTo;
   });
 
   return { mode, roles, categories, channels, prune, renames };
 }
 
-/* ============ Load buttons ============ */
+/* ---- Load/Save ---- */
 async function loadLatest() {
   const gid = $('#guild_id').value.trim();
   if (!gid) { alert('Enter Guild ID'); return; }
@@ -621,7 +576,6 @@ async function loadLive() {
 document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
 document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
 
-/* ============ Save ============ */
 async function saveLayout() {
   try{
     const gid = $('#guild_id').value.trim();
@@ -635,13 +589,12 @@ async function saveLayout() {
     if (data.ok && data.no_change) alert(`No changes detected. Current version is still ${data.version}.`);
     else if (data.ok) alert(`Saved version ${data.version}`);
     else alert(data.error || 'Error');
-  }catch(e){ /* already alerted */ }
+  }catch(e){}
 }
 document.getElementById('saveBtn').addEventListener('click', saveLayout);
 
-/* ============ Init ============ */
+/* ---- Init ---- */
 document.addEventListener('DOMContentLoaded', ()=>{
-  // Seed with empty cards/rows so user sees structure immediately
   $('#roles').appendChild(roleRow());
   $('#categories').appendChild(categoryCard("General"));
   makeSortable();
