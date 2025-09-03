@@ -270,7 +270,6 @@ _FORM_HTML = r"""
     fieldset{margin:16px 0;padding:12px;border-radius:8px;border:1px solid var(--border)}
     button{margin-top:6px}
     .pill{font-size:12px;padding:2px 8px;border-radius:999px;background:#eef}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px}
     .cat-header{display:flex;align-items:center;gap:8px;justify-content:space-between}
     .cat-title{display:flex;gap:8px;align-items:center}
@@ -293,7 +292,7 @@ _FORM_HTML = r"""
 </head>
 <body>
   <h1>🧱 MessiahBot — Server Builder</h1>
-  <p class="muted">Reorder categories by dragging their card. Drag channels inside a category or between categories. Optional rename/delete are inline.</p>
+  <p class="muted">Reorder categories by dragging their card. Drag channels within a category or between categories. Optional rename/delete are inline.</p>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
@@ -483,7 +482,7 @@ $('#addRoleBtn').addEventListener('click', ()=>{
   $('#roles').appendChild(roleRow());
 });
 
-/* ============ Hydration from payload ============ */
+/* ============ Hydration from payload (FIXED for object categories) ============ */
 function clearList(node){ while(node.firstChild) node.removeChild(node.firstChild); }
 
 function hydrate(payload) {
@@ -491,33 +490,36 @@ function hydrate(payload) {
   const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
   if (radio) radio.checked = true;
 
+  // Roles
   clearList($('#roles'));
   (payload.roles || []).forEach(r=>{
     $('#roles').appendChild(roleRow(r.name||"", r.color||"#000000", "", false));
   });
   if ((payload.roles||[]).length===0) $('#roles').appendChild(roleRow());
 
+  // Categories + Channels
   clearList($('#categories'));
   const cats = (payload.categories || []);
   const channels = (payload.channels || []);
 
-  // Preserve order: build cards first
-  cats.forEach(cn=>{
-    $('#categories').appendChild(categoryCard(cn, "", false));
+  // Create category cards (support string or object)
+  cats.forEach(c=>{
+    const name = (typeof c === 'string') ? c : (c && c.name ? c.name : "");
+    $('#categories').appendChild(categoryCard(name, "", false));
   });
-  // Then place channels into their parent card (or uncategorized)
+
+  // Place channels under their parent category (by name)
   channels.forEach(ch=>{
-    const parent = norm(ch.category||"");
-    const name = ch.name||"";
-    const type = (ch.type||'text');
-    // find matching category card by current value of cat-name
+    const parent = (ch.category || "").toLowerCase();
+    const name = ch.name || "";
+    const type = (ch.type || 'text');
     let target = null;
     document.querySelectorAll('#categories .card').forEach(card=>{
-      const cname = norm(card.querySelector('.cat-name').value);
+      const cname = (card.querySelector('.cat-name').value || "").toLowerCase();
       if (cname === parent) target = card;
     });
     if (!target) {
-      // Make an "Uncategorized" holder if needed
+      // fallback bucket
       let unc = document.querySelector('#categories .card[data-unc="1"]');
       if (!unc) {
         unc = categoryCard("Uncategorized", "", false);
@@ -529,7 +531,7 @@ function hydrate(payload) {
     target.querySelector('.channels').appendChild(channelRow(name, type, parent));
   });
 
-  // Danger flags default off
+  // Danger flags
   $('#prune_roles').checked = !!(payload.prune && payload.prune.roles);
   $('#prune_categories').checked = !!(payload.prune && payload.prune.categories);
   $('#prune_channels').checked = !!(payload.prune && payload.prune.channels);
@@ -571,7 +573,7 @@ function collectPayload() {
 
     if (name) categories.push(name);
     if (renameTo) renames.categories.push({from: name, to: renameTo});
-    if (del) renames.categories.push({from: name, to: ""}); // delete signal (handled by bot)
+    if (del) renames.categories.push({from: name, to: ""}); // delete signal
 
     // channels within
     card.querySelectorAll('.channels .chan').forEach(row=>{
