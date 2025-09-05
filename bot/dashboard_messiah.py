@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify, render_template_string
 
 # --- Config / DB driver detection ---
 DATABASE_URL = os.getenv("DATABASE_URL")
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # needed to read live server via REST
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # needed to read live server via Discord REST
 
 _psycopg_ok = False
 try:
@@ -95,10 +95,6 @@ def live_layout(guild_id: str):
     """
     Build a layout from the current live Discord server using the REST API.
     Requires DISCORD_BOT_TOKEN and that the bot is in the guild.
-    Includes:
-      - roles: name, color, permissions (bitfield)
-      - categories: name, position, overwrites
-      - channels: name, type, category, position, topic, overwrites
     """
     try:
         import requests
@@ -111,7 +107,7 @@ def live_layout(guild_id: str):
     base = "https://discord.com/api/v10"
     headers = _discord_headers()
 
-    # 1) roles
+    # roles
     r_roles = requests.get(f"{base}/guilds/{guild_id}/roles", headers=headers, timeout=20)
     if r_roles.status_code == 403:
         return jsonify({"ok": False, "error": "Forbidden: bot lacks permission or is not in this guild"}), 403
@@ -119,86 +115,47 @@ def live_layout(guild_id: str):
         return jsonify({"ok": False, "error": "Guild not found (check Guild ID)"}), 404
     if r_roles.status_code >= 400:
         return jsonify({"ok": False, "error": f"Discord roles error {r_roles.status_code}: {r_roles.text}"}), 502
-    roles_json = r_roles.json()  # list of role objects
+    roles_json = r_roles.json()
 
-    role_id_to_name = {}
-    roles = []
-    for r in roles_json:
-        if r.get("managed"):
-            continue
-        if r.get("name") == "@everyone":
-            # @everyone can have permissions but we skip it for layout roles
-            continue
-        color_int = r.get("color") or 0
-        perm_int = int(r.get("permissions", "0"))
-        role_id_to_name[str(r.get("id"))] = r.get("name", "")
-        roles.append({
-            "name": r.get("name", ""),
-            "color": f"#{color_int:06x}",
-            "permissions": perm_int
-        })
-
-    # 2) channels
+    # channels
     r_channels = requests.get(f"{base}/guilds/{guild_id}/channels", headers=headers, timeout=20)
     if r_channels.status_code >= 400:
         return jsonify({"ok": False, "error": f"Discord channels error {r_channels.status_code}: {r_channels.text}"}), 502
     channels_json = r_channels.json()
 
-    # Build category list + map id->(name, position, overwrites)
-    categories = []
-    cat_map = {}
-    for c in channels_json:
-        if c.get("type") == 4:  # category
-            name = c.get("name", "")
-            pos = c.get("position", 0)
-            ows = []
-            for ow in c.get("permission_overwrites", []) or []:
-                # ow: {id, type:0 role|1 member, allow, deny}
-                t = "role" if ow.get("type") == 0 else "member"
-                allow = int(ow.get("allow", "0"))
-                deny  = int(ow.get("deny", "0"))
-                entry = {"type": t, "id": str(ow.get("id")), "allow": allow, "deny": deny}
-                # decorate name for roles where possible
-                if t == "role":
-                    entry["name"] = role_id_to_name.get(str(ow.get("id")), "")
-                ows.append(entry)
-            categories.append({"name": name, "position": pos, "overwrites": ows})
-            cat_map[c["id"]] = {"name": name, "position": pos}
+    # Convert to our schema
+    # Skip @everyone and managed roles (like integrations)
+    roles = []
+    for r in roles_json:
+        if r.get("managed"):
+            continue
+        if r.get("name") == "@everyone":
+            continue
+        color_int = r.get("color") or 0
+        roles.append({"name": r.get("name", ""), "color": f"#{color_int:06x}"})
 
-    # Channels: include type, parent category name, position, topic, overwrites
+    # Channels: types → 0=text, 2=voice, 4=category, 15=forum
+    categories = [c["name"] for c in channels_json if c.get("type") == 4]
+    # Build a map id->name for parent category lookup
+    cat_map = {c["id"]: c["name"] for c in channels_json if c.get("type") == 4}
+
     chans = []
-    # sort by position (Discord returns positions)
-    channels_sorted = sorted(channels_json, key=lambda x: x.get("position", 0))
+    # Sort by 'position' if present
+    def pos(x): return x.get("position", 0)
+    channels_sorted = sorted(channels_json, key=pos)
+
     for ch in channels_sorted:
         t = ch.get("type")
-        if t == 4:
-            continue  # already handled as categories
         name = ch.get("name", "")
         parent_id = ch.get("parent_id")
-        parent_name = cat_map.get(parent_id, {}).get("name", "") if parent_id else ""
-        pos = ch.get("position", 0)
-        # topics: for text/forum; voice has none
-        topic = ch.get("topic", "") if t in (0, 15) else ""
-
-        ows = []
-        for ow in ch.get("permission_overwrites", []) or []:
-            typ = "role" if ow.get("type") == 0 else "member"
-            allow = int(ow.get("allow", "0"))
-            deny = int(ow.get("deny", "0"))
-            entry = {"type": typ, "id": str(ow.get("id")), "allow": allow, "deny": deny}
-            if typ == "role":
-                entry["name"] = role_id_to_name.get(str(ow.get("id")), "")
-            ows.append(entry)
-
+        parent_name = cat_map.get(parent_id, "") if parent_id else ""
         if t == 0:   # text
-            chans.append({"name": name, "type": "text", "category": parent_name, "position": pos, "topic": topic, "overwrites": ows})
+            chans.append({"name": name, "type": "text", "category": parent_name})
         elif t == 2: # voice
-            chans.append({"name": name, "type": "voice", "category": parent_name, "position": pos, "topic": "", "overwrites": ows})
+            chans.append({"name": name, "type": "voice", "category": parent_name})
         elif t == 15:  # forum
-            chans.append({"name": name, "type": "forum", "category": parent_name, "position": pos, "topic": topic, "overwrites": ows})
-        else:
-            # other types ignored
-            pass
+            chans.append({"name": name, "type": "forum", "category": parent_name})
+        # categories (type 4) are handled in categories list
 
     payload = {
         "mode": "update",
@@ -215,7 +172,7 @@ def save_layout(guild_id: str):
     """
     Save a NEW versioned layout payload for the given guild_id.
     Only inserts a new version if the payload actually changed (de-dupe).
-    Body JSON: { mode, roles[], categories[], channels[], prune?, renames?, community? }
+    Body JSON: { mode, roles[], categories[], channels[] [, prune, renames] }
     """
     if not (_psycopg_ok and DATABASE_URL):
         return jsonify({"ok": False, "error": "Database not configured"}), 500
@@ -260,60 +217,32 @@ _FORM_HTML = r"""
 <html>
 <head>
   <meta charset="utf-8">
-  <title>MessiahBot — Server Builder</title>
+  <title>MessiahBot — Submit Server Layout</title>
   <style>
-    :root { --card:#f7f7fb; --border:#e3e3ee; --muted:#666; }
-    body{font-family:sans-serif;max-width:1150px;margin:24px auto;padding:0 12px}
-    h1{margin-bottom:8px}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    .stack{display:flex;flex-direction:column;gap:12px}
-    fieldset{margin:16px 0;padding:12px;border-radius:8px;border:1px solid var(--border)}
+    body{font-family:sans-serif;max-width:900px;margin:24px auto;padding:0 12px}
+    fieldset{margin:16px 0;padding:12px;border-radius:8px}
     button{margin-top:6px}
-    .pill{font-size:12px;padding:2px 8px;border-radius:999px;background:#eef}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px}
-    .cat-header{display:flex;align-items:center;gap:8px;justify-content:space-between}
-    .cat-title{display:flex;gap:8px;align-items:center}
-    .muted{color:var(--muted);font-size:12px}
-    .handle{cursor:grab;user-select:none}
-    .small{font-size:12px}
-    .inline{display:inline-flex;gap:6px;align-items:center}
-    .list{display:flex;flex-direction:column;gap:8px;min-height:4px}
-    .rowbox{background:white;border:1px dashed var(--border);border-radius:10px;padding:8px;display:flex;gap:8px;align-items:flex-start;justify-content:space-between}
-    .left{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    .col{display:flex;flex-direction:column;gap:6px}
-    .section{margin-top:20px}
-    input[type="text"], input[type="number"]{padding:6px 8px;border:1px solid var(--border);border-radius:8px;min-width:160px}
-    select{padding:6px 8px;border:1px solid var(--border);border-radius:8px}
-    details > summary { cursor: pointer; user-select: none; }
-    .perm-grid{display:grid;grid-template-columns: 160px 110px 110px 110px;gap:6px;align-items:center}
-    .perm-grid .hdr{font-weight:600}
-    .note{background:#fffbdd;border:1px solid #ffe08a;padding:8px;border-radius:8px}
-    .chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:4px 8px}
+    .row{margin:6px 0; padding:6px; border:1px solid #ddd; border-radius:6px}
+    .inline{display:inline-flex; align-items:center; gap:6px}
+    .muted{color:#666; font-size:12px}
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 </head>
 <body>
-  <h1>🧱 MessiahBot — Server Builder</h1>
-  <p class="muted">Reorder categories by dragging their card. Drag channels within/between categories. Use the <strong>x</strong> to remove items from the payload; global prune toggles control deletion on update.</p>
+  <h1>🧱 MessiahBot — Submit Server Layout</h1>
+  <p>Enter your Guild ID, then you can <strong>Load From Live Server</strong> or <strong>Load Latest From DB</strong>, edit, and <strong>Save Layout</strong>.</p>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
     <a href="/routes" target="_blank">/routes</a>
   </p>
 
-  <form id="layoutForm" class="stack">
-    <div class="row">
-      <label>Guild ID <input type="text" id="guild_id" required></label>
-      <span class="pill" id="loadHint">Load “Live” to pull current server structure.</span>
-    </div>
+  <form id="layoutForm">
+    <label>Guild ID <input type="text" id="guild_id" required></label>
 
-    <div class="row">
+    <p>
       <button type="button" id="loadLiveBtn">Load From Live Server</button>
       <button type="button" id="loadLatestBtn">Load Latest From DB</button>
-      <button type="button" id="addCategoryBtn">Add Category</button>
-      <button type="button" id="addRoleBtn">Add Role</button>
-      <button type="button" id="saveBtn">Save Layout</button>
-    </div>
+    </p>
 
     <fieldset>
       <legend>Mode</legend>
@@ -321,528 +250,309 @@ _FORM_HTML = r"""
       <label><input type="radio" name="mode" value="update"> Update</label>
     </fieldset>
 
-    <!-- COMMUNITY SETTINGS -->
-    <fieldset>
-      <legend>Community Settings</legend>
-      <label class="inline"><input type="checkbox" id="community_enable_on_build"> Enable Community on Build</label>
-      <details>
-        <summary class="small">Advanced (applies on Update if server is already Community)</summary>
-        <div class="row">
-          <label>Verification
-            <select id="community_verification">
-              <option value="">(leave as-is)</option>
-              <option value="none">None</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="very_high">Very High</option>
-            </select>
-          </label>
-          <label>Default Notifications
-            <select id="community_notifications">
-              <option value="">(leave as-is)</option>
-              <option value="all_messages">All Messages</option>
-              <option value="only_mentions">Only @mentions</option>
-            </select>
-          </label>
-          <label>Explicit Media Filter
-            <select id="community_explicit_filter">
-              <option value="">(leave as-is)</option>
-              <option value="disabled">Disabled</option>
-              <option value="members_without_roles">Members w/o roles</option>
-              <option value="all_members">All members</option>
-            </select>
-          </label>
-        </div>
-        <div class="row">
-          <label>Rules Channel (name) <input type="text" id="community_rules_channel" placeholder="e.g. rules"></label>
-          <label>Community Updates Channel (name) <input type="text" id="community_updates_channel" placeholder="e.g. announcements"></label>
-        </div>
-        <p class="muted small">If channels don’t exist yet, the bot will create them and set them as the system channels.</p>
-      </details>
-    </fieldset>
+    <h3>Roles</h3>
+    <div id="roles"></div>
+    <button type="button" onclick="addRole()">Add Role</button>
 
-    <section class="section">
-      <h3>Roles</h3>
-      <div id="roles" class="list"></div>
-      <p class="small muted">Set colors, optional rename, and a few default permissions per role.</p>
-    </section>
+    <h3>Categories</h3>
+    <div id="cats"></div>
+    <button type="button" onclick="addCat()">Add Category</button>
 
-    <section class="section">
-      <h3>Categories & Channels</h3>
-      <div id="categories" class="stack"></div>
-    </section>
+    <h3>Channels</h3>
+    <div id="chans"></div>
+    <button type="button" onclick="addChan()">Add Channel</button>
 
-    <section class="section">
-      <h3>Danger Zone</h3>
-      <p class="note small">
-        <strong>Delete not listed</strong>: when enabled, anything you don’t include in this form will be removed on update.
-      </p>
-      <label class="inline"><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
-      <label class="inline"><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
-      <label class="inline"><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
-    </section>
+    <h3>Danger Zone</h3>
+    <p class="muted"><em>These options can delete or rename live items. Use carefully.</em></p>
+    <label><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
+    <label><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
+    <label><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
+
+    <h4>Role Renames</h4>
+    <div id="roleRenames"></div>
+    <button type="button" onclick="addRename('roleRenames')">Add Role Rename</button>
+
+    <h4>Category Renames</h4>
+    <div id="catRenames"></div>
+    <button type="button" onclick="addRename('catRenames')">Add Category Rename</button>
+
+    <h4>Channel Renames</h4>
+    <div id="chanRenames"></div>
+    <button type="button" onclick="addRename('chanRenames')">Add Channel Rename</button>
+
+    <p>
+      <!-- Keep inline onclick as a safety net -->
+      <button type="button" id="saveBtn" onclick="saveLayout()">Save Layout</button>
+    </p>
   </form>
 
-<script>
-const $ = sel => document.querySelector(sel);
-const el = (tag, attrs={}, children=[]) => {
-  const node = document.createElement(tag);
-  for (const [k,v] of Object.entries(attrs)) {
-    if (k === 'class') node.className = v;
-    else if (k === 'dataset') Object.assign(node.dataset, v);
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.substring(2), v);
-    else if (k === 'html') node.innerHTML = v;
-    else node.setAttribute(k, v);
-  }
-  (Array.isArray(children)?children:[children]).forEach(c=>{
-    if (c==null) return;
-    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  <script>
+  // --- Boot / global error traps ------------------------------------------
+  console.log('[Form] script booted');
+  window.addEventListener('error', (e) => {
+    console.error('Uncaught error:', e.error || e.message || e);
+    alert('Form error: ' + (e.message || (e.error && e.error.message) || 'unknown'));
   });
-  return node;
-};
-const norm = s => (s||'').trim();
-
-/* ------- Role row with quick default permissions ------- */
-function rolePermToggles(perms = {}){
-  // curated role-level defaults
-  const keys = [
-    ['admin','Admin'],
-    ['manage_channels','Manage Channels'],
-    ['manage_roles','Manage Roles'],
-    ['view_channel','View'],
-    ['send_messages','Send'],
-    ['connect','Connect (voice)'],
-    ['speak','Speak (voice)'],
-  ];
-  const wrap = el('div', {class:'row small'});
-  keys.forEach(([k,label])=>{
-    const id = `rp_${k}_${Math.random().toString(36).slice(2,7)}`;
-    wrap.append(
-      el('label', {class:'inline', for:id}, [
-        el('input', {type:'checkbox', id, class:'role-perm', dataset:{key:k}, ...(perms[k] ? {checked:true}:{})}),
-        label
-      ])
-    );
-  });
-  return wrap;
-}
-function roleRow(name="", color="#000000", renameTo="", perms = {}) {
-  const row = el('div', {class:'rowbox role'});
-  const left = el('div', {class:'left'}, [
-    el('span', {class:'handle', title:'Drag'}, '⠿'),
-    el('input', {type:'text', placeholder:'Role name', value:name, class:'role-name'}),
-    el('input', {type:'color', value:color || '#000000', class:'role-color'}),
-    el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'role-rename small', style:'min-width:140px'})
-  ]);
-  const right = el('div', {class:'col'}, [
-    rolePermToggles(perms),
-    el('div', {class:'row', style:'justify-content:flex-end'}, [
-      el('button', {type:'button', class:'small', onclick:()=>row.remove()}, 'x')
-    ])
-  ]);
-  row.append(left, right);
-  return row;
-}
-
-/* ------- Tri-state overwrite widget (inherit/allow/deny) ------- */
-function triSelect(val="inherit"){
-  const s = el('select', {class:'ow-val'});
-  [['inherit','inherit'],['allow','allow'],['deny','deny']].forEach(([v,l])=>{
-    s.append(el('option', {value:v, ...(v===val?{selected:true}:{})}, l));
-  });
-  return s;
-}
-function overwriteEditor(rolesList = [], existing = {}){
-  // existing: { role_name: {view:'allow|deny|inherit', send:..., connect:..., speak:..., manage_channels:..., manage_roles:...} }
-  const perms = ['view','send','connect','speak','manage_channels','manage_roles'];
-  const grid = el('div', {class:'perm-grid'});
-  grid.append(el('div', {class:'hdr'}, 'Role'));
-  perms.forEach(p=>grid.append(el('div', {class:'hdr'}, p.replace('_',' '))));
-
-  rolesList.forEach(r=>{
-    const rn = r.name || r;
-    const row = existing[rn] || {};
-    grid.append(el('div', {}, rn));
-    perms.forEach(p=>{
-      grid.append(triSelect(row[p] || 'inherit'));
-    });
-  });
-  return grid;
-}
-
-/* ------- Channel row with options + overwrites ------- */
-function channelRow(name="", type="text", categoryName="", renameTo="", options = {}, ow = {}) {
-  const row = el('div', {class:'rowbox chan', dataset:{channelType:type}});
-  const opts = {
-    nsfw: !!options.nsfw,
-    age_restricted: !!options.age_restricted,
-    slowmode: options.slowmode || 0,
-    announcement: !!options.announcement,
-    topic: options.topic || ""
-  };
-
-  const leftTop = el('div', {class:'left'}, [
-    el('span', {class:'handle', title:'Drag'}, '⠿'),
-    el('input', {type:'text', placeholder:'Channel name', value:name, class:'ch-name'}),
-    el('select', {class:'ch-type'}, [
-      el('option', {value:'text', ...(type==='text'?{selected:true}:{})}, 'text'),
-      el('option', {value:'voice', ...(type==='voice'?{selected:true}:{})}, 'voice'),
-      el('option', {value:'forum', ...(type==='forum'?{selected:true}:{})}, 'forum'),
-      el('option', {value:'announcement', ...(type==='announcement'?{selected:true}:{})}, 'announcement'),
-    ]),
-    el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'ch-rename small', style:'min-width:140px'}),
-  ]);
-
-  const rightTop = el('div', {class:'row small'}, [
-    el('label', {class:'inline'}, [el('input', {type:'checkbox', class:'ch-nsfw', ...(opts.nsfw?{checked:true}:{})}), 'NSFW']),
-    el('label', {class:'inline'}, [el('input', {type:'checkbox', class:'ch-age', ...(opts.age_restricted?{checked:true}:{})}), 'Age-restricted']),
-    el('label', {class:'inline'}, ['Slowmode (s) ', el('input', {type:'number', min:'0', max:'21600', value:String(opts.slowmode), class:'ch-slowmode', style:'width:90px'})]),
-  ]);
-
-  const topicRow = el('div', {class:'row small'}, [
-    el('label', {}, ['Topic ', el('input', {type:'text', class:'ch-topic', value:opts.topic, placeholder:'Optional channel topic', style:'min-width:260px'})]),
-    el('span', {class:'muted small'}, 'Announcement toggle is implied if type=announcement')
-  ]);
-
-  const overWrap = el('details', {}, [
-    el('summary', {class:'small'}, 'Permissions (overrides)'),
-    el('div', {class:'permHost'})
-  ]);
-
-  const right = el('div', {class:'col', style:'flex:1;'}, [
-    el('div', {class:'row', style:'justify-content:flex-end'}, [ el('button', {type:'button', class:'small', onclick:()=>row.remove()}, 'x') ]),
-    rightTop,
-    topicRow,
-    overWrap
-  ]);
-
-  row.append(leftTop, right);
-
-  // perms will be filled later when we know the roles list
-  row.dataset.parentCategory = categoryName || "";
-  row._owExisting = ow || {};
-  return row;
-}
-
-/* ------- Category card with overwrites per category + channels list ------- */
-function categoryCard(name="", renameTo="", catOw = {}) {
-  const card = el('div', {class:'card cat', draggable:false});
-  const header = el('div', {class:'cat-header'}, [
-    el('div', {class:'cat-title'}, [
-      el('span', {class:'handle', title:'Drag'}, '⠿'),
-      el('input', {type:'text', placeholder:'Category name', value:name, class:'cat-name'}),
-      el('input', {type:'text', placeholder:'Rename → (optional)', value:renameTo, class:'cat-rename small', style:'min-width:160px'})
-    ]),
-    el('div', {}, [ el('button', {type:'button', class:'small', onclick:()=>card.remove()}, 'x') ])
-  ]);
-
-  const catOver = el('details', {}, [
-    el('summary', {class:'small'}, 'Permissions (category overwrites)'),
-    el('div', {class:'catPermHost'})
-  ]);
-
-  const chanList = el('div', {class:'list channels'});
-  const addChanBtn = el('button', {type:'button', class:'small', onclick:()=>chanList.appendChild(channelRow("", "text", name))}, '+ add channel');
-
-  card.append(header, catOver, el('div', {class:'muted small'}, 'Drag channels here to move them into this category.'), chanList, addChanBtn);
-
-  new Sortable(chanList, {
-    group: 'channels',
-    animation: 150,
-    handle: '.handle',
-    onAdd: (evt)=> {
-      const parentName = card.querySelector('.cat-name').value || "";
-      evt.item.dataset.parentCategory = parentName;
-    }
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error('Unhandled promise rejection:', e.reason);
+    alert('Save failed: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
   });
 
-  // store existing ow until roles are known
-  card._catOwExisting = catOw || {};
-  return card;
-}
+  document.addEventListener('DOMContentLoaded', () => {
+    console.log('[Form] DOM ready');
 
-/* ------- Sortables & helpers ------- */
-function makeSortable() {
-  new Sortable($('#roles'), { animation:150, handle:'.handle' });
-  new Sortable($('#categories'), { animation:150, handle:'.handle', onEnd: ()=> fixChannelParentNames() });
-}
-function fixChannelParentNames() {
-  document.querySelectorAll('#categories .card').forEach(card=>{
-    const cname = card.querySelector('.cat-name').value || "";
-    card.querySelectorAll('.channels .chan').forEach(ch=>{
-      ch.dataset.parentCategory = cname;
-    });
-  });
-}
-document.addEventListener('input', (e)=>{
-  if (e.target && e.target.classList.contains('cat-name')) fixChannelParentNames();
-});
-
-/* ------- Adders ------- */
-$('#addCategoryBtn').addEventListener('click', ()=>{
-  $('#categories').appendChild(categoryCard());
-  fixChannelParentNames();
-});
-$('#addRoleBtn').addEventListener('click', ()=>{
-  $('#roles').appendChild(roleRow());
-});
-
-/* ------- Build overwrite editors once roles are known ------- */
-function buildOverwriteEditors() {
-  const roles = collectRolesForOw(); // {name,color,perms}
-  const compact = roles.map(r=>({name:r.name}));
-
-  // Categories
-  document.querySelectorAll('#categories .card').forEach(card=>{
-    const host = card.querySelector('.catPermHost');
-    host.innerHTML = '';
-    host.appendChild(overwriteEditor(compact, card._catOwExisting || {}));
-  });
-  // Channels
-  document.querySelectorAll('#categories .card .channels .chan').forEach(row=>{
-    const host = row.querySelector('.permHost');
-    host.innerHTML = '';
-    host.appendChild(overwriteEditor(compact, row._owExisting || {}));
-  });
-}
-function collectRolesForOw(){
-  const roles = [];
-  document.querySelectorAll('#roles .rowbox.role').forEach(row=>{
-    const name = norm(row.querySelector('.role-name').value);
-    const color = row.querySelector('.role-color').value || '#000000';
-    const perms = {};
-    row.querySelectorAll('.role-perm').forEach(cb=>{
-      const key = cb.dataset.key;
-      perms[key] = cb.checked ? true : false;
-    });
-    if (name) roles.push({name, color, perms});
-  });
-  return roles;
-}
-
-/* ------- Hydration ------- */
-function clearList(node){ while(node.firstChild) node.removeChild(node.firstChild); }
-
-function hydrate(payload) {
-  const mode = (payload.mode || 'build');
-  const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
-  if (radio) radio.checked = true;
-
-  // community
-  $('#community_enable_on_build').checked = !!(payload.community && payload.community.enable_on_build);
-  $('#community_verification').value = (payload.community && payload.community.settings && payload.community.settings.verification) || '';
-  $('#community_notifications').value = (payload.community && payload.community.settings && payload.community.settings.notifications) || '';
-  $('#community_explicit_filter').value = (payload.community && payload.community.settings && payload.community.settings.explicit_filter) || '';
-  $('#community_rules_channel').value = (payload.community && payload.community.settings && payload.community.settings.rules_channel) || '';
-  $('#community_updates_channel').value = (payload.community && payload.community.settings && payload.community.settings.updates_channel) || '';
-
-  clearList($('#roles'));
-  (payload.roles || []).forEach(r=>{
-    $('#roles').appendChild(roleRow(r.name||"", r.color||"#000000", "", r.perms||{}));
-  });
-  if ((payload.roles||[]).length===0) $('#roles').appendChild(roleRow());
-
-  clearList($('#categories'));
-  const cats = (payload.categories || []);
-  const channels = (payload.channels || []);
-
-  // categories may be strings or objects {name, overwrites}
-  cats.forEach(c=>{
-    const name = (typeof c === 'string') ? c : (c && c.name ? c.name : "");
-    const catOw = (typeof c === 'object' && c.overwrites) ? c.overwrites : {};
-    $('#categories').appendChild(categoryCard(name, "", catOw));
-  });
-
-  // place channels into categories (or Uncategorized)
-  channels.forEach(ch=>{
-    const parent = (ch.category || "").toLowerCase();
-    const name = ch.name || "";
-    const type = (ch.type || 'text');
-    const opts = ch.options || {};
-    const ow = ch.overwrites || {};
-
-    let target = null;
-    document.querySelectorAll('#categories .card').forEach(card=>{
-      const cname = (card.querySelector('.cat-name').value || "").toLowerCase();
-      if (cname === parent) target = card;
-    });
-    if (!target) {
-      let unc = document.querySelector('#categories .card[data-unc="1"]');
-      if (!unc) {
-        unc = categoryCard("Uncategorized", "");
-        unc.dataset.unc = "1";
-        $('#categories').appendChild(unc);
+    // prevent Enter in inputs from submitting/refreshing
+    document.getElementById('layoutForm').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+        e.preventDefault();
       }
-      target = unc;
-    }
-    target.querySelector('.channels').appendChild(channelRow(name, type, parent, "", opts, ow));
+    });
+
+    // Attach buttons (redundant with inline onclick, but nice)
+    document.getElementById('loadLatestBtn')?.addEventListener('click', loadLatest);
+    document.getElementById('loadLiveBtn')?.addEventListener('click', loadLive);
+    document.getElementById('saveBtn')?.addEventListener('click', saveLayout);
+
+    // seed one empty row for each section
+    if (!document.querySelector('#roles > .row')) addRole();
+    if (!document.querySelector('#cats > .row')) addCat();
+    if (!document.querySelector('#chans > .row')) addChan();
   });
 
-  $('#prune_roles').checked = !!(payload.prune && payload.prune.roles);
-  $('#prune_categories').checked = !!(payload.prune && payload.prune.categories);
-  $('#prune_channels').checked = !!(payload.prune && payload.prune.channels);
-
-  // after roles exist, build overwrite editors
-  buildOverwriteEditors();
-  fixChannelParentNames();
-}
-
-/* ------- Collect payload ------- */
-function collectPermGrid(host){
-  const out = {};
-  // layout: [Role] [view] [send] [connect] [speak] [manage_channels] [manage_roles]
-  const rows = Array.from(host.querySelectorAll('.perm-grid'));
-  if (rows.length === 0) return out;
-  const grid = rows[0];
-  const children = Array.from(grid.children);
-  // 7 columns per row (Role + 6 perms)
-  for (let i = 7; i < children.length; i += 7){
-    const roleName = children[i].textContent.trim();
-    const vals = {
-      view: children[i+1].querySelector('select').value,
-      send: children[i+2].querySelector('select').value,
-      connect: children[i+3].querySelector('select').value,
-      speak: children[i+4].querySelector('select').value,
-      manage_channels: children[i+5].querySelector('select').value,
-      manage_roles: children[i+6].querySelector('select').value,
-    };
-    out[roleName] = vals;
+  // --- Small utils ---------------------------------------------------------
+  function asStr(v){ return (v==null ? '' : String(v)); }
+  function asBool(v){ return !!v; }
+  function asColor(v){
+    let s = asStr(v).trim();
+    if (!s) return '#000000';
+    if (s[0] !== '#') s = '#' + s;
+    if (!/^#[0-9a-f]{6}$/i.test(s)) return '#000000';
+    return s.toLowerCase();
   }
-  return out;
-}
+  function cleanName(v){
+    if (v && typeof v === 'object' && 'name' in v) v = v.name;
+    return asStr(v).trim();
+  }
 
-function collectPayload() {
-  const form = $('#layoutForm');
-  const gid = $('#guild_id').value.trim();
-  if (!gid) { alert('Enter Guild ID'); throw new Error('no gid'); }
-  const mode = form.mode.value;
+  // --- Row builders --------------------------------------------------------
+  function moveRowUp(row){
+    const prev = row?.previousElementSibling;
+    if (!prev) return;
+    row.parentElement.insertBefore(row, prev);
+  }
+  function moveRowDown(row){
+    const next = row?.nextElementSibling;
+    if (!next) return;
+    row.parentElement.insertBefore(next, row);
+  }
 
-  // roles w/ default perms + renames
-  const roles = [];
-  document.querySelectorAll('#roles .rowbox.role').forEach(row=>{
-    const name = norm(row.querySelector('.role-name').value);
-    const color = row.querySelector('.role-color').value || '#000000';
-    const renameTo = norm(row.querySelector('.role-rename').value);
-    const perms = {};
-    row.querySelectorAll('.role-perm').forEach(cb=>{
-      const key = cb.dataset.key;
-      perms[key] = cb.checked ? true : false;
+  function addRole(name = "", color = "#000000"){
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.innerHTML = `
+      <div class="inline">
+        <button type="button" title="Up" onclick="moveRowUp(this.closest('.row'))">↑</button>
+        <button type="button" title="Down" onclick="moveRowDown(this.closest('.row'))">↓</button>
+        <input placeholder="Role" name="role_name" value="${cleanName(name)}">
+        <input type="color" name="role_color" value="${asColor(color)}">
+        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
+      </div>`;
+    document.getElementById('roles').appendChild(d);
+  }
+
+  function addCat(name = ""){
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.dataset.name = cleanName(name);
+    d.innerHTML = `
+      <div class="inline">
+        <button type="button" title="Up" onclick="moveRowUp(this.closest('.row'))">↑</button>
+        <button type="button" title="Down" onclick="moveRowDown(this.closest('.row'))">↓</button>
+        <input placeholder="Category" name="category" value="${cleanName(name)}"
+               oninput="this.closest('.row').dataset.name = this.value.trim()">
+        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
+      </div>`;
+    document.getElementById('cats').appendChild(d);
+  }
+
+  function addChan(name = "", type = "text", category = ""){
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.dataset.name = cleanName(name);
+    d.dataset.type = ['text','voice','forum'].includes((type||'').toLowerCase()) ? type.toLowerCase() : 'text';
+    d.dataset.category = cleanName(category);
+    d.innerHTML = `
+      <div class="inline">
+        <button type="button" title="Up" onclick="moveRowUp(this.closest('.row'))">↑</button>
+        <button type="button" title="Down" onclick="moveRowDown(this.closest('.row'))">↓</button>
+        <input placeholder="Channel" name="channel_name" value="${cleanName(name)}"
+               oninput="this.closest('.row').dataset.name = this.value.trim()">
+        <select name="channel_type" onchange="this.closest('.row').dataset.type = this.value">
+          <option ${d.dataset.type==='text' ? 'selected':''}>text</option>
+          <option ${d.dataset.type==='voice'? 'selected':''}>voice</option>
+          <option ${d.dataset.type==='forum'? 'selected':''}>forum</option>
+        </select>
+        <input placeholder="Parent Category" name="channel_category" value="${cleanName(category)}"
+               oninput="this.closest('.row').dataset.category = this.value.trim()">
+        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
+      </div>`;
+    document.getElementById('chans').appendChild(d);
+  }
+
+  // --- Renames UI ----------------------------------------------------------
+  function addRename(containerId, fromVal="", toVal="") {
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.innerHTML = `
+      <div class="inline">
+        <input placeholder="From name" class="rename_from" value="${cleanName(fromVal)}">
+        <span>→</span>
+        <input placeholder="To name" class="rename_to" value="${cleanName(toVal)}">
+        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
+      </div>`;
+    document.getElementById(containerId).appendChild(d);
+  }
+  function collectRenames(containerId){
+    const out = [];
+    document.querySelectorAll('#'+containerId+' .row').forEach(d => {
+      const from = cleanName(d.querySelector('.rename_from')?.value);
+      const to   = cleanName(d.querySelector('.rename_to')?.value);
+      if (from && to) out.push({from, to});
     });
-    if (!name) return;
-    const r = { name, color, perms };
-    if (renameTo) r._renameTo = renameTo; // converted to renames below
-    roles.push(r);
-  });
+    return out;
+  }
 
-  const categories = [];
-  const channels = [];
-  const renames = { roles:[], categories:[], channels:[] };
+  // --- Hydration helpers ---------------------------------------------------
+  function clearSection(id) {
+    const el = document.getElementById(id);
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
 
-  document.querySelectorAll('#categories .card').forEach(card=>{
-    const name = norm(card.querySelector('.cat-name').value);
-    const renameTo = norm(card.querySelector('.cat-rename').value);
-    const catOw = collectPermGrid(card.querySelector('.catPermHost'));
-
-    if (name) {
-      const catObj = Object.keys(catOw).length ? {name, overwrites: catOw} : name;
-      categories.push(catObj);
-    }
-    if (renameTo) renames.categories.push({from: name, to: renameTo});
-
-    card.querySelectorAll('.channels .chan').forEach(row=>{
-      const chName = norm(row.querySelector('.ch-name').value);
-      const chType = row.querySelector('.ch-type').value;
-      const parent = norm(card.querySelector('.cat-name').value);
-
-      const opts = {
-        nsfw: row.querySelector('.ch-nsfw').checked,
-        age_restricted: row.querySelector('.ch-age').checked,
-        slowmode: Number(row.querySelector('.ch-slowmode').value || 0),
-        announcement: (chType === 'announcement'),
-        topic: norm(row.querySelector('.ch-topic').value)
-      };
-      const ow = collectPermGrid(row.querySelector('.permHost'));
-      const renameC = norm(row.querySelector('.ch-rename').value);
-
-      if (chName) channels.push({ name: chName, type: chType, category: parent, options: opts, overwrites: ow });
-      if (renameC) renames.channels.push({from: chName, to: renameC, category: parent});
+  function hydrateForm(p) {
+    // Reset toggles + rename boxes
+    ['prune_roles','prune_categories','prune_channels'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.checked = false;
     });
-  });
+    ['roleRenames','catRenames','chanRenames'].forEach(id => clearSection(id));
 
-  // turn role-level _renameTo into renames
-  roles.forEach(r=>{
-    if (r._renameTo) renames.roles.push({from: r.name, to: r._renameTo});
-    delete r._renameTo;
-  });
+    const mode = (p.mode || 'build');
+    const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
+    if (radio) radio.checked = true;
 
-  const prune = {
-    roles: $('#prune_roles').checked,
-    categories: $('#prune_categories').checked,
-    channels: $('#prune_channels').checked
-  };
+    clearSection('roles');
+    (p.roles || []).forEach(r => addRole(cleanName(r.name), asColor(r.color)));
+    if ((p.roles || []).length === 0) addRole();
 
-  const community = {
-    enable_on_build: $('#community_enable_on_build').checked,
-    settings: {
-      verification: $('#community_verification').value || null,
-      notifications: $('#community_notifications').value || null,
-      explicit_filter: $('#community_explicit_filter').value || null,
-      rules_channel: $('#community_rules_channel').value || null,
-      updates_channel: $('#community_updates_channel').value || null
-    }
-  };
+    clearSection('cats');
+    (p.categories || []).forEach(c => addCat(cleanName(c)));
+    if ((p.categories || []).length === 0) addCat();
 
-  return { mode, roles, categories, channels, prune, renames, community };
-}
+    clearSection('chans');
+    (p.channels || []).forEach(ch => addChan(cleanName(ch.name), asStr(ch.type).toLowerCase(), cleanName(ch.category)));
+    if ((p.channels || []).length === 0) addChan();
+  }
 
-/* ------- Load/Save ------- */
-async function loadLatest() {
-  const gid = $('#guild_id').value.trim();
-  if (!gid) { alert('Enter Guild ID'); return; }
-  const res = await fetch(`/api/layout/${gid}/latest`);
-  const data = await res.json();
-  if (!data.ok) { alert(data.error || 'No layout'); return; }
-  hydrate(data.payload || {});
-  alert(`Loaded version ${data.version} from DB`);
-}
-async function loadLive() {
-  const gid = $('#guild_id').value.trim();
-  if (!gid) { alert('Enter Guild ID'); return; }
-  const res = await fetch(`/api/live_layout/${gid}`);
-  const data = await res.json();
-  if (!data.ok) { alert(data.error || 'Failed to load live server'); return; }
-  hydrate(data.payload || {});
-  alert('Loaded from live server');
-}
-document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
-document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
-
-async function saveLayout() {
-  try{
-    const gid = $('#guild_id').value.trim();
-    const payload = collectPayload();
-    const res = await fetch(`/api/layout/${gid}`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
+  // --- Loaders -------------------------------------------------------------
+  async function loadLatest() {
+    const gid = document.getElementById('guild_id').value.trim();
+    if (!gid) { alert('Enter Guild ID'); return; }
+    const res = await fetch(`/api/layout/${gid}/latest`);
     const data = await res.json();
-    if (data.ok && data.no_change) alert(`No changes detected. Current version is still ${data.version}.`);
-    else if (data.ok) alert(`Saved version ${data.version}`);
-    else alert(data.error || 'Error');
-  }catch(e){}
-}
-document.getElementById('saveBtn').addEventListener('click', saveLayout);
+    if (!data.ok) { alert(data.error || 'No layout'); return; }
+    hydrateForm(data.payload || {});
+    alert(`Loaded version ${data.version} from DB`);
+  }
 
-/* ------- Init ------- */
-document.addEventListener('DOMContentLoaded', ()=>{
-  $('#roles').appendChild(roleRow());
-  $('#categories').appendChild(categoryCard("General"));
-  makeSortable();
-  buildOverwriteEditors();
-});
-</script>
+  async function loadLive() {
+    const gid = document.getElementById('guild_id').value.trim();
+    if (!gid) { alert('Enter Guild ID'); return; }
+    const res = await fetch(`/api/live_layout/${gid}`);
+    const data = await res.json();
+    if (!data.ok) { alert(data.error || 'Failed to load live server'); return; }
+    hydrateForm(data.payload || {});
+    alert('Loaded from live server');
+  }
+
+  // --- Save (HARDENED) -----------------------------------------------------
+  async function saveLayout(){
+    console.log('[Form] saveLayout start');
+    try{
+      const form = document.getElementById('layoutForm');
+      const gid  = asStr(document.getElementById('guild_id')?.value).trim();
+      if (!gid) { alert('Enter Guild ID'); return; }
+
+      // ROLES
+      const roles = [];
+      document.querySelectorAll('#roles > .row').forEach(row => {
+        const name  = cleanName(row.querySelector('input[name="role_name"]')?.value);
+        const color = asColor(row.querySelector('input[name="role_color"]')?.value);
+        if (name) roles.push({ name, color });
+      });
+
+      // CATEGORIES
+      const categories = [];
+      document.querySelectorAll('#cats > .row').forEach(row => {
+        const raw = row.querySelector('input[name="category"]')?.value ?? row.dataset?.name;
+        const name = cleanName(raw);
+        if (name) categories.push(name);
+      });
+
+      // CHANNELS
+      const channels = [];
+      document.querySelectorAll('#chans > .row').forEach(row => {
+        const name = cleanName(row.querySelector('input[name="channel_name"]')?.value ?? row.dataset?.name);
+        let type   = asStr(row.querySelector('select[name="channel_type"]')?.value ?? row.dataset?.type).toLowerCase();
+        if (!['text','voice','forum'].includes(type)) type = 'text';
+        const category = cleanName(row.querySelector('input[name="channel_category"]')?.value ?? row.dataset?.category);
+        if (name) channels.push({ name, type, category });
+      });
+
+      const mode = form?.mode?.value || 'build';
+
+      const payload = {
+        mode, roles, categories, channels,
+        prune: {
+          roles: !!document.getElementById('prune_roles')?.checked,
+          categories: !!document.getElementById('prune_categories')?.checked,
+          channels: !!document.getElementById('prune_channels')?.checked
+        },
+        renames: {
+          roles: collectRenames('roleRenames'),
+          categories: collectRenames('catRenames'),
+          channels: collectRenames('chanRenames')
+        }
+      };
+
+      const raw = JSON.stringify(payload);
+      console.log('[Form] payload bytes', raw.length, payload);
+
+      const res = await fetch(`/api/layout/${gid}`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: raw
+      });
+      if (!res.ok){
+        const t = await res.text();
+        console.error('Save failed', res.status, t);
+        alert(`Save failed ${res.status}: ${t}`);
+        return;
+      }
+      const data = await res.json();
+      console.log('Save response', data);
+      if (data.ok && data.no_change){
+        alert(`No changes detected. Current version is still ${data.version}.`);
+      }else if (data.ok){
+        alert(`Saved version ${data.version}`);
+      }else{
+        alert(data.error || 'Unknown server error');
+      }
+    }catch(err){
+      console.error('saveLayout exception', err);
+      alert('Save crashed: ' + (err?.message || err));
+    }
+  }
+  </script>
 </body>
 </html>
 """
