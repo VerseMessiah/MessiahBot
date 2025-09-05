@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify, render_template_string
 
 # --- Config / DB driver detection ---
 DATABASE_URL = os.getenv("DATABASE_URL")
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # needed to read live server via Discord REST
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 _psycopg_ok = False
 try:
@@ -17,7 +17,7 @@ except Exception:
 
 app = Flask(__name__)
 
-# --- Helpers ---------------------------------------------------------------
+# --- DB helpers ------------------------------------------------------------
 
 def _db_exec(q: str, p=()):
     if not (_psycopg_ok and DATABASE_URL):
@@ -49,7 +49,7 @@ def _discord_headers():
         "Content-Type": "application/json",
     }
 
-# --- Probe / utility routes ------------------------------------------------
+# --- Diagnostics -----------------------------------------------------------
 
 @app.get("/ping")
 def ping():
@@ -63,7 +63,7 @@ def routes():
 def dbcheck():
     ok_env = bool(DATABASE_URL)
     try:
-        import psycopg  # noqa: F401
+        import psycopg  # noqa
         ok_driver = True
         driver_version = psycopg.__version__
     except Exception:
@@ -88,18 +88,14 @@ def dbcheck():
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
 
-# --- Live snapshot from Discord REST --------------------------------------
+# --- Live snapshot (Discord REST) -----------------------------------------
 
 @app.get("/api/live_layout/<guild_id>")
 def live_layout(guild_id: str):
-    """
-    Build a layout from the current live Discord server using the REST API.
-    Requires DISCORD_BOT_TOKEN and that the bot is in the guild.
-    """
     try:
         import requests
     except Exception:
-        return jsonify({"ok": False, "error": "Python 'requests' not installed; add requests to requirements.txt"}), 500
+        return jsonify({"ok": False, "error": "Install 'requests' in requirements.txt"}), 500
 
     if not DISCORD_BOT_TOKEN:
         return jsonify({"ok": False, "error": "DISCORD_BOT_TOKEN not set on web service"}), 500
@@ -107,73 +103,50 @@ def live_layout(guild_id: str):
     base = "https://discord.com/api/v10"
     headers = _discord_headers()
 
-    # roles
     r_roles = requests.get(f"{base}/guilds/{guild_id}/roles", headers=headers, timeout=20)
     if r_roles.status_code == 403:
         return jsonify({"ok": False, "error": "Forbidden: bot lacks permission or is not in this guild"}), 403
     if r_roles.status_code == 404:
-        return jsonify({"ok": False, "error": "Guild not found (check Guild ID)"}), 404
+        return jsonify({"ok": False, "error": "Guild not found"}), 404
     if r_roles.status_code >= 400:
         return jsonify({"ok": False, "error": f"Discord roles error {r_roles.status_code}: {r_roles.text}"}), 502
     roles_json = r_roles.json()
 
-    # channels
     r_channels = requests.get(f"{base}/guilds/{guild_id}/channels", headers=headers, timeout=20)
     if r_channels.status_code >= 400:
         return jsonify({"ok": False, "error": f"Discord channels error {r_channels.status_code}: {r_channels.text}"}), 502
     channels_json = r_channels.json()
 
-    # Convert to our schema
-    # Skip @everyone and managed roles (like integrations)
+    # roles (skip @everyone + managed)
     roles = []
     for r in roles_json:
-        if r.get("managed"):
-            continue
-        if r.get("name") == "@everyone":
-            continue
+        if r.get("managed"): continue
+        if r.get("name") == "@everyone": continue
         color_int = r.get("color") or 0
         roles.append({"name": r.get("name", ""), "color": f"#{color_int:06x}"})
 
-    # Channels: types → 0=text, 2=voice, 4=category, 15=forum
-    categories = [c["name"] for c in channels_json if c.get("type") == 4]
-    # Build a map id->name for parent category lookup
-    cat_map = {c["id"]: c["name"] for c in channels_json if c.get("type") == 4}
-
-    chans = []
-    # Sort by 'position' if present
+    # channels
     def pos(x): return x.get("position", 0)
     channels_sorted = sorted(channels_json, key=pos)
+    cat_map = {c["id"]: c["name"] for c in channels_json if c.get("type") == 4}
+    categories = [c["name"] for c in channels_sorted if c.get("type") == 4]
 
+    chans = []
     for ch in channels_sorted:
         t = ch.get("type")
-        name = ch.get("name", "")
-        parent_id = ch.get("parent_id")
-        parent_name = cat_map.get(parent_id, "") if parent_id else ""
-        if t == 0:   # text
-            chans.append({"name": name, "type": "text", "category": parent_name})
-        elif t == 2: # voice
-            chans.append({"name": name, "type": "voice", "category": parent_name})
-        elif t == 15:  # forum
-            chans.append({"name": name, "type": "forum", "category": parent_name})
-        # categories (type 4) are handled in categories list
+        if t == 0 or t == 2 or t == 15:
+            parent_id = ch.get("parent_id")
+            parent_name = cat_map.get(parent_id, "") if parent_id else ""
+            kind = "text" if t == 0 else ("voice" if t == 2 else "forum")
+            chans.append({"name": ch.get("name",""), "type": kind, "category": parent_name})
 
-    payload = {
-        "mode": "update",
-        "roles": roles,
-        "categories": categories,
-        "channels": chans
-    }
+    payload = {"mode": "update", "roles": roles, "categories": categories, "channels": chans}
     return jsonify({"ok": True, "payload": payload})
 
-# --- API routes (DB-backed) -----------------------------------------------
+# --- Layout API (DB) -------------------------------------------------------
 
 @app.post("/api/layout/<guild_id>")
 def save_layout(guild_id: str):
-    """
-    Save a NEW versioned layout payload for the given guild_id.
-    Only inserts a new version if the payload actually changed (de-dupe).
-    Body JSON: { mode, roles[], categories[], channels[] [, prune, renames] }
-    """
     if not (_psycopg_ok and DATABASE_URL):
         return jsonify({"ok": False, "error": "Database not configured"}), 500
 
@@ -210,26 +183,35 @@ def get_latest_layout(guild_id: str):
         return jsonify({"ok": False, "error": "No layout"}), 404
     return jsonify({"ok": True, "version": int(row["version"]), "payload": row["payload"]})
 
-# --- Form UI ---------------------------------------------------------------
+# --- UI --------------------------------------------------------------------
 
 _FORM_HTML = r"""
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>MessiahBot — Submit Server Layout</title>
+  <title>MessiahBot — Server Builder</title>
   <style>
-    body{font-family:sans-serif;max-width:900px;margin:24px auto;padding:0 12px}
+    :root{--b:#ddd;--m:#666}
+    body{font-family:sans-serif;max-width:1000px;margin:24px auto;padding:0 12px}
     fieldset{margin:16px 0;padding:12px;border-radius:8px}
     button{margin-top:6px}
-    .row{margin:6px 0; padding:6px; border:1px solid #ddd; border-radius:6px}
-    .inline{display:inline-flex; align-items:center; gap:6px}
-    .muted{color:#666; font-size:12px}
+    .muted{color:var(--m);font-size:12px}
+    .row{margin:6px 0;padding:6px;border:1px solid var(--b);border-radius:6px;background:#fff}
+    .inline{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .handle{cursor:grab;padding:0 6px;border:1px dashed var(--b);border-radius:4px;background:#f7f7f7}
+    .section-title{display:flex;align-items:center;gap:8px;justify-content:space-between}
+    .cat{border:1px solid var(--b);border-radius:8px;margin:10px 0;padding:10px;background:#fafafa}
+    .cat-header{display:flex;align-items:center;gap:8px}
+    .channel-list{min-height:10px;border:1px dashed var(--b);border-radius:6px;padding:6px;margin:6px 0;background:#fff}
+    .channel{display:flex;align-items:center;gap:6px;border:1px solid var(--b);border-radius:6px;padding:6px;margin:6px 0;background:#fff}
+    .pill{padding:2px 6px;border:1px solid var(--b);border-radius:20px;font-size:12px;background:#f7f7f7}
+    .danger{color:#a00}
+    .btn{padding:4px 8px;border:1px solid var(--b);border-radius:6px;background:#fff;cursor:pointer}
   </style>
 </head>
 <body>
-  <h1>🧱 MessiahBot — Submit Server Layout</h1>
-  <p>Enter your Guild ID, then you can <strong>Load From Live Server</strong> or <strong>Load Latest From DB</strong>, edit, and <strong>Save Layout</strong>.</p>
+  <h1>🧱 MessiahBot — Server Builder</h1>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
@@ -240,8 +222,9 @@ _FORM_HTML = r"""
     <label>Guild ID <input type="text" id="guild_id" required></label>
 
     <p>
-      <button type="button" id="loadLiveBtn">Load From Live Server</button>
-      <button type="button" id="loadLatestBtn">Load Latest From DB</button>
+      <button type="button" id="loadLiveBtn" class="btn">Load From Live Server</button>
+      <button type="button" id="loadLatestBtn" class="btn">Load Latest From DB</button>
+      <button type="button" id="saveBtn" class="btn" onclick="saveLayout()">Save Layout</button>
     </p>
 
     <fieldset>
@@ -250,17 +233,27 @@ _FORM_HTML = r"""
       <label><input type="radio" name="mode" value="update"> Update</label>
     </fieldset>
 
-    <h3>Roles</h3>
+    <h2 class="section-title">
+      <span>Roles</span>
+      <button type="button" class="btn" onclick="addRole()">Add Role</button>
+    </h2>
     <div id="roles"></div>
-    <button type="button" onclick="addRole()">Add Role</button>
 
-    <h3>Categories</h3>
+    <h2 class="section-title">
+      <span>Categories & Channels</span>
+      <button type="button" class="btn" onclick="addCategory('')">Add Category</button>
+    </h2>
+
+    <!-- categories render here; an extra 'Uncategorized' drop-area is at the end -->
     <div id="cats"></div>
-    <button type="button" onclick="addCat()">Add Category</button>
 
-    <h3>Channels</h3>
-    <div id="chans"></div>
-    <button type="button" onclick="addChan()">Add Channel</button>
+    <div id="uncat" class="cat" data-cat="">
+      <div class="cat-header">
+        <span class="pill">Uncategorized</span>
+        <span class="muted">Drop channels here to remove parent category</span>
+      </div>
+      <div class="channel-list" ondragover="dndAllow(event)" ondrop="dndDrop(event, this)"></div>
+    </div>
 
     <h3>Danger Zone</h3>
     <p class="muted"><em>These options can delete or rename live items. Use carefully.</em></p>
@@ -270,288 +263,329 @@ _FORM_HTML = r"""
 
     <h4>Role Renames</h4>
     <div id="roleRenames"></div>
-    <button type="button" onclick="addRename('roleRenames')">Add Role Rename</button>
+    <button type="button" class="btn" onclick="addRename('roleRenames')">Add Role Rename</button>
 
     <h4>Category Renames</h4>
     <div id="catRenames"></div>
-    <button type="button" onclick="addRename('catRenames')">Add Category Rename</button>
+    <button type="button" class="btn" onclick="addRename('catRenames')">Add Category Rename</button>
 
     <h4>Channel Renames</h4>
     <div id="chanRenames"></div>
-    <button type="button" onclick="addRename('chanRenames')">Add Channel Rename</button>
-
-    <p>
-      <!-- Keep inline onclick as a safety net -->
-      <button type="button" id="saveBtn" onclick="saveLayout()">Save Layout</button>
-    </p>
+    <button type="button" class="btn" onclick="addRename('chanRenames')">Add Channel Rename</button>
   </form>
 
   <script>
-  // --- Boot / global error traps ------------------------------------------
-  console.log('[Form] script booted');
-  window.addEventListener('error', (e) => {
-    console.error('Uncaught error:', e.error || e.message || e);
-    alert('Form error: ' + (e.message || (e.error && e.error.message) || 'unknown'));
-  });
-  window.addEventListener('unhandledrejection', (e) => {
-    console.error('Unhandled promise rejection:', e.reason);
-    alert('Save failed: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
-  });
+    // ---------- utils
+    const byId = (id)=>document.getElementById(id);
+    const clean = (v)=> (v && typeof v==='object' && 'name' in v ? v.name : (v??'')).toString().trim();
+    const asColor = (v)=> {
+      let s=(v??'').toString().trim();
+      if(!s) return '#000000';
+      if(s[0]!=='#') s='#'+s;
+      return /^#[0-9a-f]{6}$/i.test(s)? s.toLowerCase() : '#000000';
+    };
 
-  document.addEventListener('DOMContentLoaded', () => {
-    console.log('[Form] DOM ready');
-
-    // prevent Enter in inputs from submitting/refreshing
-    document.getElementById('layoutForm').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
-        e.preventDefault();
-      }
-    });
-
-    // Attach buttons (redundant with inline onclick, but nice)
-    document.getElementById('loadLatestBtn')?.addEventListener('click', loadLatest);
-    document.getElementById('loadLiveBtn')?.addEventListener('click', loadLive);
-    document.getElementById('saveBtn')?.addEventListener('click', saveLayout);
-
-    // seed one empty row for each section
-    if (!document.querySelector('#roles > .row')) addRole();
-    if (!document.querySelector('#cats > .row')) addCat();
-    if (!document.querySelector('#chans > .row')) addChan();
-  });
-
-  // --- Small utils ---------------------------------------------------------
-  function asStr(v){ return (v==null ? '' : String(v)); }
-  function asBool(v){ return !!v; }
-  function asColor(v){
-    let s = asStr(v).trim();
-    if (!s) return '#000000';
-    if (s[0] !== '#') s = '#' + s;
-    if (!/^#[0-9a-f]{6}$/i.test(s)) return '#000000';
-    return s.toLowerCase();
-  }
-  function cleanName(v){
-    if (v && typeof v === 'object' && 'name' in v) v = v.name;
-    return asStr(v).trim();
-  }
-
-  // --- Row builders --------------------------------------------------------
-  function moveRowUp(row){
-    const prev = row?.previousElementSibling;
-    if (!prev) return;
-    row.parentElement.insertBefore(row, prev);
-  }
-  function moveRowDown(row){
-    const next = row?.nextElementSibling;
-    if (!next) return;
-    row.parentElement.insertBefore(next, row);
-  }
-
-  function addRole(name = "", color = "#000000"){
-    const d = document.createElement('div');
-    d.className = 'row';
-    d.innerHTML = `
-      <div class="inline">
-        <button type="button" title="Up" onclick="moveRowUp(this.closest('.row'))">↑</button>
-        <button type="button" title="Down" onclick="moveRowDown(this.closest('.row'))">↓</button>
-        <input placeholder="Role" name="role_name" value="${cleanName(name)}">
+    // ---------- roles
+    function addRole(name="", color="#000000"){
+      const d = document.createElement('div');
+      d.className = 'row';
+      d.innerHTML = `
+        <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement)">↕</span>
+        <input placeholder="Role" name="role_name" value="${clean(name)}">
         <input type="color" name="role_color" value="${asColor(color)}">
-        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
-      </div>`;
-    document.getElementById('roles').appendChild(d);
-  }
-
-  function addCat(name = ""){
-    const d = document.createElement('div');
-    d.className = 'row';
-    d.dataset.name = cleanName(name);
-    d.innerHTML = `
-      <div class="inline">
-        <button type="button" title="Up" onclick="moveRowUp(this.closest('.row'))">↑</button>
-        <button type="button" title="Down" onclick="moveRowDown(this.closest('.row'))">↓</button>
-        <input placeholder="Category" name="category" value="${cleanName(name)}"
-               oninput="this.closest('.row').dataset.name = this.value.trim()">
-        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
-      </div>`;
-    document.getElementById('cats').appendChild(d);
-  }
-
-  function addChan(name = "", type = "text", category = ""){
-    const d = document.createElement('div');
-    d.className = 'row';
-    d.dataset.name = cleanName(name);
-    d.dataset.type = ['text','voice','forum'].includes((type||'').toLowerCase()) ? type.toLowerCase() : 'text';
-    d.dataset.category = cleanName(category);
-    d.innerHTML = `
-      <div class="inline">
-        <button type="button" title="Up" onclick="moveRowUp(this.closest('.row'))">↑</button>
-        <button type="button" title="Down" onclick="moveRowDown(this.closest('.row'))">↓</button>
-        <input placeholder="Channel" name="channel_name" value="${cleanName(name)}"
-               oninput="this.closest('.row').dataset.name = this.value.trim()">
-        <select name="channel_type" onchange="this.closest('.row').dataset.type = this.value">
-          <option ${d.dataset.type==='text' ? 'selected':''}>text</option>
-          <option ${d.dataset.type==='voice'? 'selected':''}>voice</option>
-          <option ${d.dataset.type==='forum'? 'selected':''}>forum</option>
-        </select>
-        <input placeholder="Parent Category" name="channel_category" value="${cleanName(category)}"
-               oninput="this.closest('.row').dataset.category = this.value.trim()">
-        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
-      </div>`;
-    document.getElementById('chans').appendChild(d);
-  }
-
-  // --- Renames UI ----------------------------------------------------------
-  function addRename(containerId, fromVal="", toVal="") {
-    const d = document.createElement('div');
-    d.className = 'row';
-    d.innerHTML = `
-      <div class="inline">
-        <input placeholder="From name" class="rename_from" value="${cleanName(fromVal)}">
-        <span>→</span>
-        <input placeholder="To name" class="rename_to" value="${cleanName(toVal)}">
-        <button type="button" title="Remove" onclick="this.closest('.row').remove()">✕</button>
-      </div>`;
-    document.getElementById(containerId).appendChild(d);
-  }
-  function collectRenames(containerId){
-    const out = [];
-    document.querySelectorAll('#'+containerId+' .row').forEach(d => {
-      const from = cleanName(d.querySelector('.rename_from')?.value);
-      const to   = cleanName(d.querySelector('.rename_to')?.value);
-      if (from && to) out.push({from, to});
-    });
-    return out;
-  }
-
-  // --- Hydration helpers ---------------------------------------------------
-  function clearSection(id) {
-    const el = document.getElementById(id);
-    while (el.firstChild) el.removeChild(el.firstChild);
-  }
-
-  function hydrateForm(p) {
-    // Reset toggles + rename boxes
-    ['prune_roles','prune_categories','prune_channels'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.checked = false;
-    });
-    ['roleRenames','catRenames','chanRenames'].forEach(id => clearSection(id));
-
-    const mode = (p.mode || 'build');
-    const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
-    if (radio) radio.checked = true;
-
-    clearSection('roles');
-    (p.roles || []).forEach(r => addRole(cleanName(r.name), asColor(r.color)));
-    if ((p.roles || []).length === 0) addRole();
-
-    clearSection('cats');
-    (p.categories || []).forEach(c => addCat(cleanName(c)));
-    if ((p.categories || []).length === 0) addCat();
-
-    clearSection('chans');
-    (p.channels || []).forEach(ch => addChan(cleanName(ch.name), asStr(ch.type).toLowerCase(), cleanName(ch.category)));
-    if ((p.channels || []).length === 0) addChan();
-  }
-
-  // --- Loaders -------------------------------------------------------------
-  async function loadLatest() {
-    const gid = document.getElementById('guild_id').value.trim();
-    if (!gid) { alert('Enter Guild ID'); return; }
-    const res = await fetch(`/api/layout/${gid}/latest`);
-    const data = await res.json();
-    if (!data.ok) { alert(data.error || 'No layout'); return; }
-    hydrateForm(data.payload || {});
-    alert(`Loaded version ${data.version} from DB`);
-  }
-
-  async function loadLive() {
-    const gid = document.getElementById('guild_id').value.trim();
-    if (!gid) { alert('Enter Guild ID'); return; }
-    const res = await fetch(`/api/live_layout/${gid}`);
-    const data = await res.json();
-    if (!data.ok) { alert(data.error || 'Failed to load live server'); return; }
-    hydrateForm(data.payload || {});
-    alert('Loaded from live server');
-  }
-
-  // --- Save (HARDENED) -----------------------------------------------------
-  async function saveLayout(){
-    console.log('[Form] saveLayout start');
-    try{
-      const form = document.getElementById('layoutForm');
-      const gid  = asStr(document.getElementById('guild_id')?.value).trim();
-      if (!gid) { alert('Enter Guild ID'); return; }
-
-      // ROLES
-      const roles = [];
-      document.querySelectorAll('#roles > .row').forEach(row => {
-        const name  = cleanName(row.querySelector('input[name="role_name"]')?.value);
-        const color = asColor(row.querySelector('input[name="role_color"]')?.value);
-        if (name) roles.push({ name, color });
-      });
-
-      // CATEGORIES
-      const categories = [];
-      document.querySelectorAll('#cats > .row').forEach(row => {
-        const raw = row.querySelector('input[name="category"]')?.value ?? row.dataset?.name;
-        const name = cleanName(raw);
-        if (name) categories.push(name);
-      });
-
-      // CHANNELS
-      const channels = [];
-      document.querySelectorAll('#chans > .row').forEach(row => {
-        const name = cleanName(row.querySelector('input[name="channel_name"]')?.value ?? row.dataset?.name);
-        let type   = asStr(row.querySelector('select[name="channel_type"]')?.value ?? row.dataset?.type).toLowerCase();
-        if (!['text','voice','forum'].includes(type)) type = 'text';
-        const category = cleanName(row.querySelector('input[name="channel_category"]')?.value ?? row.dataset?.category);
-        if (name) channels.push({ name, type, category });
-      });
-
-      const mode = form?.mode?.value || 'build';
-
-      const payload = {
-        mode, roles, categories, channels,
-        prune: {
-          roles: !!document.getElementById('prune_roles')?.checked,
-          categories: !!document.getElementById('prune_categories')?.checked,
-          channels: !!document.getElementById('prune_channels')?.checked
-        },
-        renames: {
-          roles: collectRenames('roleRenames'),
-          categories: collectRenames('catRenames'),
-          channels: collectRenames('chanRenames')
-        }
-      };
-
-      const raw = JSON.stringify(payload);
-      console.log('[Form] payload bytes', raw.length, payload);
-
-      const res = await fetch(`/api/layout/${gid}`, {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: raw
-      });
-      if (!res.ok){
-        const t = await res.text();
-        console.error('Save failed', res.status, t);
-        alert(`Save failed ${res.status}: ${t}`);
-        return;
-      }
-      const data = await res.json();
-      console.log('Save response', data);
-      if (data.ok && data.no_change){
-        alert(`No changes detected. Current version is still ${data.version}.`);
-      }else if (data.ok){
-        alert(`Saved version ${data.version}`);
-      }else{
-        alert(data.error || 'Unknown server error');
-      }
-    }catch(err){
-      console.error('saveLayout exception', err);
-      alert('Save crashed: ' + (err?.message || err));
+        <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>`;
+      byId('roles').appendChild(d);
     }
-  }
+
+    // ---------- categories & channels (nested)
+    function addCategory(name){
+      const catName = clean(name);
+      const wrapper = document.createElement('div');
+      wrapper.className = 'cat';
+      wrapper.dataset.cat = catName;
+
+      wrapper.innerHTML = `
+        <div class="cat-header">
+          <div class="inline">
+            <span class="handle" draggable="true" ondragstart="dndStart(event, this.closest('.cat'))">↕</span>
+            <input class="cat-name" placeholder="Category" value="${catName}" oninput="this.closest('.cat').dataset.cat=this.value.trim()">
+            <button type="button" class="btn" onclick="addChannelTo(this.closest('.cat'), '', 'text')">Add Channel</button>
+          </div>
+          <div class="inline">
+            <button type="button" class="btn" onclick="moveCat(this.closest('.cat'), -1)">↑</button>
+            <button type="button" class="btn" onclick="moveCat(this.closest('.cat'), 1)">↓</button>
+            <button type="button" class="btn danger" onclick="this.closest('.cat').remove()">Delete</button>
+          </div>
+        </div>
+        <div class="channel-list" ondragover="dndAllow(event)" ondrop="dndDrop(event, this)"></div>
+      `;
+      byId('cats').appendChild(wrapper);
+      return wrapper;
+    }
+
+    function moveCat(catEl, dir){
+      if(!catEl) return;
+      const parent = catEl.parentElement;
+      if(dir < 0 && catEl.previousElementSibling){
+        parent.insertBefore(catEl, catEl.previousElementSibling);
+      }else if(dir > 0 && catEl.nextElementSibling){
+        parent.insertBefore(catEl.nextElementSibling, catEl);
+      }
+    }
+
+    function addChannelTo(catEl, name, type, categoryOverride){
+      const chName = clean(name);
+      const chType = (type||'text').toLowerCase();
+      const list = catEl.querySelector('.channel-list');
+
+      const row = document.createElement('div');
+      row.className = 'channel';
+      row.draggable = true;
+      row.dataset.name = chName;
+      row.dataset.type = ['text','voice','forum'].includes(chType) ? chType : 'text';
+
+      row.innerHTML = `
+        <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement)">↕</span>
+        <input placeholder="Channel" name="channel_name" value="${chName}"
+               oninput="this.closest('.channel').dataset.name=this.value.trim()">
+        <select name="channel_type" onchange="this.closest('.channel').dataset.type=this.value">
+          <option ${row.dataset.type==='text' ? 'selected':''}>text</option>
+          <option ${row.dataset.type==='voice'? 'selected':''}>voice</option>
+          <option ${row.dataset.type==='forum'? 'selected':''}>forum</option>
+        </select>
+        <button type="button" class="btn danger" onclick="this.closest('.channel').remove()">Delete</button>
+      `;
+      list.appendChild(row);
+      return row;
+    }
+
+    // ---------- DnD (simple: remember dragged element)
+    let DND_EL = null;
+    function dndStart(ev, el){ DND_EL = el; ev.dataTransfer.effectAllowed='move'; }
+    function dndAllow(ev){ ev.preventDefault(); ev.dataTransfer.dropEffect='move'; }
+    function dndDrop(ev, dropZone){
+      ev.preventDefault();
+      if(!DND_EL) return;
+      // Channel onto channel-list OR category box
+      if(DND_EL.classList.contains('channel')){
+        dropZone.appendChild(DND_EL);
+      }else if(DND_EL.classList.contains('cat')){
+        // dropping categories: insert before the dropZone's parent cat if any
+        const parentCats = byId('cats');
+        // if dropZone is a channel-list, use its closest .cat
+        const targetCat = dropZone.closest('.cat');
+        if(targetCat && targetCat !== DND_EL){
+          parentCats.insertBefore(DND_EL, targetCat);
+        }else if(!targetCat){
+          // dropped in uncat area or top-level? move to end
+          parentCats.appendChild(DND_EL);
+        }
+      }
+      DND_EL = null;
+    }
+
+    // ---------- Renames
+    function addRename(containerId, fromVal="", toVal=""){
+      const d = document.createElement('div');
+      d.className = 'row';
+      d.innerHTML = `
+        <input placeholder="From name" class="rename_from" value="${clean(fromVal)}">
+        <span>→</span>
+        <input placeholder="To name" class="rename_to" value="${clean(toVal)}">
+        <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>`;
+      byId(containerId).appendChild(d);
+    }
+    function collectRenames(containerId){
+      const out = [];
+      byId(containerId).querySelectorAll('.row').forEach(r=>{
+        const f = clean(r.querySelector('.rename_from')?.value);
+        const t = clean(r.querySelector('.rename_to')?.value);
+        if(f && t) out.push({from:f,to:t});
+      });
+      return out;
+    }
+
+    // ---------- Hydration
+    function clearEl(el){ while(el.firstChild) el.removeChild(el.firstChild); }
+
+    function hydrateForm(p){
+      // reset toggles & rename sections
+      ['prune_roles','prune_categories','prune_channels'].forEach(id=>{ const el=byId(id); if(el) el.checked=false; });
+      ['roleRenames','catRenames','chanRenames'].forEach(id=>clearEl(byId(id)));
+
+      // mode
+      const mode = p.mode || 'build';
+      const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
+      if(radio) radio.checked = true;
+
+      // roles
+      clearEl(byId('roles'));
+      (p.roles || []).forEach(r => addRole(clean(r.name), asColor(r.color)));
+      if((p.roles||[]).length === 0) addRole();
+
+      // categories + channels (group by category)
+      clearEl(byId('cats'));
+      clearEl(byId('uncat').querySelector('.channel-list'));
+
+      const cats = Array.from(new Set((p.categories || []).map(clean))).filter(Boolean);
+      const buckets = {};  // catName -> [channels]
+      cats.forEach(c => buckets[c] = []);
+      const uncat = [];
+
+      (p.channels || []).forEach(ch=>{
+        const nm = clean(ch.name);
+        if(!nm) return;
+        const tp = (ch.type||'text').toLowerCase();
+        const cat = clean(ch.category);
+        if(cat && buckets.hasOwnProperty(cat)){
+          buckets[cat].push({name:nm, type:tp});
+        }else if(cat && !buckets.hasOwnProperty(cat)){
+          // channel references a category not in categories list → create it
+          buckets[cat] = [{name:nm, type:tp}];
+        }else{
+          uncat.push({name:nm, type:tp});
+        }
+      });
+
+      // render categories in order
+      Object.keys(buckets).forEach(catName=>{
+        // keep ordering given in cats[] first, then any new keys
+        if(!cats.includes(catName)) cats.push(catName);
+      });
+      cats.forEach(cat=>{
+        const catEl = addCategory(cat);
+        (buckets[cat] || []).forEach(ch => addChannelTo(catEl, ch.name, ch.type));
+      });
+
+      // render uncategorized
+      const uncatList = byId('uncat').querySelector('.channel-list');
+      uncat.forEach(ch=>{
+        const row = document.createElement('div');
+        row.className='channel';
+        row.draggable = true;
+        row.dataset.name = clean(ch.name);
+        row.dataset.type = ['text','voice','forum'].includes((ch.type||'').toLowerCase()) ? ch.type.toLowerCase() : 'text';
+        row.innerHTML = `
+          <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement)">↕</span>
+          <input placeholder="Channel" name="channel_name" value="${row.dataset.name}"
+                 oninput="this.closest('.channel').dataset.name=this.value.trim()">
+          <select name="channel_type" onchange="this.closest('.channel').dataset.type=this.value">
+            <option ${row.dataset.type==='text'?'selected':''}>text</option>
+            <option ${row.dataset.type==='voice'?'selected':''}>voice</option>
+            <option ${row.dataset.type==='forum'?'selected':''}>forum</option>
+          </select>
+          <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>`;
+        uncatList.appendChild(row);
+      });
+
+      // ensure at least one category exists for convenience
+      if(cats.length===0) addCategory('');
+    }
+
+    // ---------- Collect & Save
+    async function saveLayout(){
+      try{
+        const gid = clean(byId('guild_id')?.value);
+        if(!gid){ alert('Enter Guild ID'); return; }
+
+        // roles
+        const roles = [];
+        byId('roles').querySelectorAll('.row').forEach(r=>{
+          const name = clean(r.querySelector('input[name="role_name"]')?.value);
+          const color = asColor(r.querySelector('input[name="role_color"]')?.value);
+          if(name) roles.push({name, color});
+        });
+
+        // categories in on-screen order
+        const categories = [];
+        byId('cats').querySelectorAll('.cat').forEach(cat=>{
+          const nm = clean(cat.querySelector('.cat-name')?.value || cat.dataset.cat);
+          if(nm) categories.push(nm);
+        });
+
+        // channels: walk each cat (+ uncategorized)
+        const channels = [];
+        const pushChFromList = (listEl, categoryName) =>{
+          listEl.querySelectorAll('.channel').forEach(ch=>{
+            const name = clean(ch.querySelector('input[name="channel_name"]')?.value || ch.dataset.name);
+            let type = clean(ch.querySelector('select[name="channel_type"]')?.value || ch.dataset.type).toLowerCase();
+            if(!['text','voice','forum'].includes(type)) type = 'text';
+            if(name) channels.push({name, type, category: clean(categoryName)});
+          });
+        };
+
+        byId('cats').querySelectorAll('.cat').forEach(cat=>{
+          const catName = clean(cat.querySelector('.cat-name')?.value || cat.dataset.cat);
+          pushChFromList(cat.querySelector('.channel-list'), catName);
+        });
+        pushChFromList(byId('uncat').querySelector('.channel-list'), '');
+
+        const mode = document.querySelector('input[name="mode"]:checked')?.value || 'build';
+        const payload = {
+          mode, roles, categories, channels,
+          prune: {
+            roles: !!byId('prune_roles')?.checked,
+            categories: !!byId('prune_categories')?.checked,
+            channels: !!byId('prune_channels')?.checked
+          },
+          renames: {
+            roles: collectRenames('roleRenames'),
+            categories: collectRenames('catRenames'),
+            channels: collectRenames('chanRenames')
+          }
+        };
+
+        const res = await fetch(`/api/layout/${gid}`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(()=>({ok:false,error:'Bad JSON from server'}));
+        if(!res.ok){ alert(`Save failed ${res.status}: ${data.error||res.statusText}`); return; }
+        if(data.ok && data.no_change) alert(`No changes detected. Current version is still ${data.version}.`);
+        else if(data.ok) alert(`Saved version ${data.version}`);
+        else alert(data.error || 'Unknown server error');
+      }catch(err){
+        console.error('Save error', err);
+        alert('Save crashed: '+(err?.message||err));
+      }
+    }
+
+    // ---------- Loaders
+    async function loadLatest(){
+      const gid = clean(byId('guild_id')?.value);
+      if(!gid){ alert('Enter Guild ID'); return; }
+      const r = await fetch(`/api/layout/${gid}/latest`);
+      const d = await r.json();
+      if(!d.ok){ alert(d.error||'No layout'); return; }
+      hydrateForm(d.payload||{});
+      alert(`Loaded version ${d.version} from DB`);
+    }
+    async function loadLive(){
+      const gid = clean(byId('guild_id')?.value);
+      if(!gid){ alert('Enter Guild ID'); return; }
+      const r = await fetch(`/api/live_layout/${gid}`);
+      const d = await r.json();
+      if(!d.ok){ alert(d.error||'Failed to load live server'); return; }
+      hydrateForm(d.payload||{});
+      alert('Loaded from live server');
+    }
+
+    // ---------- Boot
+    document.addEventListener('DOMContentLoaded', ()=>{
+      // prevent accidental submit on Enter
+      byId('layoutForm').addEventListener('keydown', (e)=>{
+        if(e.key==='Enter' && e.target.tagName==='INPUT') e.preventDefault();
+      });
+      byId('loadLatestBtn').addEventListener('click', loadLatest);
+      byId('loadLiveBtn').addEventListener('click', loadLive);
+      byId('saveBtn').addEventListener('click', saveLayout);
+
+      // seed defaults
+      addRole();
+      const c = addCategory('');
+      addChannelTo(c, '', 'text');
+    });
   </script>
 </body>
 </html>
@@ -573,6 +607,5 @@ def form():
 # --- Entrypoint ------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Local dev runner. On Render, you can also use:
-    #   gunicorn "bot.dashboard_messiah:app" --bind 0.0.0.0:$PORT
+    # For local dev; on Render use: gunicorn "bot.dashboard_messiah:app" --bind 0.0.0.0:$PORT
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5050)))
