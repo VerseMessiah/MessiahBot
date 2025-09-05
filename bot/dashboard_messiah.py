@@ -134,11 +134,24 @@ def live_layout(guild_id: str):
     chans = []
     for ch in channels_sorted:
         t = ch.get("type")
-        if t == 0 or t == 2 or t == 15:
+        if t in (0, 2, 5, 15):  # 0=text, 2=voice, 5=news(announcement), 15=forum
             parent_id = ch.get("parent_id")
             parent_name = cat_map.get(parent_id, "") if parent_id else ""
-            kind = "text" if t == 0 else ("voice" if t == 2 else "forum")
-            chans.append({"name": ch.get("name",""), "type": kind, "category": parent_name})
+            if t == 0:
+                kind = "text"
+            elif t == 2:
+                kind = "voice"
+            elif t == 5:
+                kind = "announcement"
+            else:
+                kind = "forum"
+            topic = ch.get("topic") or ""  # topic/description for text/news
+            chans.append({
+                "name": ch.get("name",""),
+                "type": kind,
+                "category": parent_name,
+                "topic": topic
+            })
 
     payload = {"mode": "update", "roles": roles, "categories": categories, "channels": chans}
     return jsonify({"ok": True, "payload": payload})
@@ -202,12 +215,13 @@ _FORM_HTML = r"""
     .handle{cursor:grab;padding:0 6px;border:1px dashed var(--b);border-radius:4px;background:#f7f7f7}
     .section-title{display:flex;align-items:center;gap:8px;justify-content:space-between}
     .cat{border:1px solid var(--b);border-radius:8px;margin:10px 0;padding:10px;background:#fafafa}
-    .cat-header{display:flex;align-items:center;gap:8px}
+    .cat-header{display:flex;align-items:center;gap:8px;justify-content:space-between}
     .channel-list{min-height:10px;border:1px dashed var(--b);border-radius:6px;padding:6px;margin:6px 0;background:#fff}
-    .channel{display:flex;align-items:center;gap:6px;border:1px solid var(--b);border-radius:6px;padding:6px;margin:6px 0;background:#fff}
+    .channel{display:flex;flex-wrap:wrap;align-items:center;gap:6px;border:1px solid var(--b);border-radius:6px;padding:6px;margin:6px 0;background:#fff}
     .pill{padding:2px 6px;border:1px solid var(--b);border-radius:20px;font-size:12px;background:#f7f7f7}
     .danger{color:#a00}
     .btn{padding:4px 8px;border:1px solid var(--b);border-radius:6px;background:#fff;cursor:pointer}
+    .grow{flex:1 1 220px}
   </style>
 </head>
 <body>
@@ -237,14 +251,13 @@ _FORM_HTML = r"""
       <span>Roles</span>
       <button type="button" class="btn" onclick="addRole()">Add Role</button>
     </h2>
-    <div id="roles"></div>
+    <div id="roles" ondragover="dndAllow(event)" ondrop="dndDrop(event, this)"></div>
 
     <h2 class="section-title">
       <span>Categories & Channels</span>
       <button type="button" class="btn" onclick="addCategory('')">Add Category</button>
     </h2>
 
-    <!-- categories render here; an extra 'Uncategorized' drop-area is at the end -->
     <div id="cats"></div>
 
     <div id="uncat" class="cat" data-cat="">
@@ -285,13 +298,14 @@ _FORM_HTML = r"""
       return /^#[0-9a-f]{6}$/i.test(s)? s.toLowerCase() : '#000000';
     };
 
-    // ---------- roles
+    // ---------- roles (now draggable)
     function addRole(name="", color="#000000"){
       const d = document.createElement('div');
       d.className = 'row';
+      d.draggable = true;
       d.innerHTML = `
         <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement)">↕</span>
-        <input placeholder="Role" name="role_name" value="${clean(name)}">
+        <input class="grow" placeholder="Role" name="role_name" value="${clean(name)}">
         <input type="color" name="role_color" value="${asColor(color)}">
         <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>`;
       byId('roles').appendChild(d);
@@ -308,8 +322,8 @@ _FORM_HTML = r"""
         <div class="cat-header">
           <div class="inline">
             <span class="handle" draggable="true" ondragstart="dndStart(event, this.closest('.cat'))">↕</span>
-            <input class="cat-name" placeholder="Category" value="${catName}" oninput="this.closest('.cat').dataset.cat=this.value.trim()">
-            <button type="button" class="btn" onclick="addChannelTo(this.closest('.cat'), '', 'text')">Add Channel</button>
+            <input class="cat-name grow" placeholder="Category" value="${catName}" oninput="this.closest('.cat').dataset.cat=this.value.trim()">
+            <button type="button" class="btn" onclick="addChannelTo(this.closest('.cat'), '', 'text', '')">Add Channel</button>
           </div>
           <div class="inline">
             <button type="button" class="btn" onclick="moveCat(this.closest('.cat'), -1)">↑</button>
@@ -333,7 +347,7 @@ _FORM_HTML = r"""
       }
     }
 
-    function addChannelTo(catEl, name, type, categoryOverride){
+    function addChannelTo(catEl, name, type, topic){
       const chName = clean(name);
       const chType = (type||'text').toLowerCase();
       const list = catEl.querySelector('.channel-list');
@@ -342,17 +356,21 @@ _FORM_HTML = r"""
       row.className = 'channel';
       row.draggable = true;
       row.dataset.name = chName;
-      row.dataset.type = ['text','voice','forum'].includes(chType) ? chType : 'text';
+      row.dataset.type = ['text','voice','forum','announcement'].includes(chType) ? chType : 'text';
+
+      const topicVal = (topic ?? '').toString();
 
       row.innerHTML = `
         <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement)">↕</span>
-        <input placeholder="Channel" name="channel_name" value="${chName}"
+        <input class="grow" placeholder="Channel" name="channel_name" value="${chName}"
                oninput="this.closest('.channel').dataset.name=this.value.trim()">
         <select name="channel_type" onchange="this.closest('.channel').dataset.type=this.value">
-          <option ${row.dataset.type==='text' ? 'selected':''}>text</option>
-          <option ${row.dataset.type==='voice'? 'selected':''}>voice</option>
-          <option ${row.dataset.type==='forum'? 'selected':''}>forum</option>
+          <option ${row.dataset.type==='text'?'selected':''} value="text">text</option>
+          <option ${row.dataset.type==='voice'?'selected':''} value="voice">voice</option>
+          <option ${row.dataset.type==='forum'?'selected':''} value="forum">forum</option>
+          <option ${row.dataset.type==='announcement'?'selected':''} value="announcement">announcement</option>
         </select>
+        <input class="grow" placeholder="Topic / Description (optional)" name="channel_topic" value="${topicVal}">
         <button type="button" class="btn danger" onclick="this.closest('.channel').remove()">Delete</button>
       `;
       list.appendChild(row);
@@ -366,21 +384,24 @@ _FORM_HTML = r"""
     function dndDrop(ev, dropZone){
       ev.preventDefault();
       if(!DND_EL) return;
-      // Channel onto channel-list OR category box
+
       if(DND_EL.classList.contains('channel')){
-        dropZone.appendChild(DND_EL);
+        // Dropping a channel into a channel-list (reparent / reorder)
+        if(dropZone.classList.contains('channel-list')) dropZone.appendChild(DND_EL);
       }else if(DND_EL.classList.contains('cat')){
-        // dropping categories: insert before the dropZone's parent cat if any
+        // Dropping a category above another category (reorder)
         const parentCats = byId('cats');
-        // if dropZone is a channel-list, use its closest .cat
         const targetCat = dropZone.closest('.cat');
         if(targetCat && targetCat !== DND_EL){
           parentCats.insertBefore(DND_EL, targetCat);
         }else if(!targetCat){
-          // dropped in uncat area or top-level? move to end
           parentCats.appendChild(DND_EL);
         }
+      }else if(DND_EL.classList.contains('row') && dropZone.id === 'roles'){
+        // Reordering roles: drop into roles container
+        dropZone.appendChild(DND_EL);
       }
+
       DND_EL = null;
     }
 
@@ -409,7 +430,7 @@ _FORM_HTML = r"""
     function clearEl(el){ while(el.firstChild) el.removeChild(el.firstChild); }
 
     function hydrateForm(p){
-      // reset toggles & rename sections
+      // toggles & rename sections
       ['prune_roles','prune_categories','prune_channels'].forEach(id=>{ const el=byId(id); if(el) el.checked=false; });
       ['roleRenames','catRenames','chanRenames'].forEach(id=>clearEl(byId(id)));
 
@@ -436,49 +457,35 @@ _FORM_HTML = r"""
         const nm = clean(ch.name);
         if(!nm) return;
         const tp = (ch.type||'text').toLowerCase();
+        const tpc = (ch.topic||'').toString();
         const cat = clean(ch.category);
+        const item = {name:nm, type:tp, topic:tpc};
         if(cat && buckets.hasOwnProperty(cat)){
-          buckets[cat].push({name:nm, type:tp});
+          buckets[cat].push(item);
         }else if(cat && !buckets.hasOwnProperty(cat)){
-          // channel references a category not in categories list → create it
-          buckets[cat] = [{name:nm, type:tp}];
+          buckets[cat] = [item];
         }else{
-          uncat.push({name:nm, type:tp});
+          uncat.push(item);
         }
       });
 
       // render categories in order
       Object.keys(buckets).forEach(catName=>{
-        // keep ordering given in cats[] first, then any new keys
         if(!cats.includes(catName)) cats.push(catName);
       });
       cats.forEach(cat=>{
         const catEl = addCategory(cat);
-        (buckets[cat] || []).forEach(ch => addChannelTo(catEl, ch.name, ch.type));
+        (buckets[cat] || []).forEach(ch => addChannelTo(catEl, ch.name, ch.type, ch.topic));
       });
 
       // render uncategorized
       const uncatList = byId('uncat').querySelector('.channel-list');
       uncat.forEach(ch=>{
-        const row = document.createElement('div');
-        row.className='channel';
-        row.draggable = true;
-        row.dataset.name = clean(ch.name);
-        row.dataset.type = ['text','voice','forum'].includes((ch.type||'').toLowerCase()) ? ch.type.toLowerCase() : 'text';
-        row.innerHTML = `
-          <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement)">↕</span>
-          <input placeholder="Channel" name="channel_name" value="${row.dataset.name}"
-                 oninput="this.closest('.channel').dataset.name=this.value.trim()">
-          <select name="channel_type" onchange="this.closest('.channel').dataset.type=this.value">
-            <option ${row.dataset.type==='text'?'selected':''}>text</option>
-            <option ${row.dataset.type==='voice'?'selected':''}>voice</option>
-            <option ${row.dataset.type==='forum'?'selected':''}>forum</option>
-          </select>
-          <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>`;
-        uncatList.appendChild(row);
+        addChannelTo(byId('uncat'), ch.name, ch.type, ch.topic);
+        const last = uncatList.lastElementChild;
+        if(last) uncatList.appendChild(last);
       });
 
-      // ensure at least one category exists for convenience
       if(cats.length===0) addCategory('');
     }
 
@@ -488,7 +495,7 @@ _FORM_HTML = r"""
         const gid = clean(byId('guild_id')?.value);
         if(!gid){ alert('Enter Guild ID'); return; }
 
-        // roles
+        // roles (respect on-screen order)
         const roles = [];
         byId('roles').querySelectorAll('.row').forEach(r=>{
           const name = clean(r.querySelector('input[name="role_name"]')?.value);
@@ -496,7 +503,7 @@ _FORM_HTML = r"""
           if(name) roles.push({name, color});
         });
 
-        // categories in on-screen order
+        // categories in order
         const categories = [];
         byId('cats').querySelectorAll('.cat').forEach(cat=>{
           const nm = clean(cat.querySelector('.cat-name')?.value || cat.dataset.cat);
@@ -509,8 +516,9 @@ _FORM_HTML = r"""
           listEl.querySelectorAll('.channel').forEach(ch=>{
             const name = clean(ch.querySelector('input[name="channel_name"]')?.value || ch.dataset.name);
             let type = clean(ch.querySelector('select[name="channel_type"]')?.value || ch.dataset.type).toLowerCase();
-            if(!['text','voice','forum'].includes(type)) type = 'text';
-            if(name) channels.push({name, type, category: clean(categoryName)});
+            if(!['text','voice','forum','announcement'].includes(type)) type = 'text';
+            const topic = (ch.querySelector('input[name="channel_topic"]')?.value || '').toString();
+            if(name) channels.push({name, type, category: clean(categoryName), topic});
           });
         };
 
@@ -584,7 +592,7 @@ _FORM_HTML = r"""
       // seed defaults
       addRole();
       const c = addCategory('');
-      addChannelTo(c, '', 'text');
+      addChannelTo(c, '', 'text', '');
     });
   </script>
 </body>
