@@ -158,9 +158,6 @@ def live_layout(guild_id: str):
             id_to_cat[ch.get("id")] = cat
 
     # Second pass: non-category channels in position order; assign to parent
-    def parent_name(parent_id):
-        return id_to_cat.get(parent_id, {}).get("name", "") if parent_id else ""
-
     for ch in sorted(channels_json, key=lambda x: x.get("position", 0)):
         t = ch.get("type")
         if t == 4:
@@ -176,7 +173,6 @@ def live_layout(guild_id: str):
             id_to_cat[pid]["channels"].append(chan)
         else:
             # channel without category → place in a synthetic "Uncategorized" bucket
-            # ensure it's first if not present
             if not categories or categories[0]["name"] != "":
                 categories.insert(0, {"name": "", "channels": []})
             categories[0]["channels"].append(chan)
@@ -195,7 +191,7 @@ def save_layout(guild_id: str):
     """
     Save a NEW versioned layout payload for the given guild_id.
     Only inserts a new version if the payload actually changed (de-dupe).
-    Body JSON: { mode, roles[], categories:[{name,channels[]}...] }
+    Body JSON: { mode, roles[], categories:[{name,channels[]}...], renames? }
     """
     if not (_psycopg_ok and DATABASE_URL):
         return jsonify({"ok": False, "error": "Database not configured"}), 500
@@ -280,7 +276,7 @@ _FORM_HTML = r"""
   <h1>🧱 MessiahBot — Server Builder</h1>
   <div class="bar">
     <label>Guild ID <input type="text" id="guild_id" placeholder="123456789012345678" style="width:240px"></label>
-    <div class="pill">Tip: load live → tweak → save</div>
+    <div class="pill">Tip: load live → tweak names → save</div>
   </div>
 
   <div class="bar" style="margin-top:8px">
@@ -322,6 +318,13 @@ _FORM_HTML = r"""
 function clean(s){ return (s||'').replace(/"/g,'&quot;'); }
 function asColor(c){ c=(c||'').trim(); if(!c) return '#000000'; if(c[0]!=='#') c='#'+c; if(c.length===4){return '#'+c[1]+c[1]+c[2]+c[2]+c[3]+c[3]} return c.toLowerCase(); }
 
+/* We stash originals here to build a renames map on save */
+let ORIGINALS = {
+  roles: [],             // ["old","old2",...]
+  categories: [],        // ["oldcat","oldcat2",...]
+  channelsByCat: {}      // { "CatName": ["ch1","ch2"], "": ["uncat"] }
+};
+
 /* -------------------------- DnD state -------------------------- */
 let DND_EL = null;     // element being dragged
 let DND_TYPE = null;   // 'role' | 'cat' | 'chan'
@@ -344,14 +347,14 @@ function getAfterElement(container, y, selector){
 }
 
 /* -------------------------- Roles -------------------------- */
-function addRole(name="", color="#000000"){
+function addRole(name="", color="#000000", origName=null){
   const d = document.createElement('div');
   d.className = 'row';
   d.dataset.kind = 'role';
   d.draggable = true;
   d.innerHTML = `
     <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement, 'role')">↕</span>
-    <input class="grow" placeholder="Role name" name="role_name" value="${clean(name)}">
+    <input class="grow" placeholder="Role name" name="role_name" value="${clean(name)}" data-original="${clean(origName ?? name)}">
     <input type="color" name="role_color" value="${asColor(color)}">
     <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>`;
   document.getElementById('roles').appendChild(d);
@@ -367,7 +370,7 @@ function rolesDragOver(e){
 }
 
 /* -------------------------- Categories + Channels -------------------------- */
-function addCategory(name=""){
+function addCategory(name="", origName=null){
   const cat = document.createElement('div');
   cat.className = 'cat';
   cat.dataset.kind = 'cat';
@@ -378,7 +381,7 @@ function addCategory(name=""){
   cat.innerHTML = `
     <div class="cat-header row">
       <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement.parentElement, 'cat')">↕</span>
-      <input class="grow" placeholder="Category name (blank = uncategorized bucket)" value="${clean(name)}">
+      <input class="grow" placeholder="Category name (blank = uncategorized bucket)" value="${clean(name)}" data-original="${clean(origName ?? name)}">
       <button type="button" class="btn" onclick="addChannel('${catId}')">Add Channel</button>
       <button type="button" class="btn danger" onclick="this.closest('.cat').remove()">Delete Category</button>
     </div>
@@ -387,14 +390,14 @@ function addCategory(name=""){
   document.getElementById('cats').appendChild(cat);
 }
 
-function addChannel(listId, name="", type="text", topic=""){
+function addChannel(listId, name="", type="text", topic="", origName=null, origCatName=null){
   const row = document.createElement('div');
   row.className = 'row';
   row.dataset.kind = 'chan';
   row.draggable = true;
   row.innerHTML = `
     <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement, 'chan')">↕</span>
-    <input class="grow" placeholder="Channel name" value="${clean(name)}">
+    <input class="grow" placeholder="Channel name" value="${clean(name)}" data-original="${clean(origName ?? name)}" data-original-category="${clean(origCatName ?? '')}">
     <select>
       <option ${type==='text'?'selected':''} value="text">Text</option>
       <option ${type==='voice'?'selected':''} value="voice">Voice</option>
@@ -429,6 +432,9 @@ function channelsDragOver(e, listEl){
 function clearChildren(el){ while(el.firstChild) el.removeChild(el.firstChild); }
 
 function hydrateForm(p){
+  // reset originals
+  ORIGINALS = { roles: [], categories: [], channelsByCat: {} };
+
   // mode
   document.getElementById('mode').value = (p.mode || 'update');
 
@@ -437,47 +443,59 @@ function hydrateForm(p){
   clearChildren(rolesEl);
   const roles = p.roles || [];
   if (roles.length===0) addRole();
-  else roles.forEach(r => addRole(r.name||"", r.color||"#000000"));
+  else {
+    roles.forEach(r => {
+      addRole(r.name||"", r.color||"#000000", r.name||"");
+      ORIGINALS.roles.push(r.name||"");
+    });
+  }
 
   // categories + channels (nested)
   const catsEl = document.getElementById('cats');
   clearChildren(catsEl);
 
-  // We accept either legacy flat structure or new nested structure:
+  // We accept either nested or legacy shape:
   if (Array.isArray(p.categories) && p.categories.length && typeof p.categories[0] === 'object'){
-    // New nested: [{name, channels:[{name,type,topic}]}...]
     p.categories.forEach(cat => {
-      addCategory(cat.name || "");
+      const cname = cat.name || "";
+      addCategory(cname, cname);
+      ORIGINALS.categories.push(cname);
+      ORIGINALS.channelsByCat[cname] = [];
+
       const lastCat = catsEl.lastElementChild;
       const listId = lastCat.querySelector('.channel-list').id;
-      (cat.channels || []).forEach(ch => addChannel(listId, ch.name||"", ch.type||"text", ch.topic||""));
+      (cat.channels || []).forEach(ch => {
+        addChannel(listId, ch.name||"", ch.type||"text", ch.topic||"", ch.name||"", cname);
+        ORIGINALS.channelsByCat[cname].push(ch.name||"");
+      });
     });
   } else {
     // Legacy: categories: [str...], channels: [{name,type,category,topic?}]
     const catNames = (p.categories || []);
     const chanList = (p.channels || []);
-    // Build a map name -> channels
     const map = {};
     catNames.forEach(n => map[(n||"")] = []);
-    // Gather uncategorized too
     map[""] = map[""] || [];
     chanList.forEach(ch => {
       const key = (ch.category || "");
       if (!map[key]) map[key] = [];
       map[key].push({name: ch.name||"", type: ch.type||"text", topic: ch.topic||""});
     });
-    // Preserve order of categories
     const ordered = ["", ...catNames.filter(n => n!=="" )];
     ordered.forEach(catName => {
-      addCategory(catName);
+      addCategory(catName, catName);
+      ORIGINALS.categories.push(catName);
+      ORIGINALS.channelsByCat[catName] = [];
       const lastCat = catsEl.lastElementChild;
       const listId = lastCat.querySelector('.channel-list').id;
-      (map[catName] || []).forEach(ch => addChannel(listId, ch.name, ch.type, ch.topic));
+      (map[catName] || []).forEach(ch => {
+        addChannel(listId, ch.name, ch.type, ch.topic, ch.name, catName);
+        ORIGINALS.channelsByCat[catName].push(ch.name);
+      });
     });
   }
 
-  // Ensure at least one category exists
-  if (!catsEl.firstElementChild) addCategory("");
+  if (!catsEl.firstElementChild) addCategory("", "");
 }
 
 /* -------------------------- Load / Save -------------------------- */
@@ -504,30 +522,64 @@ async function loadLive(){
 function collectLayout(){
   const mode = document.getElementById('mode').value;
 
-  // roles in visual order
+  // roles in visual order + renames
   const roles = [];
+  const roleRenames = [];
   document.querySelectorAll('#roles .row[data-kind="role"]').forEach(r => {
-    const name = r.querySelector('input[name="role_name"]').value.trim();
+    const nameEl = r.querySelector('input[name="role_name"]');
+    const name = nameEl.value.trim();
     const color = r.querySelector('input[name="role_color"]').value;
+    const orig = (nameEl.dataset.original || "").trim();
+    if (orig && name && name !== orig){
+      roleRenames.push({from: orig, to: name});
+    }
     if (name) roles.push({name, color});
   });
 
-  // categories + channels in visual order
+  // categories + channels in visual order + renames
   const categories = [];
+  const catRenames = [];
+  const chanRenames = [];
+
   document.querySelectorAll('#cats .cat').forEach(catEl => {
-    const name = catEl.querySelector('.cat-header input').value.trim();
+    const nameEl = catEl.querySelector('.cat-header input');
+    const name = nameEl.value.trim();
+    const origCat = (nameEl.dataset.original || "").trim();
+    if (origCat && name && name !== origCat){
+      catRenames.push({from: origCat, to: name});
+    }
+
     const channels = [];
     catEl.querySelectorAll('.channel-list .row[data-kind="chan"]').forEach(chEl => {
-      const cName = chEl.querySelector('input[placeholder="Channel name"]').value.trim();
+      const cNameEl = chEl.querySelector('input[placeholder="Channel name"]');
+      const cName = cNameEl.value.trim();
       const cType = chEl.querySelector('select').value;
       const topicEl = chEl.querySelector('input[placeholder^="Topic"]');
       const cTopic = topicEl ? topicEl.value.trim() : "";
+
+      const origName = (cNameEl.dataset.original || "").trim();
+      const origCat = (cNameEl.dataset.originalCategory || "").trim();
+
+      // If the channel kept the same category name but changed channel name, log a rename.
+      // (Moves between categories are handled by the worker as "move".)
+      if (origName && cName && cName !== origName) {
+        // use the *old parent* when forming the rename pair so the worker can find it
+        chanRenames.push({from: origName, to: cName, category: origCat});
+      }
+
       if (cName) channels.push({name: cName, type: cType, topic: cTopic});
     });
+
     categories.push({name, channels});
   });
 
-  return { mode, roles, categories };
+  const renames = {
+    roles: roleRenames,
+    categories: catRenames,
+    channels: chanRenames
+  };
+
+  return { mode, roles, categories, renames };
 }
 
 async function saveLayout(){

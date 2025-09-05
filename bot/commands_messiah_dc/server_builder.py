@@ -415,9 +415,22 @@ class ServerBuilder(commands.Cog):
         layout = {
           "mode": "build"|"update",
           "roles": [{"name": str, "color": "#RRGGBB", "perms": {...}}],
-          "categories": [ str | {"name":str,"overwrites":{...}}, ... ],
-          "channels": [{"name": str, "type": "text|voice|forum|announcement", "category": str,
-                        "options": {...}, "overwrites": {...} }],
+
+          # Categories can be either a simple string list OR objects with overwrites and nested channels.
+          # Preferred (nested) shape coming from the dashboard:
+          # "categories": [
+          #   {"name": "Category A", "overwrites": {...}, "channels": [
+          #       {"name":"chat","type":"text|voice|forum|announcement|stage","topic":"...", "overwrites": {...}},
+          #       {"name":"voice-1","type":"voice"}
+          #   ]},
+          #   {"name": "", "channels":[ ... ]}  # empty name = uncategorized bucket
+          # ]
+          #
+          # Legacy/flat shape (still supported):
+          # "categories": [ "Cat A", "Cat B" ],
+          # "channels":   [{"name": "...", "type": "text|voice|forum|announcement|stage", "category": "Cat A",
+          #                 "options": {...}, "topic":"...", "overwrites": {...}}]
+
           "prune": {"roles": bool, "categories": bool, "channels": bool},
           "renames": {"roles":[{from,to}], "categories":[{from,to}], "channels":[{from,to,category}]},
           "community": {...}
@@ -426,6 +439,41 @@ class ServerBuilder(commands.Cog):
         logs: List[str] = []
         ren_spec = (layout.get("renames") or {})
         prune_spec = (layout.get("prune") or {})
+
+        # ---------- Normalize categories + channels from payload ----------
+        # We support both nested (preferred) and legacy flat shapes.
+        desired_categories: List[Tuple[str, Dict[str, Dict[str, str]]]] = []
+        channels_spec: List[Dict[str, Any]] = []
+
+        cats_payload = layout.get("categories", []) or []
+        if cats_payload and isinstance(cats_payload[0], dict):
+            # Nested shape
+            for c in cats_payload:
+                cname = c.get("name", "")
+                desired_categories.append((cname, c.get("overwrites") or {}))
+                for ch in (c.get("channels") or []):
+                    channels_spec.append({
+                        "name": ch.get("name"),
+                        "type": (ch.get("type") or "text").lower(),
+                        "category": cname,
+                        "topic": ch.get("topic") or (ch.get("options") or {}).get("topic"),
+                        "options": ch.get("options") or {},
+                        "overwrites": ch.get("overwrites") or {}
+                    })
+        else:
+            # Legacy shape
+            for c in cats_payload:
+                desired_categories.append((c, {}))
+            for ch in (layout.get("channels") or []):
+                channels_spec.append(ch)
+
+        # ---------- Apply renames first (prevents duplicate create when only renaming) ----------
+        # Roles
+        await _apply_role_renames(guild, (ren_spec.get("roles") or []))
+        # Categories
+        await _apply_category_renames(guild, (ren_spec.get("categories") or []))
+        # Channels
+        await _apply_channel_renames(guild, (ren_spec.get("channels") or []))
 
         # ---------- ROLES (create/edit + perms/color) ----------
         for r in layout.get("roles", []):
@@ -451,14 +499,6 @@ class ServerBuilder(commands.Cog):
                     logs.append(f"⚠️ No permission to edit role: **{name}**")
 
         # ---------- CATEGORIES (create + overwrites) ----------
-        # Normalize categories list into list of (name, overwrites)
-        desired_categories: List[Tuple[str, Dict[str, Dict[str, str]]]] = []
-        for c in layout.get("categories", []):
-            if isinstance(c, str):
-                desired_categories.append((c, {}))
-            elif isinstance(c, dict):
-                desired_categories.append((c.get("name", ""), c.get("overwrites") or {}))
-
         cat_cache: Dict[str, discord.CategoryChannel] = {}
         for cname, cat_ow in desired_categories:
             cname_n = _norm(cname)
@@ -486,7 +526,7 @@ class ServerBuilder(commands.Cog):
                 cat_cache[cname_n] = cat
 
         # ---------- CHANNELS: create/move/place FIRST ----------
-        for ch in layout.get("channels", []):
+        for ch in channels_spec:
             chname = _norm(ch.get("name"))
             chtype = (ch.get("type") or "text").lower()
             catname = _norm(ch.get("category"))
@@ -514,6 +554,9 @@ class ServerBuilder(commands.Cog):
                 existing = _find_voice(guild, chname)
             elif chtype == "forum":
                 existing = _find_forum(guild, chname)
+            elif chtype == "stage":
+                # Stage channels are part of voice category in discord.py; look by name in voice channels as fallback.
+                existing = _find_voice(guild, chname)
             else:
                 existing = _find_text(guild, chname)
                 chtype = "text"
@@ -521,7 +564,7 @@ class ServerBuilder(commands.Cog):
             # build overwrites + options
             ch_overwrites = _build_overwrites(guild, ch.get("overwrites") or {})
             opts = ch.get("options") or {}
-            topic = opts.get("topic") or None
+            topic = ch.get("topic") or opts.get("topic") or None
             nsfw = bool(opts.get("nsfw") or opts.get("age_restricted"))
             slowmode = int(opts.get("slowmode") or 0)
             is_announcement = (chtype == "announcement")
@@ -545,6 +588,11 @@ class ServerBuilder(commands.Cog):
                     elif chtype == "forum":
                         created = await guild.create_forum(
                             name=chname, category=parent, reason="MessiahBot builder"
+                        )
+                    elif chtype == "stage":
+                        # Stage channels require a Stage instance to be started by a user later; just create the channel.
+                        created = await guild.create_stage_channel(
+                            chname, category=parent, reason="MessiahBot builder"
                         )
                     else:
                         created = None
@@ -593,13 +641,7 @@ class ServerBuilder(commands.Cog):
                 except Exception:
                     pass
 
-        # ---------- THEN apply renames (so prunes can remove emptied things) ----------
-        # Roles
-        await _apply_role_renames(guild, (ren_spec.get("roles") or []))
-        # Categories
-        await _apply_category_renames(guild, (ren_spec.get("categories") or []))
-        # Channels
-        await _apply_channel_renames(guild, (ren_spec.get("channels") or []))
+        # (Renames now applied at the start, before create/move)
 
         # ---------- Community ----------
         await _apply_community(guild, layout.get("community") or {}, is_build=(not update_only))
@@ -624,7 +666,7 @@ class ServerBuilder(commands.Cog):
         # Channels wanted
         if prune_spec.get("channels"):
             wanted_chans: set[Tuple[str,str,str]] = set()
-            for ch in (layout.get("channels") or []):
+            for ch in channels_spec:
                 nm = _norm(ch.get("name",""))
                 tp = (ch.get("type") or "text").lower()
                 cat = _norm(ch.get("category",""))
