@@ -13,7 +13,9 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI") or "http://localhost:5050/oauth/discord/callback"
-DISCORD_API = "https://discord.com/api/v10"
+DISCORD_API = "https://discord.com/api/v10"          # REST (users, guilds, channels, etc.)
+DISCORD_AUTH_BASE = "https://discord.com/oauth2"      # OAuth authorize (no /api)
+DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"  # OAuth token (no version)
 
 _psycopg_ok = False
 try:
@@ -75,7 +77,8 @@ def _discord_oauth_url(state: str):
         "state": state,
         "prompt": "consent",
     }
-    return f"{DISCORD_API}/oauth2/authorize?{urllib.parse.urlencode(params)}"
+    # NOTE: authorize is NOT under /api
+    return f"{DISCORD_AUTH_BASE}/authorize?{urllib.parse.urlencode(params)}"
 
 def _exchange_code_for_token(code: str):
     if not _requests_ok:
@@ -88,7 +91,8 @@ def _exchange_code_for_token(code: str):
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    r = requests.post(f"{DISCORD_API}/oauth2/token", data=data, headers=headers, timeout=20)
+    # NOTE: token is under /api/oauth2/token (no version)
+    r = requests.post(DISCORD_TOKEN_URL, data=data, headers=headers, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -139,6 +143,7 @@ def dbcheck():
         "has_discord_bot_token": bool(DISCORD_BOT_TOKEN),
         "has_requests": _requests_ok,
         "has_oauth": bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI),
+        "has_redirect": bool
     }
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
