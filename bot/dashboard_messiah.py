@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify, render_template_string
 
 # --- Config / DB driver detection ---
 DATABASE_URL = os.getenv("DATABASE_URL")
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # required for /api/live_layout
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # still shown in /dbcheck for visibility
 
 _psycopg_ok = False
 try:
@@ -39,15 +39,6 @@ def _json_equal(a, b) -> bool:
         return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
     except Exception:
         return False
-
-def _discord_headers():
-    if not DISCORD_BOT_TOKEN:
-        raise RuntimeError("DISCORD_BOT_TOKEN not set on web service")
-    return {
-        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-        "User-Agent": "MessiahBotDashboard (dashboard, 1.0)",
-        "Content-Type": "application/json",
-    }
 
 # --- Probe / utility routes ------------------------------------------------
 
@@ -88,101 +79,25 @@ def dbcheck():
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
 
-# --- Live snapshot from Discord REST --------------------------------------
+# --- Reworked 'live' endpoint: use latest bot snapshot from DB -------------
 
 @app.get("/api/live_layout/<guild_id>")
 def live_layout(guild_id: str):
     """
-    Build a layout from the current live Discord server using the REST API.
-    Requires DISCORD_BOT_TOKEN and that the bot is in the guild.
+    NO external Discord REST calls here.
+    Returns the latest /snapshot_layout saved by the bot for this guild.
+    This avoids Cloudflare rate limits from the Render web dyno.
     """
-    try:
-        import requests
-    except Exception:
-        return jsonify({"ok": False, "error": "Python 'requests' not installed; add requests to requirements.txt"}), 500
-
-    if not DISCORD_BOT_TOKEN:
-        return jsonify({"ok": False, "error": "DISCORD_BOT_TOKEN not set on web service"}), 500
-
-    base = "https://discord.com/api/v10"
-    headers = _discord_headers()
-
-    # roles
-    r_roles = requests.get(f"{base}/guilds/{guild_id}/roles", headers=headers, timeout=20)
-    if r_roles.status_code == 403:
-        return jsonify({"ok": False, "error": "Forbidden: bot lacks permission or is not in this guild"}), 403
-    if r_roles.status_code == 404:
-        return jsonify({"ok": False, "error": "Guild not found (check Guild ID)"}), 404
-    if r_roles.status_code >= 400:
-        return jsonify({"ok": False, "error": f"Discord roles error {r_roles.status_code}: {r_roles.text}"}), 502
-    roles_json = r_roles.json()
-
-    # channels (includes categories & all types)
-    r_channels = requests.get(f"{base}/guilds/{guild_id}/channels", headers=headers, timeout=20)
-    if r_channels.status_code >= 400:
-        return jsonify({"ok": False, "error": f"Discord channels error {r_channels.status_code}: {r_channels.text}"}), 502
-    channels_json = r_channels.json()
-
-    # Convert to our schema
-    roles = []
-    for r in roles_json:
-        if r.get("managed"):  # skip integration-managed
-            continue
-        if r.get("name") == "@everyone":
-            continue
-        color_int = r.get("color") or 0
-        roles.append({"name": r.get("name", ""), "color": f"#{color_int:06x}"})
-
-    # Type mapping for our UI
-    TYPE_MAP = {
-        0: "text",
-        2: "voice",
-        4: "category",
-        15: "forum",
-        5: "announcement",
-        13: "stage",
-    }
-
-    # Collect categories with their channels
-    categories = []
-    id_to_cat = {}
-
-    # First pass: categories in position order
-    for ch in sorted(channels_json, key=lambda x: x.get("position", 0)):
-        if ch.get("type") == 4:
-            cat = {
-                "name": ch.get("name", ""),
-                "channels": []
-            }
-            categories.append(cat)
-            id_to_cat[ch.get("id")] = cat
-
-    # Second pass: non-category channels in position order; assign to parent
-    for ch in sorted(channels_json, key=lambda x: x.get("position", 0)):
-        t = ch.get("type")
-        if t == 4:
-            continue
-        our_type = TYPE_MAP.get(t, "text")
-        chan = {
-            "name": ch.get("name", ""),
-            "type": our_type,
-            "topic": ch.get("topic") or ""
-        }
-        pid = ch.get("parent_id")
-        if pid and pid in id_to_cat:
-            id_to_cat[pid]["channels"].append(chan)
-        else:
-            # channel without category → place in a synthetic "Uncategorized" bucket
-            if not categories or categories[0]["name"] != "":
-                categories.insert(0, {"name": "", "channels": []})
-            categories[0]["channels"].append(chan)
-
-    payload = {
-        "mode": "update",
-        "roles": roles,
-        "categories": categories,  # [{name, channels:[{name,type,topic}...]}...]
-    }
-    return jsonify({"ok": True, "payload": payload})
+    row = _db_one(
+        "SELECT version, payload FROM builder_layouts WHERE guild_id = %s ORDER BY version DESC LIMIT 1",
+        (guild_id,),
+    )
+    if not row:
+        return jsonify({
+            "ok": False,
+            "error": "No snapshot found. In Discord, run /snapshot_layout first, then reload here."
+        }), 404
+    return jsonify({"ok": True, "source": "snapshot", "version": int(row["version"]), "payload": row["payload"]})
 
 # --- API routes (DB-backed) -----------------------------------------------
 
@@ -191,7 +106,7 @@ def save_layout(guild_id: str):
     """
     Save a NEW versioned layout payload for the given guild_id.
     Only inserts a new version if the payload actually changed (de-dupe).
-    Body JSON: { mode, roles[], categories:[{name,channels[]}...], renames? }
+    Body JSON: { mode, roles[], categories[], channels[], prune?, renames?, community? }
     """
     if not (_psycopg_ok and DATABASE_URL):
         return jsonify({"ok": False, "error": "Database not configured"}), 500
@@ -236,382 +151,273 @@ _FORM_HTML = r"""
 <html>
 <head>
   <meta charset="utf-8">
-  <title>MessiahBot — Server Builder</title>
+  <title>MessiahBot — Submit Server Layout</title>
   <style>
-    :root{
-      --bg:#0b0c10; --card:#151820; --muted:#aab1c0; --text:#e8ecf3; --accent:#6aa6ff; --danger:#e06565; --ok:#5fbf7f;
-      --border:#2a2f3a;
-    }
-    *{box-sizing:border-box}
-    body{font-family:ui-sans-serif,-apple-system,Segoe UI,Roboto,Inter,Arial; background:var(--bg); color:var(--text); margin:0}
-    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
-    h1{font-size:28px;margin:16px 0 8px}
-    .bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    input[type=text], input[type=url], input[type=number], textarea, select{
-      background:#0f1218;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;
-    }
-    textarea{width:100%;min-height:70px}
-    .btn{background:#1b2130;border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer}
-    .btn:hover{border-color:#3a4150}
-    .btn.primary{background:var(--accent);color:#fff;border-color:#4d86ff}
-    .btn.success{background:var(--ok);color:#06230f}
-    .btn.danger{background:var(--danger);color:#330909}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin:14px 0}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .section-title{display:flex;align-items:center;justify-content:space-between;margin:4px 0 8px}
-    .muted{color:var(--muted)}
-    .row{display:flex;gap:8px;align-items:center;padding:6px;border:1px dashed transparent;border-radius:8px}
-    .row.dragover{border-color:#3a4150;background:#121725}
-    .handle{cursor:grab;user-select:none;background:#0f1420;border:1px solid var(--border);padding:2px 8px;border-radius:6px}
-    .grow{flex:1}
-    .cat{border:1px solid var(--border);border-radius:10px;padding:8px;margin:10px 0;background:#11161f}
-    .cat-header{display:flex;gap:8px;align-items:center;margin-bottom:6px}
-    .channel-list{display:flex;flex-direction:column;gap:6px}
-    .pill{font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:var(--muted)}
-    .hint{font-size:12px;color:var(--muted)}
+    body{font-family:sans-serif;max-width:900px;margin:24px auto;padding:0 12px}
+    fieldset{margin:16px 0;padding:12px;border-radius:8px}
+    button{margin-top:6px}
+    .note{color:#444}
   </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>🧱 MessiahBot — Server Builder</h1>
-  <div class="bar">
-    <label>Guild ID <input type="text" id="guild_id" placeholder="123456789012345678" style="width:240px"></label>
-    <div class="pill">Tip: load live → tweak names → save</div>
-  </div>
+  <h1>🧱 MessiahBot — Submit Server Layout</h1>
+  <p class="note">
+    <strong>Tip:</strong> To pull current server structure safely, run <code>/snapshot_layout</code> in your Discord server first,
+    then click <strong>Load From Bot Snapshot</strong> below.
+  </p>
 
-  <div class="bar" style="margin-top:8px">
-    <button class="btn" id="loadLiveBtn">Load From Live Server</button>
-    <button class="btn" id="loadLatestBtn">Load Latest From DB</button>
-    <div style="flex:1"></div>
-    <label class="muted">Mode:
-      <select id="mode">
-        <option value="build">Build</option>
-        <option value="update" selected>Update</option>
-      </select>
-    </label>
-    <button class="btn success" id="saveBtn">Save Layout</button>
-    <a class="btn" href="/dbcheck" target="_blank">DB Check</a>
-    <a class="btn" href="/routes" target="_blank">Routes</a>
-  </div>
+  <p>
+    <a href="/dbcheck" target="_blank">/dbcheck</a> •
+    <a href="/routes" target="_blank">/routes</a>
+  </p>
 
-  <div class="card">
-    <div class="section-title">
-      <h3>Roles</h3>
-      <button class="btn" onclick="addRole()">Add Role</button>
-    </div>
-    <div id="roles" ondragover="rolesDragOver(event)"></div>
-    <div class="hint">Drag the ↕ handle to reorder roles.</div>
-  </div>
+  <form id="layoutForm">
+    <label>Guild ID <input type="text" id="guild_id" required></label>
 
-  <div class="card">
-    <div class="section-title">
-      <h3>Categories & Channels</h3>
-      <button class="btn" onclick="addCategory()">Add Category</button>
-    </div>
-    <div id="cats" ondragover="catsDragOver(event)"></div>
-    <div class="hint">Drag the ↕ handle on a category to reorder categories. Drag a channel’s ↕ to reorder or move between categories.</div>
-  </div>
-</div>
+    <p>
+      <button type="button" id="loadLiveBtn">Load From Bot Snapshot</button>
+      <button type="button" id="loadLatestBtn">Load Latest From DB</button>
+    </p>
 
-<script>
-/* -------------------------- Small utilities -------------------------- */
-function clean(s){ return (s||'').replace(/"/g,'&quot;'); }
-function asColor(c){ c=(c||'').trim(); if(!c) return '#000000'; if(c[0]!=='#') c='#'+c; if(c.length===4){return '#'+c[1]+c[1]+c[2]+c[2]+c[3]+c[3]} return c.toLowerCase(); }
+    <fieldset>
+      <legend>Mode</legend>
+      <label><input type="radio" name="mode" value="build" checked> Build</label>
+      <label><input type="radio" name="mode" value="update"> Update</label>
+    </fieldset>
 
-/* We stash originals here to build a renames map on save */
-let ORIGINALS = {
-  roles: [],             // ["old","old2",...]
-  categories: [],        // ["oldcat","oldcat2",...]
-  channelsByCat: {}      // { "CatName": ["ch1","ch2"], "": ["uncat"] }
-};
+    <h3>Roles</h3>
+    <div id="roles"></div>
+    <button type="button" onclick="addRole()">Add Role</button>
 
-/* -------------------------- DnD state -------------------------- */
-let DND_EL = null;     // element being dragged
-let DND_TYPE = null;   // 'role' | 'cat' | 'chan'
+    <h3>Categories</h3>
+    <div id="cats"></div>
+    <button type="button" onclick="addCat()">Add Category</button>
 
-function dndStart(e, el, kind){
-  DND_EL = el;
-  DND_TYPE = kind;
-  e.dataTransfer.effectAllowed = "move";
-}
+    <h3>Channels</h3>
+    <div id="chans"></div>
+    <button type="button" onclick="addChan()">Add Channel</button>
 
-function getAfterElement(container, y, selector){
-  const els = [...container.querySelectorAll(selector)].filter(n => n !== DND_EL);
-  let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
-  els.forEach(child => {
-    const box = child.getBoundingClientRect();
-    const offset = y - (box.top + box.height/2);
-    if (offset < 0 && offset > closest.offset) { closest = {offset, element: child}; }
-  });
-  return closest.element;
-}
+    <h3>Danger Zone</h3>
+    <p><em>These options can delete or rename live items. Use carefully.</em></p>
+    <label><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
+    <label><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
+    <label><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
 
-/* -------------------------- Roles -------------------------- */
-function addRole(name="", color="#000000", origName=null){
-  const d = document.createElement('div');
-  d.className = 'row';
-  d.dataset.kind = 'role';
-  d.draggable = true;
-  d.innerHTML = `
-    <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement, 'role')">↕</span>
-    <input class="grow" placeholder="Role name" name="role_name" value="${clean(name)}" data-original="${clean(origName ?? name)}">
-    <input type="color" name="role_color" value="${asColor(color)}">
-    <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>`;
-  document.getElementById('roles').appendChild(d);
-}
+    <h4>Role Renames</h4>
+    <div id="roleRenames"></div>
+    <button type="button" onclick="addRename('roleRenames')">Add Role Rename</button>
 
-function rolesDragOver(e){
-  e.preventDefault();
-  if (!DND_EL || DND_TYPE!=='role') return;
-  const container = document.getElementById('roles');
-  const afterEl = getAfterElement(container, e.clientY, '.row[data-kind="role"]');
-  if (!afterEl) container.appendChild(DND_EL);
-  else container.insertBefore(DND_EL, afterEl);
-}
+    <h4>Category Renames</h4>
+    <div id="catRenames"></div>
+    <button type="button" onclick="addRename('catRenames')">Add Category Rename</button>
 
-/* -------------------------- Categories + Channels -------------------------- */
-function addCategory(name="", origName=null){
-  const cat = document.createElement('div');
-  cat.className = 'cat';
-  cat.dataset.kind = 'cat';
-  cat.draggable = true;
+    <h4>Channel Renames</h4>
+    <div id="chanRenames"></div>
+    <button type="button" onclick="addRename('chanRenames')">Add Channel Rename</button>
 
-  const catId = 'channels_' + Math.random().toString(36).slice(2,8);
+    <p><button type="button" id="saveBtn">Save Layout</button></p>
+  </form>
 
-  cat.innerHTML = `
-    <div class="cat-header row">
-      <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement.parentElement, 'cat')">↕</span>
-      <input class="grow" placeholder="Category name (blank = uncategorized bucket)" value="${clean(name)}" data-original="${clean(origName ?? name)}">
-      <button type="button" class="btn" onclick="addChannel('${catId}')">Add Channel</button>
-      <button type="button" class="btn danger" onclick="this.closest('.cat').remove()">Delete Category</button>
-    </div>
-    <div class="channel-list" id="${catId}" ondragover="channelsDragOver(event, this)"></div>
-  `;
-  document.getElementById('cats').appendChild(cat);
-}
-
-function addChannel(listId, name="", type="text", topic="", origName=null, origCatName=null){
-  const row = document.createElement('div');
-  row.className = 'row';
-  row.dataset.kind = 'chan';
-  row.draggable = true;
-  row.innerHTML = `
-    <span class="handle" draggable="true" ondragstart="dndStart(event, this.parentElement, 'chan')">↕</span>
-    <input class="grow" placeholder="Channel name" value="${clean(name)}" data-original="${clean(origName ?? name)}" data-original-category="${clean(origCatName ?? '')}">
-    <select>
-      <option ${type==='text'?'selected':''} value="text">Text</option>
-      <option ${type==='voice'?'selected':''} value="voice">Voice</option>
-      <option ${type==='forum'?'selected':''} value="forum">Forum</option>
-      <option ${type==='announcement'?'selected':''} value="announcement">Announcement</option>
-      <option ${type==='stage'?'selected':''} value="stage">Stage</option>
-    </select>
-    <input class="grow" placeholder="Topic / Description (optional)" value="${clean(topic)}">
-    <button type="button" class="btn danger" onclick="this.parentElement.remove()">Delete</button>
-  `;
-  document.getElementById(listId).appendChild(row);
-}
-
-function catsDragOver(e){
-  e.preventDefault();
-  if (!DND_EL || DND_TYPE!=='cat') return;
-  const container = document.getElementById('cats');
-  const afterEl = getAfterElement(container, e.clientY, '.cat');
-  if (!afterEl) container.appendChild(DND_EL);
-  else container.insertBefore(DND_EL, afterEl);
-}
-
-function channelsDragOver(e, listEl){
-  e.preventDefault();
-  if (!DND_EL || DND_TYPE!=='chan') return;
-  const afterEl = getAfterElement(listEl, e.clientY, '.row[data-kind="chan"]');
-  if (!afterEl) listEl.appendChild(DND_EL);
-  else listEl.insertBefore(DND_EL, afterEl);
-}
-
-/* -------------------------- Hydration -------------------------- */
-function clearChildren(el){ while(el.firstChild) el.removeChild(el.firstChild); }
-
-function hydrateForm(p){
-  // reset originals
-  ORIGINALS = { roles: [], categories: [], channelsByCat: {} };
-
-  // mode
-  document.getElementById('mode').value = (p.mode || 'update');
-
-  // roles
-  const rolesEl = document.getElementById('roles');
-  clearChildren(rolesEl);
-  const roles = p.roles || [];
-  if (roles.length===0) addRole();
-  else {
-    roles.forEach(r => {
-      addRole(r.name||"", r.color||"#000000", r.name||"");
-      ORIGINALS.roles.push(r.name||"");
+  <script>
+    // Prevent Enter from auto-submitting the form
+    document.getElementById('layoutForm').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+        e.preventDefault();
+      }
     });
-  }
 
-  // categories + channels (nested)
-  const catsEl = document.getElementById('cats');
-  clearChildren(catsEl);
-
-  // We accept either nested or legacy shape:
-  if (Array.isArray(p.categories) && p.categories.length && typeof p.categories[0] === 'object'){
-    p.categories.forEach(cat => {
-      const cname = cat.name || "";
-      addCategory(cname, cname);
-      ORIGINALS.categories.push(cname);
-      ORIGINALS.channelsByCat[cname] = [];
-
-      const lastCat = catsEl.lastElementChild;
-      const listId = lastCat.querySelector('.channel-list').id;
-      (cat.channels || []).forEach(ch => {
-        addChannel(listId, ch.name||"", ch.type||"text", ch.topic||"", ch.name||"", cname);
-        ORIGINALS.channelsByCat[cname].push(ch.name||"");
-      });
-    });
-  } else {
-    // Legacy: categories: [str...], channels: [{name,type,category,topic?}]
-    const catNames = (p.categories || []);
-    const chanList = (p.channels || []);
-    const map = {};
-    catNames.forEach(n => map[(n||"")] = []);
-    map[""] = map[""] || [];
-    chanList.forEach(ch => {
-      const key = (ch.category || "");
-      if (!map[key]) map[key] = [];
-      map[key].push({name: ch.name||"", type: ch.type||"text", topic: ch.topic||""});
-    });
-    const ordered = ["", ...catNames.filter(n => n!=="" )];
-    ordered.forEach(catName => {
-      addCategory(catName, catName);
-      ORIGINALS.categories.push(catName);
-      ORIGINALS.channelsByCat[catName] = [];
-      const lastCat = catsEl.lastElementChild;
-      const listId = lastCat.querySelector('.channel-list').id;
-      (map[catName] || []).forEach(ch => {
-        addChannel(listId, ch.name, ch.type, ch.topic, ch.name, catName);
-        ORIGINALS.channelsByCat[catName].push(ch.name);
-      });
-    });
-  }
-
-  if (!catsEl.firstElementChild) addCategory("", "");
-}
-
-/* -------------------------- Load / Save -------------------------- */
-async function loadLatest(){
-  const gid = document.getElementById('guild_id').value.trim();
-  if(!gid){ alert('Enter Guild ID'); return; }
-  const res = await fetch(`/api/layout/${gid}/latest`);
-  const data = await res.json();
-  if(!data.ok){ alert(data.error || 'No layout'); return; }
-  hydrateForm(data.payload || {});
-  alert(`Loaded version ${data.version} from DB`);
-}
-
-async function loadLive(){
-  const gid = document.getElementById('guild_id').value.trim();
-  if(!gid){ alert('Enter Guild ID'); return; }
-  const res = await fetch(`/api/live_layout/${gid}`);
-  const data = await res.json();
-  if(!data.ok){ alert(data.error || 'Failed to load live server'); return; }
-  hydrateForm(data.payload || {});
-  alert('Loaded from live server');
-}
-
-function collectLayout(){
-  const mode = document.getElementById('mode').value;
-
-  // roles in visual order + renames
-  const roles = [];
-  const roleRenames = [];
-  document.querySelectorAll('#roles .row[data-kind="role"]').forEach(r => {
-    const nameEl = r.querySelector('input[name="role_name"]');
-    const name = nameEl.value.trim();
-    const color = r.querySelector('input[name="role_color"]').value;
-    const orig = (nameEl.dataset.original || "").trim();
-    if (orig && name && name !== orig){
-      roleRenames.push({from: orig, to: name});
+    // Builders
+    function addRole(){
+      const d=document.createElement('div');
+      d.innerHTML=`<input placeholder="Role" name="role_name">
+                   <input type="color" name="role_color" value="#000000">
+                   <button type=button onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('roles').appendChild(d);
     }
-    if (name) roles.push({name, color});
-  });
-
-  // categories + channels in visual order + renames
-  const categories = [];
-  const catRenames = [];
-  const chanRenames = [];
-
-  document.querySelectorAll('#cats .cat').forEach(catEl => {
-    const nameEl = catEl.querySelector('.cat-header input');
-    const name = nameEl.value.trim();
-    const origCat = (nameEl.dataset.original || "").trim();
-    if (origCat && name && name !== origCat){
-      catRenames.push({from: origCat, to: name});
+    function addCat(){
+      const d=document.createElement('div');
+      d.innerHTML=`<input placeholder="Category" name="category">
+                   <button type=button onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('cats').appendChild(d);
+    }
+    function addChan(){
+      const d=document.createElement('div');
+      d.innerHTML=`<input placeholder="Channel" name="channel_name">
+                   <select name="channel_type"><option>text</option><option>voice</option><option>forum</option><option>announcement</option></select>
+                   <input placeholder="Parent Category" name="channel_category">
+                   <button type=button onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('chans').appendChild(d);
     }
 
-    const channels = [];
-    catEl.querySelectorAll('.channel-list .row[data-kind="chan"]').forEach(chEl => {
-      const cNameEl = chEl.querySelector('input[placeholder="Channel name"]');
-      const cName = cNameEl.value.trim();
-      const cType = chEl.querySelector('select').value;
-      const topicEl = chEl.querySelector('input[placeholder^="Topic"]');
-      const cTopic = topicEl ? topicEl.value.trim() : "";
+    // Prefill helpers
+    function clearSection(id) {
+      const el = document.getElementById(id);
+      while (el.firstChild) el.removeChild(el.firstChild);
+    }
+    function addRoleRow(name = "", color = "#000000") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="Role" name="role_name" value="${name}">
+                     <input type="color" name="role_color" value="${color || '#000000'}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('roles').appendChild(d);
+    }
+    function addCatRow(name = "") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="Category" name="category" value="${name}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('cats').appendChild(d);
+    }
+    function addChanRow(name = "", type = "text", category = "") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="Channel" name="channel_name" value="${name}">
+                     <select name="channel_type">
+                       <option ${type==='text'?'selected':''}>text</option>
+                       <option ${type==='voice'?'selected':''}>voice</option>
+                       <option ${type==='forum'?'selected':''}>forum</option>
+                       <option ${type==='announcement'?'selected':''}>announcement</option>
+                     </select>
+                     <input placeholder="Parent Category" name="channel_category" value="${category}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById('chans').appendChild(d);
+    }
 
-      const origName = (cNameEl.dataset.original || "").trim();
-      const origCat = (cNameEl.dataset.originalCategory || "").trim();
+    function addRename(containerId, fromVal="", toVal="") {
+      const d = document.createElement('div');
+      d.innerHTML = `<input placeholder="From name" class="rename_from" value="${fromVal}">
+                     <span>→</span>
+                     <input placeholder="To name" class="rename_to" value="${toVal}">
+                     <button type="button" onclick="this.parentElement.remove()">x</button>`;
+      document.getElementById(containerId).appendChild(d);
+    }
+    function collectRenames(containerId){
+      const out = [];
+      const fromEls = document.querySelectorAll(`#${containerId} .rename_from`);
+      const toEls = document.querySelectorAll(`#${containerId} .rename_to`);
+      for (let i=0; i<fromEls.length; i++){
+        const from = (fromEls[i].value||"").trim();
+        const to   = (toEls[i].value||"").trim();
+        if (from && to) out.push({from,to});
+      }
+      return out;
+    }
 
-      // If the channel kept the same category name but changed channel name, log a rename.
-      // (Moves between categories are handled by the worker as "move".)
-      if (origName && cName && cName !== origName) {
-        // use the *old parent* when forming the rename pair so the worker can find it
-        chanRenames.push({from: origName, to: cName, category: origCat});
+    // Load latest from DB
+    async function loadLatest() {
+      const gid = document.getElementById('guild_id').value.trim();
+      if (!gid) { alert('Enter Guild ID'); return; }
+      const res = await fetch(`/api/layout/${gid}/latest`);
+      const data = await res.json();
+      if (!data.ok) { alert(data.error || 'No layout'); return; }
+      hydrateForm(data.payload || {});
+      alert(`Loaded version ${data.version} from DB`);
+    }
+
+    // Load from Bot Snapshot (latest saved by /snapshot_layout)
+    async function loadLive() {
+      const gid = document.getElementById('guild_id').value.trim();
+      if (!gid) { alert('Enter Guild ID'); return; }
+      const res = await fetch(`/api/live_layout/${gid}`);
+      const data = await res.json();
+      if (!data.ok) { alert(data.error || 'No snapshot found. Run /snapshot_layout in Discord, then retry.'); return; }
+      hydrateForm(data.payload || {});
+      alert(`Loaded from bot snapshot (version ${data.version || 'n/a'})`);
+    }
+
+    function hydrateForm(p) {
+      // reset danger zone
+      document.getElementById('prune_roles').checked = !!(p.prune && p.prune.roles);
+      document.getElementById('prune_categories').checked = !!(p.prune && p.prune.categories);
+      document.getElementById('prune_channels').checked = !!(p.prune && p.prune.channels);
+      ['roleRenames','catRenames','chanRenames'].forEach(id => {
+        const el = document.getElementById(id);
+        while (el.firstChild) el.removeChild(el.firstChild);
+      });
+      const ren = (p.renames || {});
+      (ren.roles || []).forEach(x => addRename('roleRenames', x.from||"", x.to||""));
+      (ren.categories || []).forEach(x => addRename('catRenames', x.from||"", x.to||""));
+      (ren.channels || []).forEach(x => addRename('chanRenames', x.from||"", x.to||""));
+
+      const mode = (p.mode || 'build');
+      const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
+      if (radio) radio.checked = true;
+
+      clearSection('roles');
+      (p.roles || []).forEach(r => addRoleRow(r.name || "", r.color || "#000000"));
+      if ((p.roles || []).length === 0) addRoleRow();
+
+      clearSection('cats');
+      // categories may be list of strings or objects with {name,...}
+      (p.categories || []).forEach(c => {
+        const name = (typeof c === 'string') ? c : (c && c.name) || "";
+        addCatRow(name);
+      });
+      if ((p.categories || []).length === 0) addCatRow();
+
+      clearSection('chans');
+      (p.channels || []).forEach(ch => addChanRow(ch.name || "", (ch.type||'text'), ch.category || ""));
+      if ((p.channels || []).length === 0) addChanRow();
+    }
+
+    document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
+    document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
+
+    // Save layout
+    async function saveLayout(){
+      const form = document.getElementById('layoutForm');
+      const gid = document.getElementById('guild_id').value.trim();
+      if (!gid) { alert('Enter Guild ID'); return; }
+
+      const roles = [], categories = [], channels = [];
+      const mode = form.mode.value;
+
+      const rn = form.querySelectorAll('input[name="role_name"]');
+      const rc = form.querySelectorAll('input[name="role_color"]');
+      for (let i = 0; i < rn.length; i++) {
+        if (rn[i].value) roles.push({ name: rn[i].value, color: rc[i].value });
       }
 
-      if (cName) channels.push({name: cName, type: cType, topic: cTopic});
-    });
+      form.querySelectorAll('input[name="category"]').forEach(el => {
+        if (el.value) categories.push(el.value);
+      });
 
-    categories.push({name, channels});
-  });
+      const cn = form.querySelectorAll('input[name="channel_name"]');
+      const ct = form.querySelectorAll('select[name="channel_type"]');
+      const cc = form.querySelectorAll('input[name="channel_category"]');
+      for (let i = 0; i < cn.length; i++) {
+        if (cn[i].value) channels.push({ name: cn[i].value, type: ct[i].value, category: cc[i].value });
+      }
 
-  const renames = {
-    roles: roleRenames,
-    categories: catRenames,
-    channels: chanRenames
-  };
+      const prune_roles = document.getElementById('prune_roles').checked;
+      const prune_categories = document.getElementById('prune_categories').checked;
+      const prune_channels = document.getElementById('prune_channels').checked;
 
-  return { mode, roles, categories, renames };
-}
+      const roles_rename = collectRenames('roleRenames');
+      const categories_rename = collectRenames('catRenames');
+      const channels_rename = collectRenames('chanRenames');
 
-async function saveLayout(){
-  const gid = document.getElementById('guild_id').value.trim();
-  if(!gid){ alert('Enter Guild ID'); return; }
+      const payload = {
+        mode,
+        roles, categories, channels,
+        prune: { roles: prune_roles, categories: prune_categories, channels: prune_channels },
+        renames: { roles: roles_rename, categories: categories_rename, channels: channels_rename }
+      };
 
-  const payload = collectLayout();
-  const res = await fetch(`/api/layout/${gid}`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  if (data.ok && data.no_change) alert(`No changes detected. Current version is still ${data.version}.`);
-  else if (data.ok) alert(`Saved version ${data.version}`);
-  else alert(data.error || 'Error saving layout');
-}
-
-/* -------------------------- Wire up -------------------------- */
-document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
-document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
-document.getElementById('saveBtn').addEventListener('click', saveLayout);
-
-// Prevent Enter from accidental form submit
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && ['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) e.preventDefault();
-});
-
-// Start with one empty role and one empty category if blank
-addRole();
-addCategory("");
-</script>
+      const res = await fetch(`/api/layout/${gid}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.ok && data.no_change) {
+        alert(`No changes detected. Current version is still ${data.version}.`);
+      } else if (data.ok) {
+        alert(`Saved version ${data.version}`);
+      } else {
+        alert(data.error || 'Error');
+      }
+    }
+    document.getElementById('saveBtn').addEventListener('click', saveLayout);
+  </script>
 </body>
 </html>
 """
