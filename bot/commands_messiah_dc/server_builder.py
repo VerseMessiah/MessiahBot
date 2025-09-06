@@ -135,26 +135,66 @@ def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) 
 # ---------- snapshot (used by /snapshot_layout) ----------
 
 def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
-    """Build a layout dict from the live guild (structure only)."""
+    """Build a layout dict from the live guild (roles, categories, channels)."""
+    # Roles (skip @everyone + managed)
     roles = []
     for r in sorted(guild.roles, key=lambda x: x.position, reverse=True):
         if r.is_default() or r.managed:
             continue
-        roles.append({"name": r.name, "color": f"#{r.colour.value:06x}", "perms": {}})
+        roles.append({"name": r.name, "color": f"#{r.colour.value:06x}"})
 
-    categories = [c.name for c in sorted(guild.categories, key=lambda x: x.position)]
+    # Categories (ordered)
+    def safe_pos(c):  # some objects can have None or raise
+        try:
+            return getattr(c, "position", 0) or 0
+        except Exception:
+            return 0
+    categories = [c.name for c in sorted(guild.categories, key=safe_pos)]
 
-    channels = []
-    for ch in sorted(guild.text_channels, key=lambda x: (x.category.position if x.category else -1, x.position)):
-        channels.append({"name": ch.name, "type": "text", "category": ch.category.name if ch.category else "", "options": {}})
-    for ch in sorted(guild.voice_channels, key=lambda x: (x.category.position if x.category else -1, x.position)):
-        channels.append({"name": ch.name, "type": "voice", "category": ch.category.name if ch.category else "", "options": {}})
+    # Channels (ordered by parent category, then channel position)
+    channels: List[Dict[str, Any]] = []
+
+    def parent_key(ch):
+        cat = getattr(ch, "category", None)
+        return (safe_pos(cat) if cat else -1, safe_pos(ch))
+
+    # text + news(announcement) live in text_channels
+    for ch in sorted(guild.text_channels, key=parent_key):
+        chtype = "announcement" if str(getattr(ch, "type", "")).endswith("news") else "text"
+        channels.append({
+            "name": ch.name,
+            "type": chtype,
+            "category": ch.category.name if ch.category else "",
+            "options": {
+                "topic": getattr(ch, "topic", None) or "",
+                "nsfw": bool(getattr(ch, "nsfw", False)),
+                "slowmode": int(getattr(ch, "slowmode_delay", 0) or 0),
+            }
+        })
+
+    # voice
+    for ch in sorted(guild.voice_channels, key=parent_key):
+        channels.append({
+            "name": ch.name,
+            "type": "voice",
+            "category": ch.category.name if ch.category else "",
+            "options": {}
+        })
+
+    # forums (if enumerable)
     try:
         forums = list(guild.forums)
     except Exception:
         forums = []
-    for ch in sorted(forums, key=lambda x: (x.category.position if x.category else -1, getattr(x, "position", 0))):
-        channels.append({"name": ch.name, "type": "forum", "category": ch.category.name if ch.category else "", "options": {}})
+    for ch in sorted(forums, key=parent_key):
+        channels.append({
+            "name": ch.name,
+            "type": "forum",
+            "category": ch.category.name if ch.category else "",
+            "options": {}
+        })
+
+    print(f"[Messiah snapshot] roles={len(roles)} cats={len(categories)} chans={len(channels)} in '{guild.name}'")
 
     return {
         "mode": "update",
@@ -165,7 +205,7 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
         "renames": {"roles": [], "categories": [], "channels": []},
         "community": {"enable_on_build": False, "settings": {}}
     }
-
+# --------------------------------------------------------------------------
 
 # ---------- community settings ----------
 
