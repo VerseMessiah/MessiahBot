@@ -285,8 +285,8 @@ _FORM_HTML = r"""
   <form id="layoutForm" class="stack">
     <div class="row">
       <label>Guild ID <input type="text" id="guild_id" required placeholder="123456789012345678"></label>
+      <button type="button" id="loadLatestBtn">Load Snapshot</button>
       <button type="button" id="loadLiveBtn">Load From Live</button>
-      <button type="button" id="loadLatestBtn">Load Latest</button>
       <span id="status" class="pill muted">idle</span>
     </div>
 
@@ -509,12 +509,12 @@ _FORM_HTML = r"""
   $("#loadLatestBtn").onclick = async () => {
     const gid = $("#guild_id").value.trim();
     if (!gid){ alert("Enter Guild ID"); return; }
-    setStatus("loading latest…");
+    setStatus("loading snapshot…");
     const res = await fetch(`/api/layout/${gid}/latest`);
     const data = await res.json();
     if (!data.ok){ alert(data.error || "No layout"); setStatus("idle"); return; }
     hydrate(data.payload || {});
-    setStatus(`loaded v${data.version}`);
+    setStatus(`snapshot v${data.version} loaded`);
   };
 
   $("#saveBtn").onclick = async () => {

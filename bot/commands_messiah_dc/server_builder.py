@@ -93,6 +93,14 @@ def _find_voice(guild: discord.Guild, name: str) -> Optional[discord.VoiceChanne
     nl = name.lower()
     return next((c for c in guild.voice_channels if c.name.lower() == nl), None)
 
+def _find_stage(guild: discord.Guild, name: str) -> Optional[discord.StageChannel]:
+    try:
+        stages = list(getattr(guild, "stage_channels", []))
+    except Exception:
+        stages = []
+    nl = name.lower()
+    return next((c for c in stages if getattr(c, "name", "").lower() == nl), None)
+
 def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChannel]:
     try:
         forums = list(guild.forums)
@@ -538,7 +546,7 @@ class ServerBuilder(commands.Cog):
                         (str(interaction.guild.id), ver, json.dumps(layout)),
                     )
             await interaction.followup.send(
-                f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Latest From DB** to edit.",
+                f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Snapshot** to edit.",
                 ephemeral=True
             )
         except Exception as e:
@@ -668,7 +676,7 @@ class ServerBuilder(commands.Cog):
             elif chtype == "forum":
                 existing = _find_forum(guild, chname)
             elif chtype == "stage":
-                existing = _find_voice(guild, chname)
+                existing = _find_voice(guild, chname) or _find_voice(guild, chname)
             else:
                 existing = _find_text(guild, chname)
                 chtype = "text"
@@ -731,6 +739,15 @@ class ServerBuilder(commands.Cog):
                         logs.append(f"🔀 Moved **#{chname}** → **{parent.name if parent else 'no category'}**")
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to move channel: **{chname}**")
+                
+                # If we want announcement and the existing is a normal text channel, try converting
+                if chtype == "announcement":
+                    try:
+                        if hasattr(discord, "ChannelType") and getattr(existing, "type", None) != discord.ChannelType.news and hasattr(existing, "edit"):
+                            await existing.edit(type=discord.ChannelType.news)
+                            logs.append(f"🔁 Converted **#{chname}** to announcement channel")
+                    except Exception:
+                        pass
 
                 if ch_overwrites:
                     try:
