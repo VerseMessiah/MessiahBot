@@ -13,6 +13,7 @@ INTENTS = discord.Intents.default()
 INTENTS.guilds = True
 INTENTS.members = True                   # some ops need this
 INTENTS.guild_scheduled_events = True    # needed for Discord Events sync
+INTENTS.message_content = True          # needed for legacy commands (not slash commands)
 
 class MessiahBot(commands.Bot):
     def __init__(self):
