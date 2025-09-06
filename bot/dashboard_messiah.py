@@ -163,6 +163,7 @@ def live_layout(guild_id: str):
         parent_id = ch.get("parent_id")
         parent_name = cat_map.get(parent_id, "") if parent_id else ""
         t_ui = ui_type(t)
+        topic = ch.get("topic", "")
         chans.append({
             "name": name,
             "type": t_ui,             # requested/desired type (UI can change this)
@@ -400,7 +401,7 @@ _FORM_HTML = r"""
   function hydrate(p){
     // Mode
     const mode = (p.mode || 'build');
-    const radio = document.querySelector(\`input[name="mode"][value="\${mode}"]\`);
+    const radio = document.querySelector(\`input[name="mode"][value="' + {mode} + '"]`);
     if (radio) radio.checked = true;
 
     // roles
