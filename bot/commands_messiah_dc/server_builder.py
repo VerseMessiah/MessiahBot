@@ -1,7 +1,7 @@
 # bot/commands_messiah_dc/server_builder.py
 from __future__ import annotations
-import os, json
-from typing import Dict, Any, List, Optional, Tuple, Callable
+import os, json, asyncio
+from typing import Dict, Any, List, Optional, Tuple, Callable, Awaitable
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -15,6 +15,29 @@ try:
     _psyco_ok = True
 except Exception:
     _psyco_ok = False
+
+
+# ---------- small progress helper ----------
+
+class Progress:
+    """Throttled progress editor for the ephemeral 'thinking' message."""
+    def __init__(self, interaction: discord.Interaction, prefix: str = "🧱 Messiah: "):
+        self.inter = interaction
+        self.prefix = prefix
+        self._last = ""
+        self._lock = asyncio.Lock()
+
+    async def set(self, msg: str):
+        # avoid spamming edits with identical text
+        if msg == self._last:
+            return
+        async with self._lock:
+            self._last = msg
+            try:
+                await self.inter.edit_original_response(content=f"{self.prefix}{msg}")
+            except Exception:
+                # ignore edit errors (message may not exist yet)
+                pass
 
 
 # ---------- DB / layout helpers ----------
@@ -82,7 +105,6 @@ def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChanne
 # ---------- permissions / overwrites ----------
 
 def _role_perms_from_flags(flags: Dict[str, bool]) -> discord.Permissions:
-    """Map simple role permission flags from the form to a Permissions object."""
     p = discord.Permissions.none()
     if flags.get('admin'):             p.administrator = True
     if flags.get('manage_channels'):   p.manage_channels = True
@@ -94,21 +116,15 @@ def _role_perms_from_flags(flags: Dict[str, bool]) -> discord.Permissions:
     return p
 
 
-def _build_overwrites(guild: discord.Guild, ow_spec: Any) -> Dict[discord.Role, discord.PermissionOverwrite]:
+def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) -> Dict[discord.Role, discord.PermissionOverwrite]:
     """
-    Accepts a dict like:
-      {
-        "Role Name": {
-          "view":"inherit|allow|deny",
-          "send":"inherit|allow|deny",
-          "connect":"inherit|allow|deny",
-          "speak":"inherit|allow|deny",
-          "manage_channels":"inherit|allow|deny",
-          "manage_roles":"inherit|allow|deny"
-        },
-        ...
+    ow_spec = {
+      "Role Name": {
+        "view":"inherit|allow|deny",
+        "send":"...", "connect":"...", "speak":"...",
+        "manage_channels":"...", "manage_roles":"..."
       }
-    Returns a mapping {Role: PermissionOverwrite}. Non-dict shapes return {} safely.
+    }
     """
     out: Dict[discord.Role, discord.PermissionOverwrite] = {}
     if not isinstance(ow_spec, dict):
@@ -120,10 +136,8 @@ def _build_overwrites(guild: discord.Guild, ow_spec: Any) -> Dict[discord.Role, 
         else: setattr(ow, attr, None)
 
     for role_name, perms in ow_spec.items():
-        if not isinstance(perms, dict):
-            continue
         role = _find_role(guild, role_name)
-        if not role:
+        if not role or not isinstance(perms, dict):
             continue
         ow = discord.PermissionOverwrite()
         setp(ow, "view_channel",   perms.get("view", "inherit"))
@@ -136,23 +150,15 @@ def _build_overwrites(guild: discord.Guild, ow_spec: Any) -> Dict[discord.Role, 
     return out
 
 
-def _safe_overwrites(ow: Any) -> Optional[Dict[Any, discord.PermissionOverwrite]]:
-    """Return ow if it is a dict, otherwise None. Prevents TypeErrors from discord.py."""
-    return ow if isinstance(ow, dict) else None
-
-
 # ---------- snapshot (used by /snapshot_layout) ----------
 
 def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
-    """Build a layout dict from the live guild (roles, categories, channels)."""
-    # Roles (skip @everyone + managed)
     roles = []
     for r in sorted(guild.roles, key=lambda x: x.position, reverse=True):
         if r.is_default() or r.managed:
             continue
         roles.append({"name": r.name, "color": f"#{r.colour.value:06x}"})
 
-    # Categories (ordered)
     def safe_pos(c):
         try:
             return getattr(c, "position", 0) or 0
@@ -160,14 +166,12 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
             return 0
     categories = [c.name for c in sorted(guild.categories, key=safe_pos)]
 
-    # Channels (ordered by parent category, then channel position)
     channels: List[Dict[str, Any]] = []
 
     def parent_key(ch):
         cat = getattr(ch, "category", None)
         return (safe_pos(cat) if cat else -1, safe_pos(ch))
 
-    # text + news(announcement)
     for ch in sorted(guild.text_channels, key=parent_key):
         try:
             is_news = False
@@ -189,7 +193,6 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
             }
         })
 
-    # voice
     for ch in sorted(guild.voice_channels, key=parent_key):
         channels.append({
             "name": ch.name,
@@ -198,7 +201,6 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
             "options": {}
         })
 
-    # forums (if enumerable)
     try:
         forums = list(guild.forums)
     except Exception:
@@ -232,14 +234,12 @@ async def _apply_community(guild: discord.Guild, community_payload: Dict[str, An
     enable_on_build = bool(community_payload.get("enable_on_build"))
     settings = community_payload.get("settings") or {}
 
-    # Enable community during build if requested
     if is_build and enable_on_build:
         try:
             await guild.edit(community=True)
         except Exception as e:
             print(f"[Messiah] community enable failed: {e}")
 
-    # Only apply further settings if guild is community-capable
     try:
         features = getattr(guild, "features", [])
         is_community = ("COMMUNITY" in features) or getattr(guild, "community", False)
@@ -371,7 +371,6 @@ async def _prune_channels(guild: discord.Guild, desired_triplets: set[Tuple[str,
     def cat_name(ch):
         return ch.category.name if getattr(ch, "category", None) else ""
 
-    # text
     for ch in list(guild.text_channels):
         key = (_norm(ch.name), "text", _norm(cat_name(ch)))
         if key not in desired_triplets:
@@ -380,7 +379,6 @@ async def _prune_channels(guild: discord.Guild, desired_triplets: set[Tuple[str,
             except Exception as e:
                 print(f"[Messiah] text delete failed {ch.name}: {e}")
 
-    # voice
     for ch in list(guild.voice_channels):
         key = (_norm(ch.name), "voice", _norm(cat_name(ch)))
         if key not in desired_triplets:
@@ -389,7 +387,6 @@ async def _prune_channels(guild: discord.Guild, desired_triplets: set[Tuple[str,
             except Exception as e:
                 print(f"[Messiah] voice delete failed {ch.name}: {e}")
 
-    # forums
     try:
         forums = list(guild.forums)
     except Exception:
@@ -411,96 +408,75 @@ class ServerBuilder(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # --- tiny helper to stream progress to the ephemeral message ---
-    async def _progress(self, interaction: discord.Interaction, text: str):
-        try:
-            await interaction.edit_original_response(content=text[:2000])
-        except Exception:
-            pass
-
     @app_commands.command(name="build_server", description="Messiah: Build server from latest saved layout")
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     async def build_server(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
+        prog = Progress(interaction)
+        await prog.set("starting full build…")
+        if not interaction.guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        await prog.set("fetching layout…")
+        layout = _load_layout_for_guild(interaction.guild.id)
+        if not layout:
+            await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
+            return
+
         try:
-            if not interaction.guild:
-                await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
-                return
-
-            await self._progress(interaction, "🔁 Starting build… fetching layout")
-            layout = _load_layout_for_guild(interaction.guild.id)
-            if not layout:
-                await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
-                return
-
-            await self._apply_layout(
-                interaction.guild, layout, update_only=False,
-                progress=lambda t: self._progress(interaction, t)
-            )
-
+            # 5-minute safety timeout for very large servers
+            await asyncio.wait_for(self._apply_layout(interaction.guild, layout, update_only=False, progress=prog), timeout=300)
             await interaction.followup.send("✅ Build complete.", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("❌ Build timed out. Some changes may have applied.", ephemeral=True)
         except Exception as e:
             print(f"[Messiah] build_server error: {e}")
-            try:
-                await interaction.followup.send(f"❌ Build crashed: `{e}`", ephemeral=True)
-            except Exception:
-                pass
-        finally:
-            try:
-                await self._progress(interaction, "⏹️ Build finished. See above for details.")
-            except Exception:
-                pass
-    
+            await interaction.followup.send(f"❌ Build crashed: `{e}`", ephemeral=True)
+
     @app_commands.command(name="update_server", description="Messiah: Update server to match latest saved layout")
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     async def update_server(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
+        prog = Progress(interaction)
+        await prog.set("starting update…")
+        if not interaction.guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        await prog.set("fetching layout…")
+        layout = _load_layout_for_guild(interaction.guild.id)
+        if not layout:
+            await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
+            return
+
         try:
-            if not interaction.guild:
-                await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
-                return
-
-            await self._progress(interaction, "🔁 Starting update… fetching layout")
-            layout = _load_layout_for_guild(interaction.guild.id)
-            if not layout:
-                await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
-                return
-
-            await self._apply_layout(
-                interaction.guild, layout, update_only=True,
-                progress=lambda t: self._progress(interaction, t)
-            )
-
+            await asyncio.wait_for(self._apply_layout(interaction.guild, layout, update_only=True, progress=prog), timeout=300)
             await interaction.followup.send("✅ Update complete.", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("❌ Update timed out. Some changes may have applied.", ephemeral=True)
         except Exception as e:
             print(f"[Messiah] update_server error: {e}")
-            try:
-                await interaction.followup.send(f"❌ Update crashed: `{e}`", ephemeral=True)
-            except Exception:
-                pass
-        finally:
-            try:
-                await self._progress(interaction, "⏹️ Update finished. See above for details.")
-            except Exception:
-                pass
+            await interaction.followup.send(f"❌ Update crashed: `{e}`", ephemeral=True)
 
     @app_commands.command(name="snapshot_layout", description="Messiah: Save current server structure as a new layout version")
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     async def snapshot_layout(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
+        prog = Progress(interaction)
+        await prog.set("snapshotting current server…")
+        if not interaction.guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        if not (_psyco_ok and DATABASE_URL):
+            await interaction.followup.send("❌ Database not configured on worker.", ephemeral=True)
+            return
+
         try:
-            if not interaction.guild:
-                await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
-                return
-
-            if not (_psyco_ok and DATABASE_URL):
-                await interaction.followup.send("❌ Database not configured on worker.", ephemeral=True)
-                return
-
-            await self._progress(interaction, "📸 Snapshotting current server…")
             layout = _snapshot_guild(interaction.guild)
 
             with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
@@ -521,15 +497,7 @@ class ServerBuilder(commands.Cog):
             )
         except Exception as e:
             print(f"[Messiah] snapshot_layout error: {e}")
-            try:
-                await interaction.followup.send(f"❌ Snapshot failed: `{e}`", ephemeral=True)
-            except Exception:
-                pass
-        finally:
-            try:
-                await self._progress(interaction, "⏹️ Snapshot finished.")
-            except Exception:
-                pass
+            await interaction.followup.send(f"❌ Snapshot failed: `{e}`", ephemeral=True)
 
     # ---------- core applier ----------
 
@@ -538,71 +506,24 @@ class ServerBuilder(commands.Cog):
         guild: discord.Guild,
         layout: Dict[str, Any],
         update_only: bool,
-        progress: Optional[Callable[[str], None]] = None
+        progress: Optional[Progress] = None
     ):
-        """
-        layout = {
-          "mode": "build"|"update",
-          "roles": [{"name": str, "orig": str?, "color": "#RRGGBB", "perms": {...}}],
-
-          # Preferred nested categories:
-          # "categories": [
-          #   {"name": "Category A", "orig":"Old Name"?, "overwrites": {...}, "channels": [
-          #       {"name":"chat","orig":"old-chat"?, "type":"text|voice|forum|announcement|stage","topic":"...", "overwrites": {...}},
-          #       {"name":"voice-1","type":"voice"}
-          #   ]},
-          #   {"name": "", "channels":[ ... ]}  # empty name = uncategorized bucket
-          # ]
-          #
-          # Legacy/flat shape still supported.
-
-          "prune": {"roles": bool, "categories": bool, "channels": bool},
-          "renames": {"roles":[{from,to}], "categories":[{from,to}], "channels":[{from,to}]},
-          "community": {...}
-        }
-        """
-        def step(msg: str):
-            if progress:
-                discord.utils.maybe_coroutine(progress, msg)
-
         logs: List[str] = []
         ren_spec = (layout.get("renames") or {})
         prune_spec = (layout.get("prune") or {})
 
-        # ---------- Normalize categories + channels from payload ----------
-        step("🧩 Normalizing payload…")
+        # Normalize categories + channels (support nested and legacy)
         desired_categories: List[Tuple[str, Dict[str, Dict[str, str]]]] = []
         channels_spec: List[Dict[str, Any]] = []
 
-        # collect inline renames (orig -> name)
-        inline_role_ren: List[Dict[str,str]] = []
-        inline_cat_ren:  List[Dict[str,str]] = []
-        inline_chan_ren: List[Dict[str,str]] = []
-
-        # Roles inline
-        for r in (layout.get("roles") or []):
-            nm = (r.get("name") or "").strip()
-            orig = (r.get("orig") or "").strip()
-            if orig and nm and _norm(nm) != _norm(orig):
-                inline_role_ren.append({"from": orig, "to": nm})
-
         cats_payload = layout.get("categories", []) or []
         if cats_payload and isinstance(cats_payload[0], dict):
-            # Nested shape
             for c in cats_payload:
                 cname = c.get("name", "")
-                corig = (c.get("orig") or "").strip()
-                if corig and cname and _norm(cname) != _norm(corig):
-                    inline_cat_ren.append({"from": corig, "to": cname})
-
                 desired_categories.append((cname, c.get("overwrites") or {}))
                 for ch in (c.get("channels") or []):
-                    chname = ch.get("name")
-                    chorig = (ch.get("orig") or "").strip()
-                    if chorig and chname and _norm(chname) != _norm(chorig):
-                        inline_chan_ren.append({"from": chorig, "to": chname})
                     channels_spec.append({
-                        "name": chname,
+                        "name": ch.get("name"),
                         "type": (ch.get("type") or "text").lower(),
                         "category": cname,
                         "topic": ch.get("topic") or (ch.get("options") or {}).get("topic"),
@@ -610,25 +531,19 @@ class ServerBuilder(commands.Cog):
                         "overwrites": ch.get("overwrites") or {}
                     })
         else:
-            # Legacy shape
             for c in cats_payload:
                 desired_categories.append((c, {}))
             for ch in (layout.get("channels") or []):
-                # legacy channels don’t carry inline orig by default
                 channels_spec.append(ch)
 
-        # ---------- Apply renames first (inline + explicit) ----------
-        step("🔡 Applying renames…")
-        all_role_ren = (ren_spec.get("roles") or []) + inline_role_ren
-        all_cat_ren  = (ren_spec.get("categories") or []) + inline_cat_ren
-        all_chan_ren = (ren_spec.get("channels") or []) + inline_chan_ren
+        # Renames first
+        if progress: await progress.set("applying renames…")
+        await _apply_role_renames(guild, (ren_spec.get("roles") or []))
+        await _apply_category_renames(guild, (ren_spec.get("categories") or []))
+        await _apply_channel_renames(guild, (ren_spec.get("channels") or []))
 
-        await _apply_role_renames(guild, all_role_ren)
-        await _apply_category_renames(guild, all_cat_ren)
-        await _apply_channel_renames(guild, all_chan_ren)
-
-        # ---------- ROLES ----------
-        step("🧱 Roles…")
+        # Roles
+        if progress: await progress.set("ensuring roles…")
         for r in layout.get("roles", []):
             name = _norm(r.get("name"))
             if not name:
@@ -651,8 +566,8 @@ class ServerBuilder(commands.Cog):
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to edit role: **{name}**")
 
-        # ---------- CATEGORIES ----------
-        step("📁 Categories…")
+        # Categories
+        if progress: await progress.set("ensuring categories…")
         cat_cache: Dict[str, discord.CategoryChannel] = {}
         for cname, cat_ow in desired_categories:
             cname_n = _norm(cname)
@@ -662,28 +577,16 @@ class ServerBuilder(commands.Cog):
             if cat is None:
                 try:
                     ow = _build_overwrites(guild, cat_ow)
-                    cat = await guild.create_category(
-                        cname_n,
-                        overwrites=_safe_overwrites(ow),
-                        reason="MessiahBot builder"
-                    )
+                    cat = await guild.create_category(cname_n, overwrites=(ow if isinstance(ow, dict) else None), reason="MessiahBot builder")
                     logs.append(f"✅ Category created: **{cname_n}**")
-                except TypeError:
-                    # Bad overwrites shape → retry without
-                    cat = await guild.create_category(cname_n, reason="MessiahBot builder")
-                    logs.append(f"✅ Category created (ow ignored): **{cname_n}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create category: **{cname_n}**")
             else:
                 if cat_ow:
                     try:
-                        await cat.edit(
-                            overwrites=_safe_overwrites(_build_overwrites(guild, cat_ow)),
-                            reason="MessiahBot update category overwrites"
-                        )
+                        ow = _build_overwrites(guild, cat_ow)
+                        await cat.edit(overwrites=(ow if isinstance(ow, dict) else None), reason="MessiahBot update category overwrites")
                         logs.append(f"🔧 Category overwrites set: **{cname_n}**")
-                    except TypeError:
-                        logs.append(f"⚠️ Ignored invalid overwrites on category: **{cname_n}**")
                     except Exception:
                         logs.append(f"⚠️ Could not edit overwrites: **{cname_n}**")
                 else:
@@ -692,8 +595,8 @@ class ServerBuilder(commands.Cog):
             if cat:
                 cat_cache[cname_n] = cat
 
-        # ---------- CHANNELS: create/move/place FIRST ----------
-        step("📺 Channels (create/move/settings)…")
+        # Channels
+        if progress: await progress.set("ensuring channels…")
         for ch in channels_spec:
             chname = _norm(ch.get("name"))
             chtype = (ch.get("type") or "text").lower()
@@ -701,7 +604,6 @@ class ServerBuilder(commands.Cog):
             if not chname:
                 continue
 
-            # Parent category
             parent = None
             if catname:
                 parent = _find_category(guild, catname) or cat_cache.get(catname)
@@ -713,7 +615,6 @@ class ServerBuilder(commands.Cog):
                     except discord.Forbidden:
                         logs.append(f"❌ Missing permission to create category: **{catname}**")
 
-            # find existing (by type)
             existing = None
             if chtype in ("text", "announcement"):
                 existing = _find_text(guild, chname)
@@ -727,8 +628,9 @@ class ServerBuilder(commands.Cog):
                 existing = _find_text(guild, chname)
                 chtype = "text"
 
-            # overwrites + options
             ch_overwrites = _build_overwrites(guild, ch.get("overwrites") or {})
+            if not isinstance(ch_overwrites, dict) or len(ch_overwrites) == 0:
+                ch_overwrites = None  # avoid "overwrites expects a dict"
             opts = ch.get("options") or {}
             topic = ch.get("topic") or opts.get("topic") or None
             nsfw = bool(opts.get("nsfw") or opts.get("age_restricted"))
@@ -737,11 +639,12 @@ class ServerBuilder(commands.Cog):
 
             if existing is None:
                 try:
+                    created = None
                     if chtype in ("text", "announcement"):
                         created = await guild.create_text_channel(
-                            chname, category=parent, overwrites=_safe_overwrites(ch_overwrites), reason="MessiahBot builder"
+                            chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
                         )
-                        # best-effort convert to news if requested
+                        # Try convert to news if requested
                         try:
                             if is_announcement and hasattr(discord, "ChannelType") and created.type != discord.ChannelType.news:
                                 await created.edit(type=discord.ChannelType.news)
@@ -749,18 +652,16 @@ class ServerBuilder(commands.Cog):
                             pass
                     elif chtype == "voice":
                         created = await guild.create_voice_channel(
-                            chname, category=parent, overwrites=_safe_overwrites(ch_overwrites), reason="MessiahBot builder"
+                            chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
                         )
                     elif chtype == "forum":
-                        created = await guild.create_forum(
-                            name=chname, category=parent, reason="MessiahBot builder"
-                        )
+                        if hasattr(guild, "create_forum"):
+                            created = await guild.create_forum(name=chname, category=parent, reason="MessiahBot builder")
+                        elif hasattr(guild, "create_forum_channel"):
+                            created = await guild.create_forum_channel(name=chname, category=parent, reason="MessiahBot builder")
                     elif chtype == "stage":
-                        created = await guild.create_stage_channel(
-                            chname, category=parent, reason="MessiahBot builder"
-                        )
-                    else:
-                        created = None
+                        if hasattr(guild, "create_stage_channel"):
+                            created = await guild.create_stage_channel(chname, category=parent, reason="MessiahBot builder")
 
                     if created:
                         try:
@@ -774,33 +675,9 @@ class ServerBuilder(commands.Cog):
                             pass
 
                     logs.append(f"✅ Channel created: **#{chname}** [{chtype}]{' → ' + parent.name if parent else ''}")
-                except TypeError:
-                    # bad overwrites shape slipped through → retry without overwrites
-                    try:
-                        if chtype in ("text", "announcement"):
-                            created = await guild.create_text_channel(
-                                chname, category=parent, reason="MessiahBot builder"
-                            )
-                            try:
-                                if is_announcement and hasattr(discord, "ChannelType") and created.type != discord.ChannelType.news:
-                                    await created.edit(type=discord.ChannelType.news)
-                            except Exception:
-                                pass
-                        elif chtype == "voice":
-                            created = await guild.create_voice_channel(
-                                chname, category=parent, reason="MessiahBot builder"
-                            )
-                        elif chtype == "forum":
-                            created = await guild.create_forum(name=chname, category=parent, reason="MessiahBot builder")
-                        elif chtype == "stage":
-                            created = await guild.create_stage_channel(chname, category=parent, reason="MessiahBot builder")
-                        logs.append(f"✅ Channel created (ow ignored): **#{chname}** [{chtype}]")
-                    except Exception:
-                        logs.append(f"❌ Failed to create channel even without overwrites: **{chname}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create channel: **{chname}**")
             else:
-                # move / set parent if needed
                 try:
                     need_parent_id = parent.id if parent else None
                     has_parent_id = existing.category.id if getattr(existing, "category", None) else None
@@ -810,15 +687,12 @@ class ServerBuilder(commands.Cog):
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to move channel: **{chname}**")
 
-                # apply overwrites & options
-                try:
-                    if ch_overwrites:
-                        await existing.edit(overwrites=_safe_overwrites(ch_overwrites), reason="MessiahBot update overwrites")
+                if ch_overwrites:
+                    try:
+                        await existing.edit(overwrites=ch_overwrites, reason="MessiahBot update overwrites")
                         logs.append(f"🔧 Overwrites set: **#{chname}**")
-                except TypeError:
-                    logs.append(f"⚠️ Ignored invalid overwrites on channel: **#{chname}**")
-                except Exception:
-                    logs.append(f"⚠️ Could not edit overwrites: **#{chname}**")
+                    except Exception:
+                        logs.append(f"⚠️ Could not edit overwrites: **#{chname}**")
 
                 try:
                     kw = {}
@@ -830,12 +704,12 @@ class ServerBuilder(commands.Cog):
                 except Exception:
                     pass
 
-        # ---------- Community ----------
-        step("🌐 Community settings…")
+        # Community
+        if progress: await progress.set("applying community settings…")
         await _apply_community(guild, layout.get("community") or {}, is_build=(not update_only))
 
-        # ---------- PRUNE ----------
-        step("🧹 Prune pass…")
+        # Prune
+        if progress: await progress.set("pruning extras…")
         if prune_spec.get("roles"):
             wanted_roles = { _norm(r.get("name","")) for r in (layout.get("roles") or []) if r.get("name") }
             await _prune_roles(guild, wanted_roles)
@@ -860,10 +734,6 @@ class ServerBuilder(commands.Cog):
                     wanted_chans.add((nm, tp, cat))
             await _prune_channels(guild, wanted_chans)
 
-        # ---------- logging ----------
         if logs:
             print(f"[MessiahBot Builder] {guild.name}:\n - " + "\n - ".join(logs))
-
-
-async def setup(bot: commands.Bot):
-    await bot.add_cog(ServerBuilder(bot))
+        if progress: await progress.set("done.")
