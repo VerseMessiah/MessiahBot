@@ -466,7 +466,7 @@ _FORM_HTML = r"""
       const inviteBtn = $("#inviteBtn");
 
       // TODO: Replace this with your actual bot invite URL (scopes bot+applications.commands & permissions int)
-      inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=1374820135990460446&response_type=code&redirect_uri=https%3A%2F%2Fmessiahbot-dashboard.onrender.com%2Foauth%2Fdiscord%2Fcallback&scope=identify+guilds"
+      inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=1374820135990460446&scope=bot+applications.commands&permissions=8&integration_type=0"
 
       if (info.logged_in && info.me){
         who.textContent = info.me.username + "#" + info.me.discriminator;
