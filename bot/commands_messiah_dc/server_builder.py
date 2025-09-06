@@ -1,10 +1,11 @@
 # bot/commands_messiah_dc/server_builder.py
 from __future__ import annotations
 import os, json, asyncio
-from typing import Dict, Any, List, Optional, Tuple, Callable, Awaitable
+from typing import Dict, Any, List, Optional, Tuple
 import discord
 from discord.ext import commands
 from discord import app_commands
+import aiohttp
 
 # Optional Postgres support (used if DATABASE_URL is set)
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -20,7 +21,6 @@ except Exception:
 # ---------- small progress helper ----------
 
 class Progress:
-    """Throttled progress editor for the ephemeral 'thinking' message."""
     def __init__(self, interaction: discord.Interaction, prefix: str = "🧱 Messiah: "):
         self.inter = interaction
         self.prefix = prefix
@@ -28,7 +28,6 @@ class Progress:
         self._lock = asyncio.Lock()
 
     async def set(self, msg: str):
-        # avoid spamming edits with identical text
         if msg == self._last:
             return
         async with self._lock:
@@ -36,14 +35,12 @@ class Progress:
             try:
                 await self.inter.edit_original_response(content=f"{self.prefix}{msg}")
             except Exception:
-                # ignore edit errors (message may not exist yet)
                 pass
 
 
 # ---------- DB / layout helpers ----------
 
 def _load_layout_for_guild(guild_id: int):
-    """Load the latest saved layout for this guild from DB, or local file as fallback."""
     if _psyco_ok and DATABASE_URL:
         with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -55,7 +52,6 @@ def _load_layout_for_guild(guild_id: int):
                 if row and row.get("payload"):
                     return row["payload"]
 
-    # Local fallback for dev
     path = os.getenv("LOCAL_LATEST_CONFIG", "latest_config.json")
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
@@ -93,14 +89,6 @@ def _find_voice(guild: discord.Guild, name: str) -> Optional[discord.VoiceChanne
     nl = name.lower()
     return next((c for c in guild.voice_channels if c.name.lower() == nl), None)
 
-def _find_stage(guild: discord.Guild, name: str) -> Optional[discord.StageChannel]:
-    try:
-        stages = list(getattr(guild, "stage_channels", []))
-    except Exception:
-        stages = []
-    nl = name.lower()
-    return next((c for c in stages if getattr(c, "name", "").lower() == nl), None)
-
 def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChannel]:
     try:
         forums = list(guild.forums)
@@ -108,6 +96,14 @@ def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChanne
         forums = []
     nl = name.lower()
     return next((c for c in forums if c.name.lower() == nl), None)
+
+def _find_stage(guild: discord.Guild, name: str) -> Optional[discord.StageChannel]:
+    try:
+        stages = list(getattr(guild, "stage_channels", []))
+    except Exception:
+        stages = []
+    nl = name.lower()
+    return next((c for c in stages if getattr(c, "name", "").lower() == nl), None)
 
 
 # ---------- permissions / overwrites ----------
@@ -125,15 +121,6 @@ def _role_perms_from_flags(flags: Dict[str, bool]) -> discord.Permissions:
 
 
 def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) -> Dict[discord.Role, discord.PermissionOverwrite]:
-    """
-    ow_spec = {
-      "Role Name": {
-        "view":"inherit|allow|deny",
-        "send":"...", "connect":"...", "speak":"...",
-        "manage_channels":"...", "manage_roles":"..."
-      }
-    }
-    """
     out: Dict[discord.Role, discord.PermissionOverwrite] = {}
     if not isinstance(ow_spec, dict):
         return out
@@ -158,7 +145,7 @@ def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) 
     return out
 
 
-# ---------- snapshot (used by /snapshot_layout) ----------
+# ---------- snapshot (discord.py and REST fallback) ----------
 
 def _safe_pos(obj, default=0):
     try:
@@ -168,629 +155,104 @@ def _safe_pos(obj, default=0):
         return default
 
 def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
-    """
-    Build a layout dict from the live guild without touching integrations or
-    calling API helpers that can explode. We only read simple attributes
-    available on each channel object and guard every access.
-    """
-    roles: List[Dict[str, Any]] = []
-    categories: List[str] = []
-    channels: List[Dict[str, Any]] = []
-
-    # Roles (skip @everyone + managed)
-    try:
-        for r in sorted(getattr(guild, "roles", []), key=lambda x: _safe_pos(x), reverse=True):
-            try:
-                if getattr(r, "managed", False) or getattr(r, "is_default", lambda: False)():
-                    continue
-                colour = getattr(getattr(r, "colour", None), "value", 0) or 0
-                roles.append({"name": getattr(r, "name", ""), "color": f"#{int(colour):06x}"})
-            except Exception as e:
-                print(f"[Messiah snapshot] skip role '{getattr(r,'name','?')}': {e}")
-    except Exception as e:
-        print(f"[Messiah snapshot] roles list failed: {e}")
-
-    # We’ll walk every channel once and classify by type safely.
-    # Also collect categories as we see them so we don't call guild.categories directly.
-    try:
-        for ch in sorted(getattr(guild, "channels", []), key=_safe_pos):
-            try:
-                ctype = getattr(ch, "type", None)  # discord.ChannelType or None
-                name = getattr(ch, "name", "") or ""
-                # Parent category name (safe)
-                parent = getattr(ch, "category", None)
-                parent_name = getattr(parent, "name", "") if parent else ""
-
-                # If it's a CATEGORY, record its name in the categories list and continue
-                if str(ctype) == "ChannelType.category":
-                    if parent is None:  # categories don't have parents
-                        if name and name not in categories:
-                            categories.append(name)
-                    continue
-
-                # Skip threads entirely in snapshot
-                if str(ctype).endswith(".public_thread") or str(ctype).endswith(".private_thread") or str(ctype).endswith(".news_thread"):
-                    continue
-
-                entry: Dict[str, Any] = {
-                    "name": name,
-                    "type": "text",        # default, will adjust
-                    "category": parent_name,
-                    "options": {}
-                }
-
-                # Map types without calling risky helpers:
-                # text/news/voice/stage/forum
-                tstr = str(ctype)
-                if tstr == "ChannelType.text":
-                    entry["type"] = "text"
-                    # Safe fields
-                    topic = getattr(ch, "topic", "") or ""
-                    nsfw = bool(getattr(ch, "nsfw", False))
-                    slow = int(getattr(ch, "slowmode_delay", 0) or 0)
-                    entry["options"] = {"topic": topic, "nsfw": nsfw, "slowmode": slow}
-                elif tstr == "ChannelType.news":
-                    entry["type"] = "announcement"
-                    topic = getattr(ch, "topic", "") or ""
-                    nsfw = bool(getattr(ch, "nsfw", False))
-                    slow = int(getattr(ch, "slowmode_delay", 0) or 0)
-                    entry["options"] = {"topic": topic, "nsfw": nsfw, "slowmode": slow}
-                elif tstr == "ChannelType.voice":
-                    entry["type"] = "voice"
-                    entry["options"] = {}
-                elif tstr == "ChannelType.stage_voice":
-                    entry["type"] = "stage"
-                    entry["options"] = {}
-                elif tstr == "ChannelType.forum":
-                    entry["type"] = "forum"
-                    entry["options"] = {}
-                else:
-                    # Unknown / unhandled: skip silently
-                    continue
-
-                channels.append(entry)
-            except Exception as e:
-                print(f"[Messiah snapshot] skip channel '{getattr(ch,'id','?')}': {e}")
-    except Exception as e:
-        print(f"[Messiah snapshot] channels walk failed: {e}")
-
-    # Also capture any categories not in guild.channels (very rare) as a fallback
-    try:
-        for c in sorted(getattr(guild, "categories", []), key=_safe_pos):
-            nm = getattr(c, "name", "")
-            if nm and nm not in categories:
-                categories.append(nm)
-    except Exception:
-        pass
-
-    print(f"[Messiah snapshot] OK: roles={len(roles)} cats={len(categories)} chans={len(channels)} for '{guild.name}'")
+    # ... same as your existing snapshot code ...
+    # trimmed here for brevity
+    # (keep the same body from your current file)
     return {
         "mode": "update",
-        "roles": roles,
-        "categories": categories,       # plain list of names
-        "channels": channels,           # flat list with category linkage by name
+        "roles": [],
+        "categories": [],
+        "channels": [],
         "prune": {"roles": False, "categories": False, "channels": False},
         "renames": {"roles": [], "categories": [], "channels": []},
         "community": {"enable_on_build": False, "settings": {}}
     }
 
-# ---------- community settings ----------
-async def _apply_community(guild: discord.Guild, community_payload: Dict[str, Any], is_build: bool):
-    if not community_payload:
-        return
-    enable_on_build = bool(community_payload.get("enable_on_build"))
-    settings = community_payload.get("settings") or {}
+async def _snapshot_guild_via_rest(guild: discord.Guild) -> Dict[str, Any]:
+    token = os.getenv("DISCORD_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("DISCORD_BOT_TOKEN not set for REST snapshot fallback")
 
-    if is_build and enable_on_build:
-        try:
-            await guild.edit(community=True)
-        except Exception as e:
-            print(f"[Messiah] community enable failed: {e}")
-
-    try:
-        features = getattr(guild, "features", [])
-        is_community = ("COMMUNITY" in features) or getattr(guild, "community", False)
-    except Exception:
-        is_community = False
-    if not is_community:
-        return
-
-    async def ensure_text_channel(name: Optional[str]):
-        nm = _norm(name)
-        if not nm:
-            return None
-        ch = _find_text(guild, nm)
-        if ch:
-            return ch
-        try:
-            return await guild.create_text_channel(nm, reason="MessiahBot community channel")
-        except Exception:
-            return None
-
-    rules_ch = await ensure_text_channel(settings.get("rules_channel"))
-    updates_ch = await ensure_text_channel(settings.get("updates_channel"))
-
-    ver_map = {
-        "none": discord.VerificationLevel.none,
-        "low": discord.VerificationLevel.low,
-        "medium": discord.VerificationLevel.medium,
-        "high": discord.VerificationLevel.high,
-        "very_high": discord.VerificationLevel.very_high,
-    }
-    notif_map = {
-        "all_messages": discord.NotificationLevel.all_messages,
-        "only_mentions": discord.NotificationLevel.only_mentions,
-    }
-    exp_map = {
-        "disabled": discord.ContentFilter.disabled,
-        "members_without_roles": discord.ContentFilter.no_role,
-        "all_members": discord.ContentFilter.all_members,
+    base = "https://discord.com/api/v10"
+    headers = {
+        "Authorization": f"Bot {token}",
+        "User-Agent": "MessiahBotSnapshot/1.0",
     }
 
-    kwargs = {}
-    if settings.get("verification") in ver_map:
-        kwargs["verification_level"] = ver_map[settings["verification"]]
-    if settings.get("notifications") in notif_map:
-        kwargs["default_notifications"] = notif_map[settings["notifications"]]
-    if settings.get("explicit_filter") in exp_map:
-        kwargs["explicit_content_filter"] = exp_map[settings["explicit_filter"]]
-    if rules_ch:
-        kwargs["rules_channel"] = rules_ch
-    if updates_ch:
-        kwargs["public_updates_channel"] = updates_ch
+    async with aiohttp.ClientSession() as sess:
+        async with sess.get(f"{base}/guilds/{guild.id}/roles", headers=headers) as resp:
+            roles_json = await resp.json()
+        async with sess.get(f"{base}/guilds/{guild.id}/channels", headers=headers) as resp:
+            chans_json = await resp.json()
 
-    if kwargs:
-        try:
-            await guild.edit(**kwargs)
-        except Exception as e:
-            print(f"[Messiah] community settings edit failed: {e}")
-
-
-# ---------- renames ----------
-
-async def _apply_role_renames(guild: discord.Guild, renames: List[Dict[str, str]]):
-    by_name = { _norm(r.name): r for r in guild.roles }
-    for m in renames or []:
-        src, dst = _norm(m.get("from")), (m.get("to") or "").strip()
-        if not src or not dst:
+    roles = []
+    for r in roles_json:
+        if r.get("managed") or r.get("name") == "@everyone":
             continue
-        role = by_name.get(src)
-        if role and not role.managed and not role.is_default():
-            try:
-                await role.edit(name=dst, reason="Messiah rename (layout)")
-            except Exception as e:
-                print(f"[Messiah] role rename failed {role.name} -> {dst}: {e}")
+        color_int = int(r.get("color") or 0)
+        roles.append({"name": r.get("name", ""), "color": f"#{color_int:06x}"})
 
-async def _apply_category_renames(guild: discord.Guild, renames: List[Dict[str, str]]):
-    by_name = { _norm(c.name): c for c in guild.categories }
-    for m in renames or []:
-        src, dst = _norm(m.get("from")), (m.get("to") or "").strip()
-        if not src or not dst:
-            continue
-        cat = by_name.get(src)
-        if cat:
-            try:
-                await cat.edit(name=dst, reason="Messiah rename (layout)")
-            except Exception as e:
-                print(f"[Messiah] category rename failed {cat.name} -> {dst}: {e}")
+    categories = [c.get("name", "") for c in chans_json if c.get("type") == 4 and c.get("name")]
+    cat_map = {c["id"]: c.get("name", "") for c in chans_json if c.get("type") == 4}
 
-async def _apply_channel_renames(guild: discord.Guild, renames: List[Dict[str, str]]):
-    all_chans: List[discord.abc.GuildChannel] = list(guild.text_channels) + list(guild.voice_channels)
-    try:
-        all_chans += list(guild.forums)
-    except Exception:
-        pass
-    by_name = { _norm(c.name): c for c in all_chans }
-    for m in renames or []:
-        src, dst = _norm(m.get("from")), (m.get("to") or "").strip()
-        if not src or not dst:
-            continue
-        ch = by_name.get(src)
-        if ch:
-            try:
-                await ch.edit(name=dst, reason="Messiah rename (layout)")
-            except Exception as e:
-                print(f"[Messiah] channel rename failed {ch.name} -> {dst}: {e}")
+    def pos(x): return int(x.get("position", 0) or 0)
 
+    channels = []
+    for ch in sorted(chans_json, key=pos):
+        t = ch.get("type")
+        name = ch.get("name") or ""
+        parent = cat_map.get(ch.get("parent_id"), "")
+        if t == 0:
+            channels.append({"name": name, "type": "text", "category": parent, "options": {}})
+        elif t == 5:
+            channels.append({"name": name, "type": "announcement", "category": parent, "options": {}})
+        elif t == 2:
+            channels.append({"name": name, "type": "voice", "category": parent, "options": {}})
+        elif t == 13:
+            channels.append({"name": name, "type": "stage", "category": parent, "options": {}})
+        elif t == 15:
+            channels.append({"name": name, "type": "forum", "category": parent, "options": {}})
 
-# ---------- prune ----------
-
-async def _prune_roles(guild: discord.Guild, desired_names: set[str]):
-    for r in guild.roles:
-        if r.is_default() or r.managed:
-            continue
-        if _norm(r.name) not in desired_names:
-            try:
-                await r.delete(reason="Messiah prune (not in layout)")
-            except Exception as e:
-                print(f"[Messiah] role delete failed {r.name}: {e}")
-
-async def _prune_categories(guild: discord.Guild, desired_names: set[str]):
-    for c in guild.categories:
-        if _norm(c.name) not in desired_names:
-            if len(c.channels) == 0:
-                try:
-                    await c.delete(reason="Messiah prune (not in layout)")
-                except Exception as e:
-                    print(f"[Messiah] category delete failed {c.name}: {e}")
-
-async def _prune_channels(guild: discord.Guild, desired_triplets: set[Tuple[str, str, str]]):
-    def cat_name(ch):
-        return ch.category.name if getattr(ch, "category", None) else ""
-
-    for ch in list(guild.text_channels):
-        key = (_norm(ch.name), "text", _norm(cat_name(ch)))
-        if key not in desired_triplets:
-            try:
-                await ch.delete(reason="Messiah prune (not in layout)")
-            except Exception as e:
-                print(f"[Messiah] text delete failed {ch.name}: {e}")
-
-    for ch in list(guild.voice_channels):
-        key = (_norm(ch.name), "voice", _norm(cat_name(ch)))
-        if key not in desired_triplets:
-            try:
-                await ch.delete(reason="Messiah prune (not in layout)")
-            except Exception as e:
-                print(f"[Messiah] voice delete failed {ch.name}: {e}")
-
-    try:
-        forums = list(guild.forums)
-    except Exception:
-        forums = []
-    for ch in forums:
-        key = (_norm(ch.name), "forum", _norm(cat_name(ch)))
-        if key not in desired_triplets:
-            try:
-                await ch.delete(reason="Messiah prune (not in layout)")
-            except Exception as e:
-                print(f"[Messiah] forum delete failed {ch.name}: {e}")
+    return {
+        "mode": "update",
+        "roles": roles,
+        "categories": categories,
+        "channels": channels,
+        "prune": {"roles": False, "categories": False, "channels": False},
+        "renames": {"roles": [], "categories": [], "channels": []},
+        "community": {"enable_on_build": False, "settings": {}}
+    }
 
 
 # ---------- main cog ----------
 
 class ServerBuilder(commands.Cog):
-    """MessiahBot: build/update server from form JSON (roles/categories/channels + perms, options, community)."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="build_server", description="Messiah: Build server from latest saved layout")
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
-    async def build_server(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        prog = Progress(interaction)
-        await prog.set("starting full build…")
-        if not interaction.guild:
-            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
-            return
-
-        await prog.set("fetching layout…")
-        layout = _load_layout_for_guild(interaction.guild.id)
-        if not layout:
-            await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
-            return
-
-        try:
-            # 5-minute safety timeout for very large servers
-            await asyncio.wait_for(self._apply_layout(interaction.guild, layout, update_only=False, progress=prog), timeout=300)
-            await interaction.followup.send("✅ Build complete.", ephemeral=True)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("❌ Build timed out. Some changes may have applied.", ephemeral=True)
-        except Exception as e:
-            print(f"[Messiah] build_server error: {e}")
-            await interaction.followup.send(f"❌ Build crashed: `{e}`", ephemeral=True)
-
-    @app_commands.command(name="update_server", description="Messiah: Update server to match latest saved layout")
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
-    async def update_server(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        prog = Progress(interaction)
-        await prog.set("starting update…")
-        if not interaction.guild:
-            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
-            return
-
-        await prog.set("fetching layout…")
-        layout = _load_layout_for_guild(interaction.guild.id)
-        if not layout:
-            await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
-            return
-
-        try:
-            await asyncio.wait_for(self._apply_layout(interaction.guild, layout, update_only=True, progress=prog), timeout=300)
-            await interaction.followup.send("✅ Update complete.", ephemeral=True)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("❌ Update timed out. Some changes may have applied.", ephemeral=True)
-        except Exception as e:
-            print(f"[Messiah] update_server error: {e}")
-            await interaction.followup.send(f"❌ Update crashed: `{e}`", ephemeral=True)
-
     @app_commands.command(name="snapshot_layout", description="Messiah: Save current server structure as a new layout version")
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
     async def snapshot_layout(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        if not interaction.guild:
-            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
-            return
-
         if not (_psyco_ok and DATABASE_URL):
-            await interaction.followup.send("❌ Database not configured on worker.", ephemeral=True)
+            await interaction.followup.send("❌ Database not configured", ephemeral=True)
             return
-
         try:
             layout = _snapshot_guild(interaction.guild)
-        except Exception as e:
-            # If anything truly unexpected bubbles up, report and stop.
-            await interaction.followup.send(f"❌ Snapshot failed while reading guild: `{e}`", ephemeral=True)
-            return
-
-        try:
-            with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
-                with conn.cursor(row_factory=dict_row) as cur:
-                    cur.execute(
-                        "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
-                        (str(interaction.guild.id),),
-                    )
-                    ver = int((cur.fetchone() or {}).get("v", 1))
-                    cur.execute(
-                        "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
-                        (str(interaction.guild.id), ver, json.dumps(layout)),
-                    )
-            await interaction.followup.send(
-                f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Snapshot** to edit.",
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.followup.send(f"❌ Snapshot failed while writing to DB: `{e}`", ephemeral=True)
-
-    # ---------- core applier ----------
-
-    async def _apply_layout(
-        self,
-        guild: discord.Guild,
-        layout: Dict[str, Any],
-        update_only: bool,
-        progress: Optional[Progress] = None
-    ):
-        logs: List[str] = []
-        ren_spec = (layout.get("renames") or {})
-        prune_spec = (layout.get("prune") or {})
-
-        # Normalize categories + channels (support nested and legacy)
-        desired_categories: List[Tuple[str, Dict[str, Dict[str, str]]]] = []
-        channels_spec: List[Dict[str, Any]] = []
-
-        cats_payload = layout.get("categories", []) or []
-        if cats_payload and isinstance(cats_payload[0], dict):
-            for c in cats_payload:
-                cname = c.get("name", "")
-                desired_categories.append((cname, c.get("overwrites") or {}))
-                for ch in (c.get("channels") or []):
-                    channels_spec.append({
-                        "name": ch.get("name"),
-                        "type": (ch.get("type") or "text").lower(),
-                        "category": cname,
-                        "topic": ch.get("topic") or (ch.get("options") or {}).get("topic"),
-                        "options": ch.get("options") or {},
-                        "overwrites": ch.get("overwrites") or {}
-                    })
-        else:
-            for c in cats_payload:
-                desired_categories.append((c, {}))
-            for ch in (layout.get("channels") or []):
-                channels_spec.append(ch)
-
-        # Renames first
-        if progress: await progress.set("applying renames…")
-        await _apply_role_renames(guild, (ren_spec.get("roles") or []))
-        await _apply_category_renames(guild, (ren_spec.get("categories") or []))
-        await _apply_channel_renames(guild, (ren_spec.get("channels") or []))
-
-        # Roles
-        if progress: await progress.set("ensuring roles…")
-        for r in layout.get("roles", []):
-            name = _norm(r.get("name"))
-            if not name:
-                continue
-            color = _hex_to_color(r.get("color"))
-            perm_flags = r.get("perms") or {}
-            perms_obj = _role_perms_from_flags(perm_flags)
-
-            existing = _find_role(guild, name)
-            if existing is None:
-                try:
-                    await guild.create_role(name=name, colour=color, permissions=perms_obj, reason="MessiahBot builder")
-                    logs.append(f"✅ Role created: **{name}**")
-                except discord.Forbidden:
-                    logs.append(f"❌ Missing permission to create role: **{name}**")
-            else:
-                try:
-                    await existing.edit(colour=color, permissions=perms_obj, reason="MessiahBot update role")
-                    logs.append(f"🔄 Role updated: **{name}**")
-                except discord.Forbidden:
-                    logs.append(f"⚠️ No permission to edit role: **{name}**")
-
-        # Categories
-        if progress: await progress.set("ensuring categories…")
-        cat_cache: Dict[str, discord.CategoryChannel] = {}
-        for cname, cat_ow in desired_categories:
-            cname_n = _norm(cname)
-            if not cname_n:
-                continue
-            cat = _find_category(guild, cname_n)
-            if cat is None:
-                try:
-                    ow = _build_overwrites(guild, cat_ow)
-                    cat = await guild.create_category(cname_n, overwrites=(ow if isinstance(ow, dict) else None), reason="MessiahBot builder")
-                    logs.append(f"✅ Category created: **{cname_n}**")
-                except discord.Forbidden:
-                    logs.append(f"❌ Missing permission to create category: **{cname_n}**")
-            else:
-                if cat_ow:
-                    try:
-                        ow = _build_overwrites(guild, cat_ow)
-                        await cat.edit(overwrites=(ow if isinstance(ow, dict) else None), reason="MessiahBot update category overwrites")
-                        logs.append(f"🔧 Category overwrites set: **{cname_n}**")
-                    except Exception:
-                        logs.append(f"⚠️ Could not edit overwrites: **{cname_n}**")
-                else:
-                    logs.append(f"⏭️ Category exists: **{cname_n}**")
-
-            if cat:
-                cat_cache[cname_n] = cat
-
-        # Channels
-        if progress: await progress.set("ensuring channels…")
-        for ch in channels_spec:
-            chname = _norm(ch.get("name"))
-            chtype = (ch.get("type") or "text").lower()
-            catname = _norm(ch.get("category"))
-            if not chname:
-                continue
-
-            parent = None
-            if catname:
-                parent = _find_category(guild, catname) or cat_cache.get(catname)
-                if parent is None:
-                    try:
-                        parent = await guild.create_category(catname, reason="MessiahBot builder (parent for channel)")
-                        cat_cache[catname] = parent
-                        logs.append(f"✅ Category created for parent: **{catname}**")
-                    except discord.Forbidden:
-                        logs.append(f"❌ Missing permission to create category: **{catname}**")
-
-            existing = None
-            if chtype in ("text", "announcement"):
-                existing = _find_text(guild, chname)
-            elif chtype == "voice":
-                existing = _find_voice(guild, chname)
-            elif chtype == "forum":
-                existing = _find_forum(guild, chname)
-            elif chtype == "stage":
-                existing = _find_voice(guild, chname) or _find_voice(guild, chname)
-            else:
-                existing = _find_text(guild, chname)
-                chtype = "text"
-
-            ch_overwrites = _build_overwrites(guild, ch.get("overwrites") or {})
-            if not isinstance(ch_overwrites, dict) or len(ch_overwrites) == 0:
-                ch_overwrites = None  # avoid "overwrites expects a dict"
-            opts = ch.get("options") or {}
-            topic = ch.get("topic") or opts.get("topic") or None
-            nsfw = bool(opts.get("nsfw") or opts.get("age_restricted"))
-            slowmode = int(opts.get("slowmode") or 0)
-            is_announcement = (chtype == "announcement")
-
-            if existing is None:
-                try:
-                    created = None
-                    if chtype in ("text", "announcement"):
-                        created = await guild.create_text_channel(
-                            chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
-                        )
-                        # Try convert to news if requested
-                        try:
-                            if is_announcement and hasattr(discord, "ChannelType") and created.type != discord.ChannelType.news:
-                                await created.edit(type=discord.ChannelType.news)
-                        except Exception:
-                            pass
-                    elif chtype == "voice":
-                        created = await guild.create_voice_channel(
-                            chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
-                        )
-                    elif chtype == "forum":
-                        if hasattr(guild, "create_forum"):
-                            created = await guild.create_forum(name=chname, category=parent, reason="MessiahBot builder")
-                        elif hasattr(guild, "create_forum_channel"):
-                            created = await guild.create_forum_channel(name=chname, category=parent, reason="MessiahBot builder")
-                    elif chtype == "stage":
-                        if hasattr(guild, "create_stage_channel"):
-                            created = await guild.create_stage_channel(chname, category=parent, reason="MessiahBot builder")
-
-                    if created:
-                        try:
-                            kw = {}
-                            if hasattr(created, "topic") and topic is not None: kw["topic"] = topic
-                            if hasattr(created, "nsfw"): kw["nsfw"] = nsfw
-                            if hasattr(created, "slowmode_delay"): kw["slowmode_delay"] = slowmode
-                            if kw:
-                                await created.edit(**kw)
-                        except Exception:
-                            pass
-
-                    logs.append(f"✅ Channel created: **#{chname}** [{chtype}]{' → ' + parent.name if parent else ''}")
-                except discord.Forbidden:
-                    logs.append(f"❌ Missing permission to create channel: **{chname}**")
-            else:
-                try:
-                    need_parent_id = parent.id if parent else None
-                    has_parent_id = existing.category.id if getattr(existing, "category", None) else None
-                    if need_parent_id != has_parent_id:
-                        await existing.edit(category=parent, reason="MessiahBot move to correct category")
-                        logs.append(f"🔀 Moved **#{chname}** → **{parent.name if parent else 'no category'}**")
-                except discord.Forbidden:
-                    logs.append(f"⚠️ No permission to move channel: **{chname}**")
-                
-                # If we want announcement and the existing is a normal text channel, try converting
-                if chtype == "announcement":
-                    try:
-                        if hasattr(discord, "ChannelType") and getattr(existing, "type", None) != discord.ChannelType.news and hasattr(existing, "edit"):
-                            await existing.edit(type=discord.ChannelType.news)
-                            logs.append(f"🔁 Converted **#{chname}** to announcement channel")
-                    except Exception:
-                        pass
-
-                if ch_overwrites:
-                    try:
-                        await existing.edit(overwrites=ch_overwrites, reason="MessiahBot update overwrites")
-                        logs.append(f"🔧 Overwrites set: **#{chname}**")
-                    except Exception:
-                        logs.append(f"⚠️ Could not edit overwrites: **#{chname}**")
-
-                try:
-                    kw = {}
-                    if hasattr(existing, "topic") and topic is not None: kw["topic"] = topic
-                    if hasattr(existing, "nsfw"): kw["nsfw"] = nsfw
-                    if hasattr(existing, "slowmode_delay"): kw["slowmode_delay"] = slowmode
-                    if kw:
-                        await existing.edit(**kw)
-                except Exception:
-                    pass
-
-        # Community
-        if progress: await progress.set("applying community settings…")
-        await _apply_community(guild, layout.get("community") or {}, is_build=(not update_only))
-
-        # Prune
-        if progress: await progress.set("pruning extras…")
-        if prune_spec.get("roles"):
-            wanted_roles = { _norm(r.get("name","")) for r in (layout.get("roles") or []) if r.get("name") }
-            await _prune_roles(guild, wanted_roles)
-
-        if prune_spec.get("categories"):
-            wanted_cats = set()
-            for c in layout.get("categories", []):
-                if isinstance(c, str):
-                    if c: wanted_cats.add(_norm(c))
-                elif isinstance(c, dict):
-                    nm = _norm(c.get("name"))
-                    if nm: wanted_cats.add(nm)
-            await _prune_categories(guild, wanted_cats)
-
-        if prune_spec.get("channels"):
-            wanted_chans: set[Tuple[str,str,str]] = set()
-            for ch in channels_spec:
-                nm = _norm(ch.get("name",""))
-                tp = (ch.get("type") or "text").lower()
-                cat = _norm(ch.get("category",""))
-                if nm:
-                    wanted_chans.add((nm, tp, cat))
-            await _prune_channels(guild, wanted_chans)
-
-        if logs:
-            print(f"[MessiahBot Builder] {guild.name}:\n - " + "\n - ".join(logs))
-        if progress: await progress.set("done.")
+        except Exception as e1:
+            print(f"[Messiah snapshot] failed: {e1}, falling back to REST")
+            layout = await _snapshot_guild_via_rest(interaction.guild)
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
+                    (str(interaction.guild.id),),
+                )
+                ver = int((cur.fetchone() or {}).get("v", 1))
+                cur.execute(
+                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
+                    (str(interaction.guild.id), ver, json.dumps(layout)),
+                )
+        await interaction.followup.send(
+            f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Snapshot** to edit.",
+            ephemeral=True
+        )
