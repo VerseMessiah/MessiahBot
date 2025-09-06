@@ -65,5 +65,3 @@ if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
         raise SystemExit("❌ Missing DISCORD_BOT_TOKEN")
     bot.run(DISCORD_BOT_TOKEN)
-
-

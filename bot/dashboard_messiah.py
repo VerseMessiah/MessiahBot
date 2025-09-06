@@ -1,10 +1,19 @@
 # bot/dashboard_messiah.py
 import os
 import json
-from flask import Flask, request, jsonify, render_template_string
+import secrets
+import urllib.parse
+
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+# OAuth (dashboard login)
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI") or "http://localhost:5050/oauth/discord/callback"
+DISCORD_API = "https://discord.com/api/v10"
 
 _psycopg_ok = False
 try:
@@ -14,7 +23,16 @@ try:
 except Exception:
     _psycopg_ok = False
 
+# requests is needed for Discord REST + OAuth
+_requests_ok = False
+try:
+    import requests
+    _requests_ok = True
+except Exception:
+    _requests_ok = False
+
 app = Flask(__name__)
+app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", secrets.token_hex(32))
 
 # ---------- DB helpers ----------
 def _db_exec(q: str, p=()):
@@ -46,6 +64,44 @@ def _discord_headers():
         "User-Agent": "MessiahBotDashboard/1.0",
         "Content-Type": "application/json",
     }
+
+# ---------- OAuth helpers ----------
+def _discord_oauth_url(state: str):
+    params = {
+        "client_id": DISCORD_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "scope": "identify guilds",
+        "state": state,
+        "prompt": "consent",
+    }
+    return f"{DISCORD_API}/oauth2/authorize?{urllib.parse.urlencode(params)}"
+
+def _exchange_code_for_token(code: str):
+    if not _requests_ok:
+        raise RuntimeError("Python 'requests' not installed; add requests to requirements.txt")
+    data = {
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    r = requests.post(f"{DISCORD_API}/oauth2/token", data=data, headers=headers, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+def _discord_get(me_endpoint: str, access_token: str):
+    if not _requests_ok:
+        raise RuntimeError("Python 'requests' not installed; add requests to requirements.txt")
+    r = requests.get(
+        f"{DISCORD_API}{me_endpoint}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()
 
 # ---------- probes ----------
 @app.get("/ping")
@@ -81,9 +137,60 @@ def dbcheck():
         "psycopg_version": driver_version,
         "can_connect": ok_connect,
         "has_discord_bot_token": bool(DISCORD_BOT_TOKEN),
+        "has_requests": _requests_ok,
+        "has_oauth": bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET),
     }
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
+
+# ---------- OAuth routes ----------
+@app.get("/login")
+def discord_login():
+    if not (DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI):
+        return "Discord OAuth not configured", 500
+    state = secrets.token_urlsafe(32)
+    session["oauth_state"] = state
+    return redirect(_discord_oauth_url(state))
+
+@app.get("/oauth/discord/callback")
+def discord_callback():
+    err = request.args.get("error")
+    if err:
+        return f"OAuth error: {err}", 400
+    state = request.args.get("state")
+    code = request.args.get("code")
+    if not state or not code or state != session.get("oauth_state"):
+        return "Invalid OAuth state", 400
+    session.pop("oauth_state", None)
+
+    try:
+        tok = _exchange_code_for_token(code)
+    except Exception as e:
+        return f"Token exchange failed: {e}", 400
+
+    session["discord_token"] = tok
+    try:
+        me = _discord_get("/users/@me", tok["access_token"])
+        guilds = _discord_get("/users/@me/guilds", tok["access_token"])
+    except Exception as e:
+        return f"Failed to fetch profile: {e}", 400
+
+    session["discord_me"] = me
+    session["discord_guilds"] = guilds
+    return redirect(url_for("form"))
+
+@app.get("/logout")
+def discord_logout():
+    session.clear()
+    return redirect(url_for("form"))
+
+@app.get("/whoami")
+def whoami():
+    return {
+        "logged_in": bool(session.get("discord_me")),
+        "me": session.get("discord_me"),
+        "guilds": session.get("discord_guilds", []),
+    }
 
 # ---------- live snapshot via Discord REST ----------
 @app.get("/api/live_layout/<guild_id>")
@@ -92,9 +199,7 @@ def live_layout(guild_id: str):
     Build a layout from the current live Discord server using REST.
     Adds `original_type` to channels so the UI can lock/limit conversions.
     """
-    try:
-        import requests
-    except Exception:
+    if not _requests_ok:
         return jsonify({"ok": False, "error": "Python 'requests' not installed; add requests to requirements.txt"}), 500
 
     if not DISCORD_BOT_TOKEN:
@@ -115,6 +220,10 @@ def live_layout(guild_id: str):
 
     # channels
     r_channels = requests.get(f"{base}/guilds/{guild_id}/channels", headers=headers, timeout=20)
+    if r_channels.status_code == 403:
+        return jsonify({"ok": False, "error": "Forbidden fetching channels (permissions?)"}), 403
+    if r_channels.status_code == 404:
+        return jsonify({"ok": False, "error": "Guild channels not found"}), 404
     if r_channels.status_code >= 400:
         return jsonify({"ok": False, "error": f"Discord channels error {r_channels.status_code}: {r_channels.text}"}), 502
     channels_json = r_channels.json()
@@ -272,15 +381,31 @@ _FORM_HTML = r"""
     .cat{padding:8px;border:1px solid #2a2a34;border-radius:10px;background:#0f1219;margin:8px 0}
     .ch{display:flex;gap:6px;align-items:center;margin:6px 0}
     .muted{opacity:.6}
+    .bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .right{display:flex;gap:8px;align-items:center}
+    .select{background:#11131a;border:1px solid #2a2a34;color:#e7e7ea;border-radius:8px;padding:6px 8px}
   </style>
 </head>
 <body>
-  <h1>🧱 MessiahBot — Server Builder</h1>
+  <div class="bar">
+    <div>
+      <strong>🧱 MessiahBot — Server Builder</strong>
+      <span id="who" class="pill muted" style="margin-left:8px;">not signed in</span>
+    </div>
+    <div class="right">
+      <select id="guildPicker" class="select" style="display:none;"></select>
+      <a id="inviteBtn" class="pill" href="#" target="_blank" rel="noopener">Invite Bot</a>
+      <a id="loginBtn" class="pill" href="/login">Login with Discord</a>
+      <a id="logoutBtn" class="pill" href="/logout" style="display:none;">Logout</a>
+    </div>
+  </div>
+
   <p class="subtle">Enter your Guild ID, then <strong>Load From Live</strong> or <strong>Load Snapshot</strong>, edit, and <strong>Save</strong>.</p>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
-    <a href="/routes" target="_blank">/routes</a>
+    <a href="/routes" target="_blank">/routes</a> •
+    <a href="/whoami" target="_blank">/whoami</a>
   </p>
 
   <form id="layoutForm" class="stack" name="layoutForm">
@@ -323,11 +448,61 @@ _FORM_HTML = r"""
   </form>
 
   <script>
-  // ---------- utilities ----------
+  // ---------- small helper ----------
   function $(sel, el){ return (el||document).querySelector(sel); }
   function $all(sel, el){ return Array.prototype.slice.call((el||document).querySelectorAll(sel)); }
   var statusPill = $("#status");
   function setStatus(txt){ statusPill.textContent = txt; }
+
+  // ---------- header login/guild picker ----------
+  (async function initHeader(){
+    try{
+      const r = await fetch("/whoami");
+      const info = await r.json();
+      const who = $("#who");
+      const loginBtn = $("#loginBtn");
+      const logoutBtn = $("#logoutBtn");
+      const picker = $("#guildPicker");
+      const inviteBtn = $("#inviteBtn");
+
+      // TODO: Replace this with your actual bot invite URL (scopes bot+applications.commands & permissions int)
+      inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=1374820135990460446"
+
+      if (info.logged_in && info.me){
+        who.textContent = info.me.username + "#" + info.me.discriminator;
+        who.classList.remove("muted");
+        loginBtn.style.display = "none";
+        logoutBtn.style.display = "inline-flex";
+
+        // Build picker
+        const guilds = info.guilds || [];
+        if (guilds.length){
+          picker.innerHTML = '';
+          guilds.forEach(g => {
+            // Only show guilds where the user can manage the bot (owner or has MANAGE_GUILD—optional filter)
+            const opt = document.createElement('option');
+            opt.value = g.id;
+            opt.textContent = g.name || g.id;
+            picker.appendChild(opt);
+          });
+          picker.style.display = "inline-flex";
+          picker.onchange = function(){
+            $("#guild_id").value = picker.value;
+          };
+          // prefill the first
+          $("#guild_id").value = picker.value;
+        }
+      } else {
+        who.textContent = "not signed in";
+        who.classList.add("muted");
+        loginBtn.style.display = "inline-flex";
+        logoutBtn.style.display = "none";
+        picker.style.display = "none";
+      }
+    }catch(e){
+      // ignore
+    }
+  })();
 
   // ---------- roles ----------
   function addRoleRow(name, color){
@@ -547,7 +722,7 @@ _FORM_HTML = r"""
     if (!gid){ alert("Enter Guild ID"); return; }
     var payload = collectPayload();
 
-    // flatten channels for legacy compatibility
+    // flatten channels for legacy compatibility + validation
     var flatChannels = [];
     for (var i=0;i<payload.categories.length;i++){
       var c = payload.categories[i];
