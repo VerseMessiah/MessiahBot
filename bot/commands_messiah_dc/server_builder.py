@@ -94,22 +94,24 @@ def _role_perms_from_flags(flags: Dict[str, bool]) -> discord.Permissions:
     return p
 
 
-def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) -> Dict[discord.Role, discord.PermissionOverwrite]:
+def _build_overwrites(guild: discord.Guild, ow_spec: Any) -> Dict[discord.Role, discord.PermissionOverwrite]:
     """
-    ow_spec = {
-      "Role Name": {
-        "view":"inherit|allow|deny",
-        "send":"inherit|allow|deny",
-        "connect":"inherit|allow|deny",
-        "speak":"inherit|allow|deny",
-        "manage_channels":"inherit|allow|deny",
-        "manage_roles":"inherit|allow|deny"
-      },
-      ...
-    }
+    Accepts a dict like:
+      {
+        "Role Name": {
+          "view":"inherit|allow|deny",
+          "send":"inherit|allow|deny",
+          "connect":"inherit|allow|deny",
+          "speak":"inherit|allow|deny",
+          "manage_channels":"inherit|allow|deny",
+          "manage_roles":"inherit|allow|deny"
+        },
+        ...
+      }
+    Returns a mapping {Role: PermissionOverwrite}. Non-dict shapes return {} safely.
     """
     out: Dict[discord.Role, discord.PermissionOverwrite] = {}
-    if not ow_spec:
+    if not isinstance(ow_spec, dict):
         return out
 
     def setp(ow: discord.PermissionOverwrite, attr: str, val: str):
@@ -118,6 +120,8 @@ def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) 
         else: setattr(ow, attr, None)
 
     for role_name, perms in ow_spec.items():
+        if not isinstance(perms, dict):
+            continue
         role = _find_role(guild, role_name)
         if not role:
             continue
@@ -130,6 +134,11 @@ def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) 
         setp(ow, "manage_roles",   perms.get("manage_roles", "inherit"))
         out[role] = ow
     return out
+
+
+def _safe_overwrites(ow: Any) -> Optional[Dict[Any, discord.PermissionOverwrite]]:
+    """Return ow if it is a dict, otherwise None. Prevents TypeErrors from discord.py."""
+    return ow if isinstance(ow, dict) else None
 
 
 # ---------- snapshot (used by /snapshot_layout) ----------
@@ -438,7 +447,6 @@ class ServerBuilder(commands.Cog):
             except Exception:
                 pass
         finally:
-            # ensure the spinner ends even if followup failed
             try:
                 await self._progress(interaction, "⏹️ Build finished. See above for details.")
             except Exception:
@@ -535,22 +543,18 @@ class ServerBuilder(commands.Cog):
         """
         layout = {
           "mode": "build"|"update",
-          "roles": [{"name": str, "color": "#RRGGBB", "perms": {...}}],
+          "roles": [{"name": str, "orig": str?, "color": "#RRGGBB", "perms": {...}}],
 
-          # Categories can be either a simple string list OR objects with overwrites and nested channels.
-          # Preferred (nested) shape coming from the dashboard:
+          # Preferred nested categories:
           # "categories": [
-          #   {"name": "Category A", "overwrites": {...}, "channels": [
-          #       {"name":"chat","type":"text|voice|forum|announcement|stage","topic":"...", "overwrites": {...}},
+          #   {"name": "Category A", "orig":"Old Name"?, "overwrites": {...}, "channels": [
+          #       {"name":"chat","orig":"old-chat"?, "type":"text|voice|forum|announcement|stage","topic":"...", "overwrites": {...}},
           #       {"name":"voice-1","type":"voice"}
           #   ]},
           #   {"name": "", "channels":[ ... ]}  # empty name = uncategorized bucket
           # ]
           #
-          # Legacy/flat shape (still supported):
-          # "categories": [ "Cat A", "Cat B" ],
-          # "channels":   [{"name": "...", "type": "text|voice|forum|announcement|stage", "category": "Cat A",
-          #                 "options": {...}, "topic":"...", "overwrites": {...}}]
+          # Legacy/flat shape still supported.
 
           "prune": {"roles": bool, "categories": bool, "channels": bool},
           "renames": {"roles":[{from,to}], "categories":[{from,to}], "channels":[{from,to}]},
@@ -559,7 +563,6 @@ class ServerBuilder(commands.Cog):
         """
         def step(msg: str):
             if progress:
-                # schedule but don’t await here to avoid slowing down tight loops
                 discord.utils.maybe_coroutine(progress, msg)
 
         logs: List[str] = []
@@ -571,15 +574,35 @@ class ServerBuilder(commands.Cog):
         desired_categories: List[Tuple[str, Dict[str, Dict[str, str]]]] = []
         channels_spec: List[Dict[str, Any]] = []
 
+        # collect inline renames (orig -> name)
+        inline_role_ren: List[Dict[str,str]] = []
+        inline_cat_ren:  List[Dict[str,str]] = []
+        inline_chan_ren: List[Dict[str,str]] = []
+
+        # Roles inline
+        for r in (layout.get("roles") or []):
+            nm = (r.get("name") or "").strip()
+            orig = (r.get("orig") or "").strip()
+            if orig and nm and _norm(nm) != _norm(orig):
+                inline_role_ren.append({"from": orig, "to": nm})
+
         cats_payload = layout.get("categories", []) or []
         if cats_payload and isinstance(cats_payload[0], dict):
             # Nested shape
             for c in cats_payload:
                 cname = c.get("name", "")
+                corig = (c.get("orig") or "").strip()
+                if corig and cname and _norm(cname) != _norm(corig):
+                    inline_cat_ren.append({"from": corig, "to": cname})
+
                 desired_categories.append((cname, c.get("overwrites") or {}))
                 for ch in (c.get("channels") or []):
+                    chname = ch.get("name")
+                    chorig = (ch.get("orig") or "").strip()
+                    if chorig and chname and _norm(chname) != _norm(chorig):
+                        inline_chan_ren.append({"from": chorig, "to": chname})
                     channels_spec.append({
-                        "name": ch.get("name"),
+                        "name": chname,
                         "type": (ch.get("type") or "text").lower(),
                         "category": cname,
                         "topic": ch.get("topic") or (ch.get("options") or {}).get("topic"),
@@ -591,13 +614,18 @@ class ServerBuilder(commands.Cog):
             for c in cats_payload:
                 desired_categories.append((c, {}))
             for ch in (layout.get("channels") or []):
+                # legacy channels don’t carry inline orig by default
                 channels_spec.append(ch)
 
-        # ---------- Apply renames first ----------
+        # ---------- Apply renames first (inline + explicit) ----------
         step("🔡 Applying renames…")
-        await _apply_role_renames(guild, (ren_spec.get("roles") or []))
-        await _apply_category_renames(guild, (ren_spec.get("categories") or []))
-        await _apply_channel_renames(guild, (ren_spec.get("channels") or []))
+        all_role_ren = (ren_spec.get("roles") or []) + inline_role_ren
+        all_cat_ren  = (ren_spec.get("categories") or []) + inline_cat_ren
+        all_chan_ren = (ren_spec.get("channels") or []) + inline_chan_ren
+
+        await _apply_role_renames(guild, all_role_ren)
+        await _apply_category_renames(guild, all_cat_ren)
+        await _apply_channel_renames(guild, all_chan_ren)
 
         # ---------- ROLES ----------
         step("🧱 Roles…")
@@ -634,15 +662,28 @@ class ServerBuilder(commands.Cog):
             if cat is None:
                 try:
                     ow = _build_overwrites(guild, cat_ow)
-                    cat = await guild.create_category(cname_n, overwrites=(ow or None), reason="MessiahBot builder")
+                    cat = await guild.create_category(
+                        cname_n,
+                        overwrites=_safe_overwrites(ow),
+                        reason="MessiahBot builder"
+                    )
                     logs.append(f"✅ Category created: **{cname_n}**")
+                except TypeError:
+                    # Bad overwrites shape → retry without
+                    cat = await guild.create_category(cname_n, reason="MessiahBot builder")
+                    logs.append(f"✅ Category created (ow ignored): **{cname_n}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create category: **{cname_n}**")
             else:
                 if cat_ow:
                     try:
-                        await cat.edit(overwrites=_build_overwrites(guild, cat_ow), reason="MessiahBot update category overwrites")
+                        await cat.edit(
+                            overwrites=_safe_overwrites(_build_overwrites(guild, cat_ow)),
+                            reason="MessiahBot update category overwrites"
+                        )
                         logs.append(f"🔧 Category overwrites set: **{cname_n}**")
+                    except TypeError:
+                        logs.append(f"⚠️ Ignored invalid overwrites on category: **{cname_n}**")
                     except Exception:
                         logs.append(f"⚠️ Could not edit overwrites: **{cname_n}**")
                 else:
@@ -681,7 +722,6 @@ class ServerBuilder(commands.Cog):
             elif chtype == "forum":
                 existing = _find_forum(guild, chname)
             elif chtype == "stage":
-                # stage channels are represented in voice set
                 existing = _find_voice(guild, chname)
             else:
                 existing = _find_text(guild, chname)
@@ -699,7 +739,7 @@ class ServerBuilder(commands.Cog):
                 try:
                     if chtype in ("text", "announcement"):
                         created = await guild.create_text_channel(
-                            chname, category=parent, overwrites=(ch_overwrites or None), reason="MessiahBot builder"
+                            chname, category=parent, overwrites=_safe_overwrites(ch_overwrites), reason="MessiahBot builder"
                         )
                         # best-effort convert to news if requested
                         try:
@@ -709,7 +749,7 @@ class ServerBuilder(commands.Cog):
                             pass
                     elif chtype == "voice":
                         created = await guild.create_voice_channel(
-                            chname, category=parent, overwrites=(ch_overwrites or None), reason="MessiahBot builder"
+                            chname, category=parent, overwrites=_safe_overwrites(ch_overwrites), reason="MessiahBot builder"
                         )
                     elif chtype == "forum":
                         created = await guild.create_forum(
@@ -734,6 +774,29 @@ class ServerBuilder(commands.Cog):
                             pass
 
                     logs.append(f"✅ Channel created: **#{chname}** [{chtype}]{' → ' + parent.name if parent else ''}")
+                except TypeError:
+                    # bad overwrites shape slipped through → retry without overwrites
+                    try:
+                        if chtype in ("text", "announcement"):
+                            created = await guild.create_text_channel(
+                                chname, category=parent, reason="MessiahBot builder"
+                            )
+                            try:
+                                if is_announcement and hasattr(discord, "ChannelType") and created.type != discord.ChannelType.news:
+                                    await created.edit(type=discord.ChannelType.news)
+                            except Exception:
+                                pass
+                        elif chtype == "voice":
+                            created = await guild.create_voice_channel(
+                                chname, category=parent, reason="MessiahBot builder"
+                            )
+                        elif chtype == "forum":
+                            created = await guild.create_forum(name=chname, category=parent, reason="MessiahBot builder")
+                        elif chtype == "stage":
+                            created = await guild.create_stage_channel(chname, category=parent, reason="MessiahBot builder")
+                        logs.append(f"✅ Channel created (ow ignored): **#{chname}** [{chtype}]")
+                    except Exception:
+                        logs.append(f"❌ Failed to create channel even without overwrites: **{chname}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create channel: **{chname}**")
             else:
@@ -748,12 +811,14 @@ class ServerBuilder(commands.Cog):
                     logs.append(f"⚠️ No permission to move channel: **{chname}**")
 
                 # apply overwrites & options
-                if ch_overwrites:
-                    try:
-                        await existing.edit(overwrites=ch_overwrites, reason="MessiahBot update overwrites")
+                try:
+                    if ch_overwrites:
+                        await existing.edit(overwrites=_safe_overwrites(ch_overwrites), reason="MessiahBot update overwrites")
                         logs.append(f"🔧 Overwrites set: **#{chname}**")
-                    except Exception:
-                        logs.append(f"⚠️ Could not edit overwrites: **#{chname}**")
+                except TypeError:
+                    logs.append(f"⚠️ Ignored invalid overwrites on channel: **#{chname}**")
+                except Exception:
+                    logs.append(f"⚠️ Could not edit overwrites: **#{chname}**")
 
                 try:
                     kw = {}
@@ -771,11 +836,11 @@ class ServerBuilder(commands.Cog):
 
         # ---------- PRUNE ----------
         step("🧹 Prune pass…")
-        if (layout.get("prune") or {}).get("roles"):
+        if prune_spec.get("roles"):
             wanted_roles = { _norm(r.get("name","")) for r in (layout.get("roles") or []) if r.get("name") }
             await _prune_roles(guild, wanted_roles)
 
-        if (layout.get("prune") or {}).get("categories"):
+        if prune_spec.get("categories"):
             wanted_cats = set()
             for c in layout.get("categories", []):
                 if isinstance(c, str):
@@ -785,7 +850,7 @@ class ServerBuilder(commands.Cog):
                     if nm: wanted_cats.add(nm)
             await _prune_categories(guild, wanted_cats)
 
-        if (layout.get("prune") or {}).get("channels"):
+        if prune_spec.get("channels"):
             wanted_chans: set[Tuple[str,str,str]] = set()
             for ch in channels_spec:
                 nm = _norm(ch.get("name",""))
