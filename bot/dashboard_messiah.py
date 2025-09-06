@@ -138,7 +138,7 @@ def dbcheck():
         "can_connect": ok_connect,
         "has_discord_bot_token": bool(DISCORD_BOT_TOKEN),
         "has_requests": _requests_ok,
-        "has_oauth": bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET),
+        "has_oauth": bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI),
     }
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
