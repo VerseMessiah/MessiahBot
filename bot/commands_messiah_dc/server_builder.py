@@ -152,69 +152,115 @@ def _build_overwrites(guild: discord.Guild, ow_spec: Dict[str, Dict[str, str]]) 
 
 # ---------- snapshot (used by /snapshot_layout) ----------
 
+def _safe_pos(obj, default=0):
+    try:
+        v = getattr(obj, "position", default)
+        return v if isinstance(v, int) else default
+    except Exception:
+        return default
+
 def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
-    roles = []
-    for r in sorted(guild.roles, key=lambda x: x.position, reverse=True):
-        if r.is_default() or r.managed:
-            continue
-        roles.append({"name": r.name, "color": f"#{r.colour.value:06x}"})
-
-    def safe_pos(c):
-        try:
-            return getattr(c, "position", 0) or 0
-        except Exception:
-            return 0
-    categories = [c.name for c in sorted(guild.categories, key=safe_pos)]
-
+    """Build a layout dict from the live guild, but *never* touch managed/integration items."""
+    roles: List[Dict[str, Any]] = []
+    categories: List[str] = []
     channels: List[Dict[str, Any]] = []
 
-    def parent_key(ch):
-        cat = getattr(ch, "category", None)
-        return (safe_pos(cat) if cat else -1, safe_pos(ch))
-
-    for ch in sorted(guild.text_channels, key=parent_key):
-        try:
-            is_news = False
-            if hasattr(ch, "is_news"):
-                is_news = bool(ch.is_news())
-            elif hasattr(discord, "ChannelType"):
-                is_news = (getattr(ch, "type", None) == getattr(discord.ChannelType, "news", object()))
-            chtype = "announcement" if is_news else "text"
-        except Exception:
-            chtype = "text"
-        channels.append({
-            "name": ch.name,
-            "type": chtype,
-            "category": ch.category.name if ch.category else "",
-            "options": {
-                "topic": getattr(ch, "topic", None) or "",
-                "nsfw": bool(getattr(ch, "nsfw", False)),
-                "slowmode": int(getattr(ch, "slowmode_delay", 0) or 0),
-            }
-        })
-
-    for ch in sorted(guild.voice_channels, key=parent_key):
-        channels.append({
-            "name": ch.name,
-            "type": "voice",
-            "category": ch.category.name if ch.category else "",
-            "options": {}
-        })
-
+    # Roles (skip @everyone + managed)
     try:
-        forums = list(guild.forums)
-    except Exception:
+        for r in sorted(getattr(guild, "roles", []), key=lambda x: _safe_pos(x), reverse=True):
+            try:
+                if r.is_default() or r.managed:
+                    continue
+                color_val = getattr(getattr(r, "colour", None), "value", 0) or 0
+                roles.append({"name": r.name, "color": f"#{int(color_val):06x}"})
+            except Exception as e:
+                print(f"[Messiah snapshot] skip role '{getattr(r,'name','?')}' -> {e}")
+    except Exception as e:
+        print(f"[Messiah snapshot] roles list failed: {e}")
+
+    # Categories
+    try:
+        for c in sorted(getattr(guild, "categories", []), key=_safe_pos):
+            try:
+                categories.append(c.name)
+            except Exception as e:
+                print(f"[Messiah snapshot] skip category '{getattr(c,'id','?')}' -> {e}")
+    except Exception as e:
+        print(f"[Messiah snapshot] categories list failed: {e}")
+
+    # Helper for parent sort key
+    def parent_key(ch):
+        try:
+            cat = getattr(ch, "category", None)
+            return (_safe_pos(cat, -1), _safe_pos(ch, 0))
+        except Exception:
+            return (-1, 0)
+
+    # Text + announcement
+    try:
+        for ch in sorted(getattr(guild, "text_channels", []), key=parent_key):
+            try:
+                # try to detect announcement/news; be permissive across discord.py versions
+                is_news = False
+                try:
+                    if hasattr(ch, "is_news"):
+                        is_news = bool(ch.is_news())
+                    elif hasattr(discord, "ChannelType"):
+                        is_news = (getattr(ch, "type", None) == getattr(discord.ChannelType, "news", object()))
+                except Exception:
+                    is_news = False
+
+                channels.append({
+                    "name": ch.name,
+                    "type": "announcement" if is_news else "text",
+                    "category": ch.category.name if getattr(ch, "category", None) else "",
+                    "options": {
+                        "topic": getattr(ch, "topic", "") or "",
+                        "nsfw": bool(getattr(ch, "nsfw", False)),
+                        "slowmode": int(getattr(ch, "slowmode_delay", 0) or 0),
+                    }
+                })
+            except Exception as e:
+                print(f"[Messiah snapshot] skip text channel '{getattr(ch,'id','?')}' -> {e}")
+    except Exception as e:
+        print(f"[Messiah snapshot] text_channels failed: {e}")
+
+    # Voice (also covers stage names; we just record as voice here)
+    try:
+        for ch in sorted(getattr(guild, "voice_channels", []), key=parent_key):
+            try:
+                channels.append({
+                    "name": ch.name,
+                    "type": "voice",
+                    "category": ch.category.name if getattr(ch, "category", None) else "",
+                    "options": {}
+                })
+            except Exception as e:
+                print(f"[Messiah snapshot] skip voice channel '{getattr(ch,'id','?')}' -> {e}")
+    except Exception as e:
+        print(f"[Messiah snapshot] voice_channels failed: {e}")
+
+    # Forums (optional attribute across versions)
+    try:
         forums = []
-    for ch in sorted(forums, key=parent_key):
-        channels.append({
-            "name": ch.name,
-            "type": "forum",
-            "category": ch.category.name if ch.category else "",
-            "options": {}
-        })
+        try:
+            forums = list(getattr(guild, "forums", []))
+        except Exception:
+            forums = []
+        for ch in sorted(forums, key=parent_key):
+            try:
+                channels.append({
+                    "name": ch.name,
+                    "type": "forum",
+                    "category": ch.category.name if getattr(ch, "category", None) else "",
+                    "options": {}
+                })
+            except Exception as e:
+                print(f"[Messiah snapshot] skip forum '{getattr(ch,'id','?')}' -> {e}")
+    except Exception as e:
+        print(f"[Messiah snapshot] forums list failed: {e}")
 
-    print(f"[Messiah snapshot] roles={len(roles)} cats={len(categories)} chans={len(channels)} in '{guild.name}'")
-
+    print(f"[Messiah snapshot] OK: roles={len(roles)} cats={len(categories)} chans={len(channels)} for '{guild.name}'")
     return {
         "mode": "update",
         "roles": roles,
@@ -225,9 +271,7 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
         "community": {"enable_on_build": False, "settings": {}}
     }
 
-
 # ---------- community settings ----------
-
 async def _apply_community(guild: discord.Guild, community_payload: Dict[str, Any], is_build: bool):
     if not community_payload:
         return
@@ -466,8 +510,6 @@ class ServerBuilder(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def snapshot_layout(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        prog = Progress(interaction)
-        await prog.set("snapshotting current server…")
         if not interaction.guild:
             await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
             return
@@ -478,7 +520,12 @@ class ServerBuilder(commands.Cog):
 
         try:
             layout = _snapshot_guild(interaction.guild)
+        except Exception as e:
+            # If anything truly unexpected bubbles up, report and stop.
+            await interaction.followup.send(f"❌ Snapshot failed while reading guild: `{e}`", ephemeral=True)
+            return
 
+        try:
             with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
@@ -490,14 +537,12 @@ class ServerBuilder(commands.Cog):
                         "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
                         (str(interaction.guild.id), ver, json.dumps(layout)),
                     )
-
             await interaction.followup.send(
                 f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Latest From DB** to edit.",
                 ephemeral=True
             )
         except Exception as e:
-            print(f"[Messiah] snapshot_layout error: {e}")
-            await interaction.followup.send(f"❌ Snapshot failed: `{e}`", ephemeral=True)
+            await interaction.followup.send(f"❌ Snapshot failed while writing to DB: `{e}`", ephemeral=True)
 
     # ---------- core applier ----------
 
