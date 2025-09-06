@@ -119,10 +119,10 @@ def live_layout(guild_id: str):
         return jsonify({"ok": False, "error": f"Discord channels error {r_channels.status_code}: {r_channels.text}"}), 502
     channels_json = r_channels.json()
 
-    # Convert roles
+    # Convert roles (skip @everyone and managed)
     roles = []
     for r in roles_json:
-        if r.get("managed"):  # skip bot/integration
+        if r.get("managed"):
             continue
         if r.get("name") == "@everyone":
             continue
@@ -136,13 +136,13 @@ def live_layout(guild_id: str):
     # helper to map Discord API types -> our UI types
     def ui_type(api_type: int) -> str:
         # https://discord.com/developers/docs/resources/channel#channel-object-channel-types
-        if api_type == 0:  # text
+        if api_type == 0:   # text
             return "text"
-        if api_type == 2:  # voice
+        if api_type == 2:   # voice
             return "voice"
-        if api_type == 4:  # category
+        if api_type == 4:   # category
             return "category"
-        if api_type == 5:  # news (announcement)
+        if api_type == 5:   # news/announcement
             return "announcement"
         if api_type == 15:  # forum
             return "forum"
@@ -150,7 +150,7 @@ def live_layout(guild_id: str):
             return "stage"
         return "text"
 
-    # Sort by 'position' so the initial order is stable
+    # Sort by 'position' so order is stable
     def pos(x): return x.get("position", 0)
     channels_sorted = sorted(channels_json, key=pos)
 
@@ -166,9 +166,10 @@ def live_layout(guild_id: str):
         topic = ch.get("topic", "")
         chans.append({
             "name": name,
-            "type": t_ui,             # requested/desired type (UI can change this)
-            "original_type": t_ui,    # immutable snapshot of live type (for locks/validation)
-            "category": parent_name
+            "type": t_ui,             # desired type (UI can change this)
+            "original_type": t_ui,    # live type (for validation)
+            "category": parent_name,
+            "topic": topic
         })
 
     payload = {
@@ -193,9 +194,10 @@ def save_layout(guild_id: str):
     if not incoming:
         return jsonify({"ok": False, "error": "No JSON payload"}), 400
 
-    # --- validate channel type conversions ---
+    # Validate channel type conversions
     warnings = []
     channels = incoming.get("channels") or []
+
     def compatible(live_type: str, req_type: str) -> bool:
         if live_type in ("text", "announcement"):
             return req_type in ("text", "announcement")
@@ -207,14 +209,13 @@ def save_layout(guild_id: str):
 
     for ch in channels:
         live = (ch.get("original_type") or "").lower().strip()
-        req = (ch.get("type") or "").lower().strip() or "text"
-        if live:
-            if not compatible(live, req):
-                # auto-correct to live-compatible and warn
-                ch["type"] = live
-                warnings.append(f"Channel '{ch.get('name','')}' type reset to '{live}' (conversion from '{req}' not supported).")
+        req = (ch.get("type") or "text").lower().strip()
+        if live and not compatible(live, req):
+            ch["type"] = live
+            warnings.append(
+                f"Channel '{ch.get('name','')}' type reset to '{live}' (conversion from '{req}' not supported)."
+            )
 
-    # de-dup insert (same as before)
     latest = _db_one(
         "SELECT version, payload FROM builder_layouts WHERE guild_id = %s ORDER BY version DESC LIMIT 1",
         (guild_id,),
@@ -266,7 +267,6 @@ _FORM_HTML = r"""
     .stack{display:flex;flex-direction:column;gap:6px}
     .subtle{opacity:.8}
     .pill{display:inline-flex;gap:6px;align-items:center;padding:2px 8px;border:1px solid #2a2a34;border-radius:999px;background:#131722;font-size:12px}
-    .warn{color:#ffcc66}
     .grid{display:grid;grid-template-columns: 1fr 1fr;gap:12px}
     .list{padding:8px;border:1px dashed #2a2a34;border-radius:10px;background:#0f1219}
     .cat{padding:8px;border:1px solid #2a2a34;border-radius:10px;background:#0f1219;margin:8px 0}
@@ -276,19 +276,19 @@ _FORM_HTML = r"""
 </head>
 <body>
   <h1>🧱 MessiahBot — Server Builder</h1>
-  <p class="subtle">Enter your Guild ID, then <strong>Load From Live</strong> or <strong>Load Latest</strong>, edit, and <strong>Save</strong>.</p>
+  <p class="subtle">Enter your Guild ID, then <strong>Load From Live</strong> or <strong>Load Snapshot</strong>, edit, and <strong>Save</strong>.</p>
 
   <p>
     <a href="/dbcheck" target="_blank">/dbcheck</a> •
     <a href="/routes" target="_blank">/routes</a>
   </p>
 
-  <form id="layoutForm" class="stack">
+  <form id="layoutForm" class="stack" name="layoutForm">
     <div class="row">
       <label>Guild ID <input type="text" id="guild_id" required placeholder="123456789012345678"></label>
       <button type="button" id="loadLatestBtn">Load Snapshot</button>
       <button type="button" id="loadLiveBtn">Load From Live</button>
-      <span id="status" class="pill muted">idle</span>
+      <span id="status" class="pill">idle</span>
     </div>
 
     <fieldset>
@@ -324,248 +324,281 @@ _FORM_HTML = r"""
 
   <script>
   // ---------- utilities ----------
-  const $ = (sel, el=document) => el.querySelector(sel);
-  const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
-  const statusPill = $("#status");
+  function $(sel, el){ return (el||document).querySelector(sel); }
+  function $all(sel, el){ return Array.prototype.slice.call((el||document).querySelectorAll(sel)); }
+  var statusPill = $("#status");
   function setStatus(txt){ statusPill.textContent = txt; }
 
   // ---------- roles ----------
-  function addRoleRow(name="", color="#000000"){
-    const d = document.createElement('div');
+  function addRoleRow(name, color){
+    if (!name) name = "";
+    if (!color) color = "#000000";
+    var d = document.createElement('div');
     d.className = "row";
-    d.innerHTML = `
-      <input placeholder="Role" name="role_name" value="${name}">
-      <input type="color" name="role_color" value="${color||'#000000'}">
-      <button type="button" class="del">✕</button>
-    `;
-    d.querySelector(".del").onclick = () => d.remove();
+    d.innerHTML =
+      '<input placeholder="Role" name="role_name" value="'+name+'">'+
+      '<input type="color" name="role_color" value="'+color+'">'+
+      '<button type="button" class="del">✕</button>';
+    d.querySelector(".del").onclick = function(){ d.remove(); };
     $("#roles").appendChild(d);
   }
 
   // ---------- categories/channels ----------
-  function catBox(name=""){
-    const wrap = document.createElement('div');
+  function catBox(name){
+    if (!name) name = "";
+    var wrap = document.createElement('div');
     wrap.className = "cat";
-    wrap.innerHTML = `
-      <div class="row">
-        <strong>Category</strong>
-        <input placeholder="Category name (blank = uncategorized bucket)" class="cat-name" value="${name}">
-        <button type="button" class="addChan">+ Channel</button>
-        <button type="button" class="delCat">✕</button>
-      </div>
-      <div class="stack ch-list"></div>
-    `;
-    wrap.querySelector(".delCat").onclick = () => wrap.remove();
-    wrap.querySelector(".addChan").onclick = () => wrap.querySelector(".ch-list").appendChild(channelRow());
+    wrap.innerHTML =
+      '<div class="row">'+
+        '<strong>Category</strong>'+
+        '<input placeholder="Category name (blank = uncategorized bucket)" class="cat-name" value="'+name+'">'+
+        '<button type="button" class="addChan">+ Channel</button>'+
+        '<button type="button" class="delCat">✕</button>'+
+      '</div>'+
+      '<div class="stack ch-list"></div>';
+    wrap.querySelector(".delCat").onclick = function(){ wrap.remove(); };
+    wrap.querySelector(".addChan").onclick = function(){ $(".ch-list", wrap).appendChild(channelRow({})); };
     return wrap;
   }
 
-  // Build a channel row. If original_type is provided, we lock/limit the type options.
-  function channelRow(ch = {name:"", type:"text", category:"", original_type:null, topic:""}){
-    const d = document.createElement('div');
-    d.className = "ch";
-    const name = ch.name || "";
-    const type = (ch.type || "text").toLowerCase();
-    const original = ch.original_type ? ch.original_type.toLowerCase() : null;
-    const topic = ch.topic || (ch.options?.topic || "");
+  // Build a channel row. If original_type is provided, lock/limit type options.
+  function channelRow(ch){
+    ch = ch || {};
+    var name = ch.name || "";
+    var type = (ch.type || "text").toLowerCase();
+    var original = ch.original_type ? ch.original_type.toLowerCase() : null;
+    var topic = ch.topic || (ch.options && ch.options.topic) || "";
 
-    // determine allowed opts
-    const full = ["text","announcement","voice","stage","forum"];
-    let opts = full;
-    let lockedLabel = "";
+    var full = ["text","announcement","voice","stage","forum"];
+    var opts = full.slice(0);
+    var lockedLabel = "";
     if (original){
-      if (["text","announcement"].includes(original)){ opts = ["text","announcement"]; }
-      else if (["voice","stage"].includes(original)){ opts = ["voice","stage"]; }
+      if (["text","announcement"].indexOf(original) >= 0){ opts = ["text","announcement"]; }
+      else if (["voice","stage"].indexOf(original) >= 0){ opts = ["voice","stage"]; }
       else if (original === "forum"){ opts = ["forum"]; lockedLabel = "Forum · locked"; }
     }
+    var useType = (opts.indexOf(type) >= 0) ? type : (original || "text");
 
-    // if requested type is not allowed anymore, clamp it
-    const useType = opts.includes(type) ? type : (original || "text");
+    var d = document.createElement('div');
+    d.className = "ch";
+    var selectHTML;
+    if (opts.length === 1 && opts[0] === "forum"){
+      selectHTML =
+        '<span class="pill">'+(lockedLabel || 'Forum · locked')+'</span>'+
+        '<input type="hidden" class="ch-type" value="forum">';
+    } else {
+      var options = '';
+      for (var i=0;i<opts.length;i++){
+        var o = opts[i];
+        options += '<option value="'+o+'"'+(o===useType?' selected':'')+'>'+o+'</option>';
+      }
+      selectHTML = '<select class="ch-type">'+options+'</select>';
+    }
 
-    const selectHTML = (opts.length===1 && opts[0]==="forum")
-      ? `<span class="pill muted">${lockedLabel||"Forum · locked"}</span>
-         <input type="hidden" class="ch-type" value="forum">`
-      : `<select class="ch-type">${opts.map(o => `<option value="${o}" ${o===useType?'selected':''}>${o}</option>`).join("")}</select>`;
-
-    d.innerHTML = `
-      <input class="ch-name" placeholder="Channel name" value="${name}">
-      ${selectHTML}
-      <input class="ch-topic" placeholder="Topic / Description" value="${topic}">
-      <button type="button" class="del">✕</button>
-    `;
-    d.dataset.originalType = original || "";
-    d.querySelector(".del").onclick = () => d.remove();
+    d.innerHTML =
+      '<input class="ch-name" placeholder="Channel name" value="'+name+'">'+
+      selectHTML +
+      '<input class="ch-topic" placeholder="Topic / Description" value="'+topic+'">'+
+      '<button type="button" class="del">✕</button>';
+    d.setAttribute("data-original-type", original || "");
+    d.querySelector(".del").onclick = function(){ d.remove(); };
     return d;
   }
 
   function hydrate(p){
     // Mode
-    const mode = (p.mode || 'build');
-    const radio = document.querySelector(\`input[name="mode"][value="' + {mode} + '"]`);
+    var mode = (p.mode || 'build');
+    var radio = document.querySelector('input[name="mode"][value="' + mode + '"]');
     if (radio) radio.checked = true;
 
     // roles
-    const R = $("#roles"); R.innerHTML = "";
-    (p.roles || []).forEach(r => addRoleRow(r.name||"", r.color||"#000000"));
-    if ((p.roles||[]).length === 0) addRoleRow();
+    var R = $("#roles"); R.innerHTML = "";
+    var roles = p.roles || [];
+    for (var i=0;i<roles.length;i++){
+      addRoleRow(roles[i].name || "", roles[i].color || "#000000");
+    }
+    if (roles.length === 0) addRoleRow("", "#000000");
 
-    // categories + channels (nested if available, else flat)
-    const C = $("#cats"); C.innerHTML = "";
+    // categories + channels (nested preferred, else flat)
+    var C = $("#cats"); C.innerHTML = "";
     if (Array.isArray(p.categories) && p.categories.length && typeof p.categories[0] === "object"){
-      // nested shape
-      for (const cat of p.categories){
-        const box = catBox(cat.name || "");
-        const listEl = $(".ch-list", box);
-        (cat.channels || []).forEach(ch => listEl.appendChild(channelRow(ch)));
+      for (var ci=0;ci<p.categories.length;ci++){
+        var cat = p.categories[ci] || {};
+        var box = catBox(cat.name || "");
+        var listEl = $(".ch-list", box);
+        var chans = cat.channels || [];
+        for (var j=0;j<chans.length;j++){
+          listEl.appendChild(channelRow(chans[j]));
+        }
         C.appendChild(box);
       }
     } else {
-      // legacy flat: build one box per category, plus an uncategorized bucket if needed
-      const catNames = (p.categories || []);
-      const map = {};
-      for (const name of catNames){
-        const box = catBox(name);
-        C.appendChild(box);
-        map[(name||"").toLowerCase()] = $(".ch-list", box);
+      var catNames = p.categories || [];
+      var map = {};
+      for (var k=0;k<catNames.length;k++){
+        var nm = catNames[k] || "";
+        var bx = catBox(nm);
+        C.appendChild(bx);
+        map[(nm||"").toLowerCase()] = $(".ch-list", bx);
       }
-      // add channels
-      let hadUncat = false;
-      (p.channels || []).forEach(ch => {
-        const parent = (ch.category || "").toLowerCase();
-        const row = channelRow(ch);
+      var hadUn = false;
+      var chansFlat = p.channels || [];
+      for (var m=0;m<chansFlat.length;m++){
+        var ch = chansFlat[m] || {};
+        var parent = (ch.category || "").toLowerCase();
+        var row = channelRow(ch);
         if (map[parent]) map[parent].appendChild(row);
         else {
-          if (!hadUncat){
-            const u = catBox(""); C.appendChild(u);
+          if (!hadUn){
+            var u = catBox("");
+            C.appendChild(u);
             map[""] = $(".ch-list", u);
-            hadUncat = true;
+            hadUn = true;
           }
           map[""].appendChild(row);
         }
-      });
+      }
       if (C.children.length === 0){
         C.appendChild(catBox(""));
       }
     }
 
-    // danger zone defaults
+    // danger zone
     $("#prune_roles").checked = !!(p.prune && p.prune.roles);
     $("#prune_categories").checked = !!(p.prune && p.prune.categories);
     $("#prune_channels").checked = !!(p.prune && p.prune.channels);
   }
 
-  // collect
   function collectPayload(){
-    const mode = document.forms.layoutForm.mode.value;
+    var mode = document.forms.layoutForm.mode.value;
 
     // roles
-    const roles = [];
-    $$("#roles .row").forEach(r => {
-      const name = r.querySelector('input[name="role_name"]').value.trim();
-      const color = r.querySelector('input[name="role_color"]').value || "#000000";
-      if (name) roles.push({name, color});
+    var roles = [];
+    $all('#roles .row').forEach(function(r){
+      var name = r.querySelector('input[name="role_name"]').value.trim();
+      var color = r.querySelector('input[name="role_color"]').value || "#000000";
+      if (name){ roles.push({name:name, color:color}); }
     });
 
-    // categories (nested shape)
-    const categories = [];
-    $$("#cats .cat").forEach(catEl => {
-      const cname = $(".cat-name", catEl).value.trim();
-      const channels = [];
-      $$(".ch-list .ch", catEl).forEach(chEl => {
-        const name = $(".ch-name", chEl).value.trim();
-        if (!name) return;
-        const typeSel = $(".ch-type", chEl);
-        const type = typeSel ? typeSel.value : "forum";
-        const topic = $(".ch-topic", chEl)?.value || "";
-        const original_type = chEl.dataset.originalType || null;
-        channels.push({name, type, original_type, topic});
+    // categories (nested)
+    var categories = [];
+    $all('#cats .cat').forEach(function(catEl){
+      var cname = $('.cat-name', catEl).value.trim();
+      var channels = [];
+      $all('.ch-list .ch', catEl).forEach(function(chEl){
+        var nm = $('.ch-name', chEl).value.trim();
+        if (!nm) return;
+        var typeSel = $('.ch-type', chEl);
+        var typ = typeSel ? typeSel.value : "forum";
+        var topic = ($('.ch-topic', chEl) && $('.ch-topic', chEl).value) || "";
+        var original_type = chEl.getAttribute('data-original-type') || null;
+        channels.push({name:nm, type:typ, original_type:original_type, topic:topic});
       });
-      categories.push({name: cname, channels});
+      categories.push({name:cname, channels:channels});
     });
 
-    const prune = {
+    var prune = {
       roles: $("#prune_roles").checked,
       categories: $("#prune_categories").checked,
       channels: $("#prune_channels").checked
     };
 
-    return { mode, roles, categories, prune };
+    return { mode:mode, roles:roles, categories:categories, prune:prune };
   }
 
   // buttons
-  $("#addRoleBtn").onclick = () => addRoleRow();
-  $("#addCatBtn").onclick = () => $("#cats").appendChild(catBox());
+  $("#addRoleBtn").onclick = function(){ addRoleRow("", "#000000"); };
+  $("#addCatBtn").onclick = function(){ $("#cats").appendChild(catBox("")); };
 
-  $("#loadLiveBtn").onclick = async () => {
-    const gid = $("#guild_id").value.trim();
+  $("#loadLiveBtn").onclick = async function(){
+    var gid = $("#guild_id").value.trim();
     if (!gid){ alert("Enter Guild ID"); return; }
     setStatus("loading live…");
-    const res = await fetch(`/api/live_layout/${gid}`);
-    const data = await res.json();
-    if (!data.ok){ alert(data.error || "Failed to load live"); setStatus("idle"); return; }
-    hydrate(data.payload || {});
-    setStatus("live loaded");
+    try{
+      var res = await fetch("/api/live_layout/" + encodeURIComponent(gid));
+      var data = await res.json();
+      if (!data.ok){ alert(data.error || "Failed to load live"); setStatus("idle"); return; }
+      hydrate(data.payload || {});
+      setStatus("live loaded");
+    }catch(e){
+      setStatus("idle");
+      alert("Failed to load live");
+    }
   };
 
-  $("#loadLatestBtn").onclick = async () => {
-    const gid = $("#guild_id").value.trim();
+  $("#loadLatestBtn").onclick = async function(){
+    var gid = $("#guild_id").value.trim();
     if (!gid){ alert("Enter Guild ID"); return; }
     setStatus("loading snapshot…");
-    const res = await fetch(`/api/layout/${gid}/latest`);
-    const data = await res.json();
-    if (!data.ok){ alert(data.error || "No layout"); setStatus("idle"); return; }
-    hydrate(data.payload || {});
-    setStatus(`snapshot v${data.version} loaded`);
+    try{
+      var res = await fetch("/api/layout/" + encodeURIComponent(gid) + "/latest");
+      var data = await res.json();
+      if (!data.ok){ alert(data.error || "No layout"); setStatus("idle"); return; }
+      hydrate(data.payload || {});
+      setStatus("snapshot v" + data.version + " loaded");
+    }catch(e){
+      setStatus("idle");
+      alert("Failed to load snapshot");
+    }
   };
 
-  $("#saveBtn").onclick = async () => {
-    const gid = $("#guild_id").value.trim();
+  $("#saveBtn").onclick = async function(){
+    var gid = $("#guild_id").value.trim();
     if (!gid){ alert("Enter Guild ID"); return; }
-    const payload = collectPayload();
+    var payload = collectPayload();
 
-    // Flatten channels back out for storage compatibility (while retaining original_type for validation)
-    const flatChannels = [];
-    for (const c of payload.categories){
-      for (const ch of (c.channels||[])){
+    // flatten channels for legacy compatibility
+    var flatChannels = [];
+    for (var i=0;i<payload.categories.length;i++){
+      var c = payload.categories[i];
+      var cname = c.name || "";
+      var chs = c.channels || [];
+      for (var j=0;j<chs.length;j++){
+        var ch = chs[j];
         flatChannels.push({
           name: ch.name,
           type: ch.type,
           original_type: ch.original_type || null,
-          category: c.name || "",
+          category: cname,
           options: { topic: ch.topic || "" }
         });
       }
     }
 
-    const saveBody = {
+    var saveBody = {
       mode: payload.mode,
       roles: payload.roles,
-      categories: payload.categories, // keep nested for modern bot
-      channels: flatChannels,         // also include flat for legacy bot & validation
-      prune: payload.prune,
+      categories: payload.categories, // modern nested
+      channels: flatChannels,         // legacy + validation
+      prune: payload.prune
     };
 
     setStatus("saving…");
-    const res = await fetch(`/api/layout/${gid}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(saveBody)
-    });
-    const data = await res.json();
-    setStatus("saved");
-    if (data.warnings && data.warnings.length){
-      alert("Saved with warnings:\n\n" + data.warnings.join("\n"));
-    } else if (data.ok && data.no_change){
-      alert(`No changes detected. Current version is still ${data.version}.`);
-    } else if (data.ok){
-      alert(`Saved version ${data.version}`);
-    } else {
-      alert(data.error || "Error");
+    try{
+      var res = await fetch("/api/layout/" + encodeURIComponent(gid), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(saveBody)
+      });
+      var data = await res.json();
+      setStatus("saved");
+      if (data.warnings && data.warnings.length){
+        alert("Saved with warnings:\n\n" + data.warnings.join("\n"));
+      } else if (data.ok && data.no_change){
+        alert("No changes detected. Current version is still " + data.version + ".");
+      } else if (data.ok){
+        alert("Saved version " + data.version);
+      } else {
+        alert(data.error || "Error");
+      }
+    }catch(e){
+      setStatus("idle");
+      alert("Failed to save");
     }
   };
 
   // initial rows
-  addRoleRow();
+  addRoleRow("", "#000000");
   $("#cats").appendChild(catBox(""));
   </script>
 </body>
