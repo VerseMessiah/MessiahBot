@@ -1,6 +1,6 @@
 # bot/commands_messiah_dc/server_builder.py
 from __future__ import annotations
-import os, json
+import os, json, asyncio
 from typing import Dict, Any, List, Optional, Tuple
 import discord
 from discord.ext import commands
@@ -160,7 +160,15 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
 
     # text + news(announcement) live in text_channels
     for ch in sorted(guild.text_channels, key=parent_key):
-        chtype = "announcement" if str(getattr(ch, "type", "")).endswith("news") else "text"
+        try:
+            is_news = False
+            if hasattr(ch, "is_news"):
+                is_news = bool(ch.is_news())
+            elif hasattr(discord, "ChannelType"):
+                is_news = (getattr(ch, "type", None) == getattr(discord.ChannelType, "news", object()))
+            chtype = "announcement" if is_news else "text"
+        except Exception:
+            chtype = "text"
         channels.append({
             "name": ch.name,
             "type": chtype,
@@ -397,57 +405,82 @@ class ServerBuilder(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="build_server", description="Messiah: Build server from latest saved layout")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     async def build_server(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🏗️ Messiah starting **full build**…", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if not interaction.guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
         layout = _load_layout_for_guild(interaction.guild.id)
         if not layout:
             await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
             return
 
-        # Apply full build
-        await self._apply_layout(interaction.guild, layout, update_only=False)
-        await interaction.followup.send("✅ Build complete.", ephemeral=True)
-
+        try:
+            await self._apply_layout(interaction.guild, layout, update_only=False)
+            await interaction.followup.send("✅ Build complete.", ephemeral=True)
+        except Exception as e:
+            print(f"[Messiah] build_server error: {e}")
+            await interaction.followup.send(f"❌ Build crashed: `{e}`", ephemeral=True)
+    
     @app_commands.command(name="update_server", description="Messiah: Update server to match latest saved layout")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     async def update_server(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🔧 Messiah applying **update**…", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if not interaction.guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
         layout = _load_layout_for_guild(interaction.guild.id)
         if not layout:
             await interaction.followup.send("❌ No layout found for this guild. Save one from the dashboard.", ephemeral=True)
             return
 
-        await self._apply_layout(interaction.guild, layout, update_only=True)
-        await interaction.followup.send("✅ Update complete.", ephemeral=True)
+        try:
+            await self._apply_layout(interaction.guild, layout, update_only=True)
+            await interaction.followup.send("✅ Update complete.", ephemeral=True)
+        except Exception as e:
+            print(f"[Messiah] update_server error: {e}")
+            await interaction.followup.send(f"❌ Update crashed: `{e}`", ephemeral=True)
 
     @app_commands.command(name="snapshot_layout", description="Messiah: Save current server structure as a new layout version")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     async def snapshot_layout(self, interaction: discord.Interaction):
-        if not (_psyco_ok and DATABASE_URL):
-            await interaction.response.send_message("❌ Database not configured on worker.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if not interaction.guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
             return
 
-        await interaction.response.send_message("📸 Snapshotting current server…", ephemeral=True)
-        layout = _snapshot_guild(interaction.guild)
+        if not (_psyco_ok and DATABASE_URL):
+            await interaction.followup.send("❌ Database not configured on worker.", ephemeral=True)
+            return
 
-        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(
-                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
-                    (str(interaction.guild.id),),
-                )
-                ver = int((cur.fetchone() or {}).get("v", 1))
-                cur.execute(
-                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
-                    (str(interaction.guild.id), ver, json.dumps(layout)),
-                )
+        try:
+            layout = _snapshot_guild(interaction.guild)
 
-        await interaction.followup.send(
-            f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Latest From DB** to edit.",
-            ephemeral=True
-        )
+            with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
+                        (str(interaction.guild.id),),
+                    )
+                    ver = int((cur.fetchone() or {}).get("v", 1))
+                    cur.execute(
+                        "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
+                        (str(interaction.guild.id), ver, json.dumps(layout)),
+                    )
 
+            await interaction.followup.send(
+                f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Latest From DB** to edit.",
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"[Messiah] snapshot_layout error: {e}")
+            await interaction.followup.send(f"❌ Snapshot failed: `{e}`", ephemeral=True)
     # ---------- core applier ----------
 
     async def _apply_layout(self, guild: discord.Guild, layout: Dict[str, Any], update_only: bool):
@@ -531,12 +564,16 @@ class ServerBuilder(commands.Cog):
                     logs.append(f"✅ Role created: **{name}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create role: **{name}**")
+                except Exception as e:
+                    logs.append(f"⚠️ Failed to create role **{name}**: {e}")
             else:
                 try:
                     await existing.edit(colour=color, permissions=perms_obj, reason="MessiahBot update role")
                     logs.append(f"🔄 Role updated: **{name}**")
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to edit role: **{name}**")
+                except Exception as e:
+                    logs.append(f"⚠️ Failed to edit role **{name}**: {e}")
 
         # ---------- CATEGORIES (create + overwrites) ----------
         cat_cache: Dict[str, discord.CategoryChannel] = {}

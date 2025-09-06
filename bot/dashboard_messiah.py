@@ -126,7 +126,7 @@ def get_latest_layout(guild_id: str):
 # ---------- UI ----------
 _VER = str(int(time.time()))  # cache-bust on each deploy
 
-_FORM_HTML = rf"""
+_FORM_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -134,7 +134,7 @@ _FORM_HTML = rf"""
   <title>MessiahBot — Server Builder</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {{
+    :root {
       --bg: #0b0d10;
       --panel: #12151a;
       --muted: #aab0bb;
@@ -142,9 +142,9 @@ _FORM_HTML = rf"""
       --border: #232832;
       --accent: #7dd3fc;
       --danger: #fca5a5;
-    }}
-    @media (prefers-color-scheme: light) {{
-      :root {{
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
         --bg: #fafafa;
         --panel: #ffffff;
         --muted: #475569;
@@ -152,35 +152,40 @@ _FORM_HTML = rf"""
         --border: #e5e7eb;
         --accent: #0369a1;
         --danger: #b91c1c;
-      }}
-    }}
-    body {{ background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; }}
-    .container {{ max-width: 1100px; margin: 24px auto; padding: 0 16px; }}
-    a {{ color: var(--accent); }}
-    .panel {{ background: var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; }}
-    .row {{ display:flex; gap:8px; align-items:center; flex-wrap: wrap; }}
-    .stack {{ display:flex; flex-direction:column; gap:12px; }}
-    .list {{ display:flex; flex-direction:column; gap:8px; padding:8px; border:1px dashed var(--border); border-radius:10px; background: color-mix(in oklab, var(--panel) 70%, black 30%); }}
-    .cat {{ border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--panel); }}
-    .cat-head {{ display:flex; gap:8px; align-items:center; margin-bottom:8px }}
-    .pill {{ font-size:12px; padding:2px 6px; border:1px solid var(--border); border-radius:999px; color: var(--muted); }}
-    .muted {{ color: var(--muted); }}
-    .w200 {{ width:200px }}
-    .w260 {{ width:260px }}
-    .w140 {{ width:140px }}
-    .w80 {{ width:80px }}
-    .role-item, .chan-item {{ background: var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px }}
-    .section-title {{ display:flex; justify-content:space-between; align-items:center; }}
-    button {{ background:#1f2937; color:#e5e7eb; border:1px solid var(--border); padding:8px 10px; border-radius:10px; cursor:pointer; }}
-    button:hover {{ filter: brightness(1.1); }}
-    .danger {{ color: var(--danger); }}
-    .drag {{ cursor: grab; user-select:none; }}
-    .ghost {{ opacity: .6; }}
-    .toggle {{ margin-left:auto }}
+      }
+    }
+    body { background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; }
+    .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    a { color: var(--accent); }
+    .panel { background: var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+    .stack { display:flex; flex-direction:column; gap:12px; }
+    .list { display:flex; flex-direction:column; gap:8px; padding:8px; border:1px dashed var(--border); border-radius:10px; background: color-mix(in oklab, var(--panel) 70%, black 30%); }
+    .cat { border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--panel); }
+    .cat-head { display:flex; gap:8px; align-items:center; margin-bottom:8px }
+    .pill { font-size:12px; padding:2px 6px; border:1px solid var(--border); border-radius:999px; color: var(--muted); }
+    .muted { color: var(--muted); }
+    .w200 { width:200px }
+    .w260 { width:260px }
+    .w140 { width:140px }
+    .w80 { width:80px }
+    .role-item, .chan-item { background: var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px }
+    .section-title { display:flex; justify-content:space-between; align-items:center; }
+    button { background:#1f2937; color:#e5e7eb; border:1px solid var(--border); padding:8px 10px; border-radius:10px; cursor:pointer; }
+    button:hover { filter: brightness(1.1); }
+    .danger { color: var(--danger); }
+    .drag { cursor: grab; user-select:none; }
+    .ghost { opacity: .6; }
+    .toggle { margin-left:auto }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js?v={_VER}"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <script>
+    // Expose cache-buster to JS without using Python f-strings in HTML
+    window.__VER__ = "{{ ver }}";
+  </script>
 </head>
 <body>
+{% raw %}
 <div class="container stack">
   <div class="row" style="justify-content:space-between;">
     <h1>🧱 MessiahBot — Server Builder</h1>
@@ -255,19 +260,18 @@ _FORM_HTML = rf"""
   (function(){
     const btn = document.getElementById('themeBtn');
     btn.addEventListener('click', () => {
-      const meta = document.querySelector('meta[name="color-scheme"]');
       document.documentElement.classList.toggle('force-light');
       document.documentElement.classList.toggle('force-dark');
     });
   })();
 
   // Track original snapshot for auto-rename detection
-  let ORIGINAL = {{}}; // filled on hydrate
+  let ORIGINAL = {}; // filled on hydrate
 
   // ---------- Drag helpers ----------
   const Sortables = new Set();
-  function makeSortable(el, opts={{}}){
-    // If already sortable, skip
+  function makeSortable(el, opts={}){
+    if (!el) return null;
     if (el.__sortable) return el.__sortable;
     const s = new Sortable(el, Object.assign({ animation: 150, ghostClass: 'ghost', handle: '.drag' }, opts));
     el.__sortable = s;
@@ -275,11 +279,8 @@ _FORM_HTML = rf"""
     return s;
   }
   function rewireDragAndDrop(){
-    // roles container
     makeSortable(document.getElementById('roles'));
-    // categories container
     makeSortable(document.getElementById('cats'));
-    // each channel list inside each category
     document.querySelectorAll('.chan-list').forEach(list => {
       makeSortable(list, { group: 'channels', swapThreshold: 0.6 });
     });
@@ -333,7 +334,6 @@ _FORM_HTML = rf"""
       <div class="list chan-list"></div>
       <button type="button" onclick="this.previousElementSibling.appendChild(chanRow());">Add Channel</button>
     `;
-    // DnD for its channel list
     makeSortable(wrapper.querySelector('.chan-list'), { group: 'channels', swapThreshold: 0.6 });
     return wrapper;
   }
@@ -353,7 +353,6 @@ _FORM_HTML = rf"""
   function addRename(containerId){ document.getElementById(containerId).appendChild(renameRow()); }
   function collectRenames(containerId){
     const out = [];
-    const rows = document.querySelectorAll(`#{{}}${{containerId}} [data-rename-from]`); // placeholder to avoid accidental templating
     document.querySelectorAll(`#${containerId} [data-rename-from]`).forEach((fromEl, i) => {
       const toEl = document.querySelectorAll(`#${containerId} [data-rename-to]`)[i];
       const from = (fromEl.value||"").trim(), to = (toEl.value||"").trim();
@@ -364,20 +363,16 @@ _FORM_HTML = rf"""
 
   // ---------- Hydrate ----------
   function hydrate(layout){
-    // stash original for auto-rename detection later
-    ORIGINAL = JSON.parse(JSON.stringify(layout||{{}}));
+    ORIGINAL = JSON.parse(JSON.stringify(layout||{}));
 
-    // mode
     const mode = (layout.mode || 'update');
     const radio = document.querySelector(`input[name="mode"][value="${mode}"]`);
     if (radio) radio.checked = true;
 
-    // danger toggles
     document.getElementById('prune_roles').checked = !!(layout.prune && layout.prune.roles);
     document.getElementById('prune_categories').checked = !!(layout.prune && layout.prune.categories);
     document.getElementById('prune_channels').checked = !!(layout.prune && layout.prune.channels);
 
-    // clear renames
     ['roleRenames','catRenames','chanRenames'].forEach(id => {
       const el = document.getElementById(id); while (el.firstChild) el.removeChild(el.firstChild);
     });
@@ -385,18 +380,16 @@ _FORM_HTML = rf"""
     (layout.renames?.categories || []).forEach(x => document.getElementById('catRenames').appendChild(renameRow(x.from||"", x.to||"")));
     (layout.renames?.channels || []).forEach(x => document.getElementById('chanRenames').appendChild(renameRow(x.from||"", x.to||"")));
 
-    // roles
     const rolesEl = document.getElementById('roles'); rolesEl.innerHTML = "";
     (layout.roles || []).forEach(r => rolesEl.appendChild(roleRow(r.name||"", r.color||"#000000")));
     if ((layout.roles || []).length === 0) rolesEl.appendChild(roleRow());
-    // categories + channels
+
     const catsEl = document.getElementById('cats'); catsEl.innerHTML = "";
     const catNames = (layout.categories || []).map(c => (typeof c === 'string') ? c : (c?.name || ""));
     const byCat = {};
     (layout.channels || []).forEach(ch => {
       const cat = (ch.category || "").trim();
-      byCat[cat] = byCat[cat] || [];
-      byCat[cat].push(ch);
+      (byCat[cat] = byCat[cat] || []).push(ch);
     });
     catNames.forEach(cn => {
       const block = categoryBlock(cn || "");
@@ -409,7 +402,6 @@ _FORM_HTML = rf"""
       });
       catsEl.appendChild(block);
     });
-    // Orphans: channels without a known category
     const unknownCats = Object.keys(byCat).filter(k => !catNames.includes(k));
     if ((byCat[""]||[]).length || unknownCats.length){
       const block = categoryBlock("");
@@ -425,29 +417,28 @@ _FORM_HTML = rf"""
       catsEl.appendChild(block);
     }
 
-    // (re)wire drag after DOM updates
     rewireDragAndDrop();
   }
 
   // ---------- Loaders ----------
-  async function loadLatest() {{
+  async function loadLatest(){
     const gid = document.getElementById('guild_id').value.trim();
     if (!gid) return alert('Enter Guild ID');
-    const res = await fetch(`/api/layout/${{gid}}/latest?v={_VER}`);
+    const res = await fetch(`/api/layout/${gid}/latest?v=${window.__VER__}`);
     const data = await res.json();
     if (!data.ok) return alert(data.error || 'No layout');
-    hydrate(data.payload || {{}});
-    alert(`Loaded version ${{data.version}} from DB`);
-  }}
-  async function loadLive() {{
+    hydrate(data.payload || {});
+    alert(`Loaded version ${data.version} from DB`);
+  }
+  async function loadLive(){
     const gid = document.getElementById('guild_id').value.trim();
     if (!gid) return alert('Enter Guild ID');
-    const res = await fetch(`/api/live_layout/${{gid}}?v={_VER}`);
+    const res = await fetch(`/api/live_layout/${gid}?v=${window.__VER__}`);
     const data = await res.json();
     if (!data.ok) return alert(data.error || 'No snapshot found. Run /snapshot_layout in Discord, then retry.');
-    hydrate(data.payload || {{}});
-    alert(`Loaded from bot snapshot (version ${{data.version || 'n/a'}})`);
-  }}
+    hydrate(data.payload || {});
+    alert(`Loaded from bot snapshot (version ${data.version || 'n/a'})`);
+  }
   document.getElementById('loadLatestBtn').addEventListener('click', loadLatest);
   document.getElementById('loadLiveBtn').addEventListener('click', loadLive);
 
@@ -456,13 +447,11 @@ _FORM_HTML = rf"""
 
   function detectRoleRenames(currentRoles){
     const before = new Set((ORIGINAL.roles||[]).map(r => norm(r.name)));
-    const after  = new Set((currentRoles||[]).map(r => norm(r.name)));
-    // If count matches but some names changed, attempt simple one-to-one mapping by index
     const renames = [];
     if ((ORIGINAL.roles||[]).length === currentRoles.length){
       for (let i=0;i<currentRoles.length;i++){
-        const was = norm((ORIGINAL.roles[i]||{{}}).name);
-        const now = norm((currentRoles[i]||{{}}).name);
+        const was = norm((ORIGINAL.roles[i]||{}).name);
+        const now = norm((currentRoles[i]||{}).name);
         if (was && now && was !== now && before.has(was)){
           renames.push({from:(ORIGINAL.roles[i].name||""), to:(currentRoles[i].name||"")});
         }
@@ -487,17 +476,16 @@ _FORM_HTML = rf"""
   }
 
   function detectChannelRenames(currentChans){
-    // group by category, then compare in-order
-    const beforeByCat = {{}};
-    (ORIGINAL.channels||[]).forEach(ch => {{
+    const beforeByCat = {};
+    (ORIGINAL.channels||[]).forEach(ch => {
       const k = (ch.category||"");
       (beforeByCat[k] = beforeByCat[k] || []).push(ch);
-    }});
-    const nowByCat = {{}};
-    (currentChans||[]).forEach(ch => {{
+    });
+    const nowByCat = {};
+    (currentChans||[]).forEach(ch => {
       const k = (ch.category||"");
       (nowByCat[k] = nowByCat[k] || []).push(ch);
-    }});
+    });
     const renames = [];
     for (const k of new Set([...Object.keys(beforeByCat), ...Object.keys(nowByCat)])){
       const A = beforeByCat[k] || [];
@@ -518,10 +506,8 @@ _FORM_HTML = rf"""
     const gid = document.getElementById('guild_id').value.trim();
     if (!gid) return alert('Enter Guild ID');
 
-    // mode
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'update';
 
-    // roles in order
     const roles = [];
     document.querySelectorAll('#roles .role-item').forEach(r => {
       const name = r.querySelector('input[name="role_name"]').value.trim();
@@ -529,7 +515,6 @@ _FORM_HTML = rf"""
       if (name) roles.push({ name, color });
     });
 
-    // categories + channels
     const categories = [];
     const channels = [];
     document.querySelectorAll('#cats .cat').forEach(cat => {
@@ -548,28 +533,24 @@ _FORM_HTML = rf"""
       });
     });
 
-    // prune toggles
     const prune = {
       roles: document.getElementById('prune_roles').checked,
       categories: document.getElementById('prune_categories').checked,
       channels: document.getElementById('prune_channels').checked,
     };
 
-    // explicit renames (from the Renames section)
     const manualRenames = {
       roles: collectRenames('roleRenames'),
       categories: collectRenames('catRenames'),
       channels: collectRenames('chanRenames'),
     };
 
-    // auto-detect inline renames by comparing ORIGINAL vs current
     const autoRenames = {
       roles: detectRoleRenames(roles),
       categories: detectCategoryRenames(categories),
       channels: detectChannelRenames(channels),
     };
 
-    // merge (manual has priority; append uniques from auto)
     function mergeRen(a, b){
       const key = x => `${(x.from||"").toLowerCase()}→${(x.to||"").toLowerCase()}`;
       const seen = new Set(a.map(key));
@@ -583,22 +564,21 @@ _FORM_HTML = rf"""
 
     const payload = { mode, roles, categories, channels, prune, renames };
 
-    const res = await fetch(`/api/layout/${{gid}}?v={_VER}`, {{
+    const res = await fetch(`/api/layout/${gid}?v=${window.__VER__}`, {
       method: 'POST',
-      headers: {{ 'Content-Type':'application/json' }},
+      headers: { 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
-    }});
+    });
     const data = await res.json();
-    if (data.ok && data.no_change) alert(`No changes detected. Current version is still ${{data.version}}.`);
-    else if (data.ok) alert(`Saved version ${{data.version}}`);
+    if (data.ok && data.no_change) alert(`No changes detected. Current version is still ${data.version}.`);
+    else if (data.ok) alert(`Saved version ${data.version}`);
     else alert(data.error || 'Error');
   }
 
   document.getElementById('saveBtn').addEventListener('click', saveLayout);
-
-  // wire load buttons on first paint
   document.addEventListener('DOMContentLoaded', rewireDragAndDrop);
 </script>
+{% endraw %}
 </body>
 </html>
 """
@@ -614,7 +594,7 @@ def index():
 
 @app.get("/form")
 def form():
-    return render_template_string(_FORM_HTML)
+    return render_template_string(_FORM_HTML, ver=str(int(time.time())))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5050)))
