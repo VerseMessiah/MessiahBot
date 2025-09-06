@@ -168,7 +168,11 @@ def _safe_pos(obj, default=0):
         return default
 
 def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
-    """Build a layout dict from the live guild, but *never* touch managed/integration items."""
+    """
+    Build a layout dict from the live guild without touching integrations or
+    calling API helpers that can explode. We only read simple attributes
+    available on each channel object and guard every access.
+    """
     roles: List[Dict[str, Any]] = []
     categories: List[str] = []
     channels: List[Dict[str, Any]] = []
@@ -177,103 +181,94 @@ def _snapshot_guild(guild: discord.Guild) -> Dict[str, Any]:
     try:
         for r in sorted(getattr(guild, "roles", []), key=lambda x: _safe_pos(x), reverse=True):
             try:
-                if r.is_default() or r.managed:
+                if getattr(r, "managed", False) or getattr(r, "is_default", lambda: False)():
                     continue
-                color_val = getattr(getattr(r, "colour", None), "value", 0) or 0
-                roles.append({"name": r.name, "color": f"#{int(color_val):06x}"})
+                colour = getattr(getattr(r, "colour", None), "value", 0) or 0
+                roles.append({"name": getattr(r, "name", ""), "color": f"#{int(colour):06x}"})
             except Exception as e:
-                print(f"[Messiah snapshot] skip role '{getattr(r,'name','?')}' -> {e}")
+                print(f"[Messiah snapshot] skip role '{getattr(r,'name','?')}': {e}")
     except Exception as e:
         print(f"[Messiah snapshot] roles list failed: {e}")
 
-    # Categories
+    # We’ll walk every channel once and classify by type safely.
+    # Also collect categories as we see them so we don't call guild.categories directly.
+    try:
+        for ch in sorted(getattr(guild, "channels", []), key=_safe_pos):
+            try:
+                ctype = getattr(ch, "type", None)  # discord.ChannelType or None
+                name = getattr(ch, "name", "") or ""
+                # Parent category name (safe)
+                parent = getattr(ch, "category", None)
+                parent_name = getattr(parent, "name", "") if parent else ""
+
+                # If it's a CATEGORY, record its name in the categories list and continue
+                if str(ctype) == "ChannelType.category":
+                    if parent is None:  # categories don't have parents
+                        if name and name not in categories:
+                            categories.append(name)
+                    continue
+
+                # Skip threads entirely in snapshot
+                if str(ctype).endswith(".public_thread") or str(ctype).endswith(".private_thread") or str(ctype).endswith(".news_thread"):
+                    continue
+
+                entry: Dict[str, Any] = {
+                    "name": name,
+                    "type": "text",        # default, will adjust
+                    "category": parent_name,
+                    "options": {}
+                }
+
+                # Map types without calling risky helpers:
+                # text/news/voice/stage/forum
+                tstr = str(ctype)
+                if tstr == "ChannelType.text":
+                    entry["type"] = "text"
+                    # Safe fields
+                    topic = getattr(ch, "topic", "") or ""
+                    nsfw = bool(getattr(ch, "nsfw", False))
+                    slow = int(getattr(ch, "slowmode_delay", 0) or 0)
+                    entry["options"] = {"topic": topic, "nsfw": nsfw, "slowmode": slow}
+                elif tstr == "ChannelType.news":
+                    entry["type"] = "announcement"
+                    topic = getattr(ch, "topic", "") or ""
+                    nsfw = bool(getattr(ch, "nsfw", False))
+                    slow = int(getattr(ch, "slowmode_delay", 0) or 0)
+                    entry["options"] = {"topic": topic, "nsfw": nsfw, "slowmode": slow}
+                elif tstr == "ChannelType.voice":
+                    entry["type"] = "voice"
+                    entry["options"] = {}
+                elif tstr == "ChannelType.stage_voice":
+                    entry["type"] = "stage"
+                    entry["options"] = {}
+                elif tstr == "ChannelType.forum":
+                    entry["type"] = "forum"
+                    entry["options"] = {}
+                else:
+                    # Unknown / unhandled: skip silently
+                    continue
+
+                channels.append(entry)
+            except Exception as e:
+                print(f"[Messiah snapshot] skip channel '{getattr(ch,'id','?')}': {e}")
+    except Exception as e:
+        print(f"[Messiah snapshot] channels walk failed: {e}")
+
+    # Also capture any categories not in guild.channels (very rare) as a fallback
     try:
         for c in sorted(getattr(guild, "categories", []), key=_safe_pos):
-            try:
-                categories.append(c.name)
-            except Exception as e:
-                print(f"[Messiah snapshot] skip category '{getattr(c,'id','?')}' -> {e}")
-    except Exception as e:
-        print(f"[Messiah snapshot] categories list failed: {e}")
-
-    # Helper for parent sort key
-    def parent_key(ch):
-        try:
-            cat = getattr(ch, "category", None)
-            return (_safe_pos(cat, -1), _safe_pos(ch, 0))
-        except Exception:
-            return (-1, 0)
-
-    # Text + announcement
-    try:
-        for ch in sorted(getattr(guild, "text_channels", []), key=parent_key):
-            try:
-                # try to detect announcement/news; be permissive across discord.py versions
-                is_news = False
-                try:
-                    if hasattr(ch, "is_news"):
-                        is_news = bool(ch.is_news())
-                    elif hasattr(discord, "ChannelType"):
-                        is_news = (getattr(ch, "type", None) == getattr(discord.ChannelType, "news", object()))
-                except Exception:
-                    is_news = False
-
-                channels.append({
-                    "name": ch.name,
-                    "type": "announcement" if is_news else "text",
-                    "category": ch.category.name if getattr(ch, "category", None) else "",
-                    "options": {
-                        "topic": getattr(ch, "topic", "") or "",
-                        "nsfw": bool(getattr(ch, "nsfw", False)),
-                        "slowmode": int(getattr(ch, "slowmode_delay", 0) or 0),
-                    }
-                })
-            except Exception as e:
-                print(f"[Messiah snapshot] skip text channel '{getattr(ch,'id','?')}' -> {e}")
-    except Exception as e:
-        print(f"[Messiah snapshot] text_channels failed: {e}")
-
-    # Voice (also covers stage names; we just record as voice here)
-    try:
-        for ch in sorted(getattr(guild, "voice_channels", []), key=parent_key):
-            try:
-                channels.append({
-                    "name": ch.name,
-                    "type": "voice",
-                    "category": ch.category.name if getattr(ch, "category", None) else "",
-                    "options": {}
-                })
-            except Exception as e:
-                print(f"[Messiah snapshot] skip voice channel '{getattr(ch,'id','?')}' -> {e}")
-    except Exception as e:
-        print(f"[Messiah snapshot] voice_channels failed: {e}")
-
-    # Forums (optional attribute across versions)
-    try:
-        forums = []
-        try:
-            forums = list(getattr(guild, "forums", []))
-        except Exception:
-            forums = []
-        for ch in sorted(forums, key=parent_key):
-            try:
-                channels.append({
-                    "name": ch.name,
-                    "type": "forum",
-                    "category": ch.category.name if getattr(ch, "category", None) else "",
-                    "options": {}
-                })
-            except Exception as e:
-                print(f"[Messiah snapshot] skip forum '{getattr(ch,'id','?')}' -> {e}")
-    except Exception as e:
-        print(f"[Messiah snapshot] forums list failed: {e}")
+            nm = getattr(c, "name", "")
+            if nm and nm not in categories:
+                categories.append(nm)
+    except Exception:
+        pass
 
     print(f"[Messiah snapshot] OK: roles={len(roles)} cats={len(categories)} chans={len(channels)} for '{guild.name}'")
     return {
         "mode": "update",
         "roles": roles,
-        "categories": categories,
-        "channels": channels,
+        "categories": categories,       # plain list of names
+        "channels": channels,           # flat list with category linkage by name
         "prune": {"roles": False, "categories": False, "channels": False},
         "renames": {"roles": [], "categories": [], "channels": []},
         "community": {"enable_on_build": False, "settings": {}}
