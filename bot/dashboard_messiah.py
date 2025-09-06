@@ -148,6 +148,16 @@ def dbcheck():
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
 
+@app.get("/envcheck")
+def envcheck():
+    return {
+        "DISCORD_CLIENT_ID_set": bool(DISCORD_CLIENT_ID),
+        "DISCORD_CLIENT_SECRET_set": bool(DISCORD_CLIENT_SECRET),
+        "DISCORD_REDIRECT_URI_set": bool(DISCORD_REDIRECT_URI),
+        "DISCORD_BOT_TOKEN_set": bool(DISCORD_BOT_TOKEN),
+        "DASHBOARD_SESSION_SECRET_set": bool(app.secret_key),
+    }
+
 # ---------- OAuth routes ----------
 @app.get("/login")
 def discord_login():
