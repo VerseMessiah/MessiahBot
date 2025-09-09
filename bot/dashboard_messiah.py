@@ -69,30 +69,30 @@ def _discord_headers():
 
 # ---------- OAuth helpers ----------
 def _discord_oauth_url(state: str):
+    cid, _, redirect = get_oauth_env()
     params = {
-        "client_id": DISCORD_CLIENT_ID,
+        "client_id": cid,
         "response_type": "code",
-        "redirect_uri": DISCORD_REDIRECT_URI,
+        "redirect_uri": redirect,
         "scope": "identify guilds",
         "state": state,
         "prompt": "consent",
     }
-    # NOTE: authorize is NOT under /api
-    return f"{DISCORD_AUTH_BASE}/authorize?{urllib.parse.urlencode(params)}"
+    return f"{DISCORD_API}/oauth2/authorize?{urllib.parse.urlencode(params)}"
 
 def _exchange_code_for_token(code: str):
     if not _requests_ok:
         raise RuntimeError("Python 'requests' not installed; add requests to requirements.txt")
+    cid, secret, redirect = get_oauth_env()
     data = {
-        "client_id": DISCORD_CLIENT_ID,
-        "client_secret": DISCORD_CLIENT_SECRET,
+        "client_id": cid,
+        "client_secret": secret,
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": DISCORD_REDIRECT_URI,
+        "redirect_uri": redirect,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    # NOTE: token is under /api/oauth2/token (no version)
-    r = requests.post(DISCORD_TOKEN_URL, data=data, headers=headers, timeout=20)
+    r = requests.post(f"{DISCORD_API}/oauth2/token", data=data, headers=headers, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -135,34 +135,35 @@ def dbcheck():
         except Exception:
             ok_connect = False
 
+    cid, secret, redirect = get_oauth_env()
     status = {
-        "database_url_present": ok_env,
-        "psycopg_available": ok_driver,
-        "psycopg_version": driver_version,
-        "can_connect": ok_connect,
-        "has_discord_bot_token": bool(DISCORD_BOT_TOKEN),
-        "has_requests": _requests_ok,
-        "has_oauth": bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI),
-        "has_redirect": bool(DISCORD_REDIRECT_URI),
+      "database_url_present": ok_env,
+      "psycopg_available": ok_driver,
+      "psycopg_version": driver_version,
+      "can_connect": ok_connect,
+      "has_discord_bot_token": bool(DISCORD_BOT_TOKEN),
+      "has_requests": _requests_ok,
+      "has_oauth": bool(cid and secret and redirect),
     }
     code = 200 if (ok_env and ok_driver and ok_connect) else 500
     return status, code
 
 @app.get("/envcheck")
 def envcheck():
+    cid, secret, redirect = get_oauth_env()
     return {
-        "DISCORD_CLIENT_ID_set": bool(DISCORD_CLIENT_ID),
-        "DISCORD_CLIENT_SECRET_set": bool(DISCORD_CLIENT_SECRET),
-        "DISCORD_REDIRECT_URI_set": bool(DISCORD_REDIRECT_URI),
-        "DISCORD_BOT_TOKEN_set": bool(DISCORD_BOT_TOKEN),
-        "DASHBOARD_SESSION_SECRET_set": bool(app.secret_key),
+        "client_id_len": len(cid),
+        "client_secret_len": len(secret),
+        "redirect_uri": redirect,
+        "has_bot_token": bool(DISCORD_BOT_TOKEN),
     }
 
 # ---------- OAuth routes ----------
 @app.get("/login")
 def discord_login():
-    if not (DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI):
-        return "Discord OAuth not configured", 500
+    cid, secret, redirect = get_oauth_env()
+    if not (cid and secret and redirect):
+        return "Discord OAuth not configured (check DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI)", 500
     state = secrets.token_urlsafe(32)
     session["oauth_state"] = state
     return redirect(_discord_oauth_url(state))
