@@ -161,10 +161,28 @@ def envcheck():
         "has_bot_token": bool(DISCORD_BOT_TOKEN),
     }
 
+# ---------- OAuth debug route ----------
+@app.get("/oauth/debug")
+def oauth_debug():
+    """Return the exact authorize URL and what the server currently sees for OAuth env vars."""
+    cid, secret, redirect = get_oauth_env()
+    try:
+        # Use a fixed state for inspection only; /login still uses a random secure state
+        debug_url = _discord_oauth_url("debug-state")
+    except Exception as e:
+        debug_url = f"<error building url: {e}>"
+    return {
+        "client_id": cid,
+        "has_client_secret": bool(secret),
+        "redirect_uri": redirect,
+        "authorize_url": debug_url,
+    }
+
 # ---------- OAuth routes ----------
 @app.get("/login")
 def discord_login():
     cid, secret, redirect = get_oauth_env()
+    print("[OAuth] /login with redirect_uri=", redirect)
     if not (cid and secret and redirect):
         return "Discord OAuth not configured (check DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI)", 500
     state = secrets.token_urlsafe(32)
