@@ -178,16 +178,41 @@ def oauth_debug():
         "authorize_url": debug_url,
     }
 
+@app.get("/oauth/authorize_url")
+def oauth_authorize_url():
+    """
+    Return the exact authorize URL (no session or state changes).
+    Use this to verify Discord 'Redirects' config matches what's generated.
+    """
+    try:
+        url = _discord_oauth_url("inspect-only")
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+    return {"ok": True, "authorize_url": url}
+
 # ---------- OAuth routes ----------
 @app.get("/login")
 def discord_login():
-    cid, secret, redirect = get_oauth_env()
-    print("[OAuth] /login with redirect_uri=", redirect)
-    if not (cid and secret and redirect):
-        return "Discord OAuth not configured (check DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI)", 500
-    state = secrets.token_urlsafe(32)
-    session["oauth_state"] = state
-    return redirect(_discord_oauth_url(state))
+    try:
+        cid, secret, redirect_uri = get_oauth_env()
+        # Log exactly what the server sees
+        print("[OAuth] /login env",
+              {"client_id": cid, "has_secret": bool(secret), "redirect_uri": redirect_uri})
+        if not (cid and secret and redirect_uri):
+            return ("Discord OAuth not configured (need DISCORD_CLIENT_ID, "
+                    "DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI)"), 500
+
+        state = secrets.token_urlsafe(32)
+        session["oauth_state"] = state
+
+        auth_url = _discord_oauth_url(state)
+        print("[OAuth] redirecting to", auth_url)
+        return redirect(auth_url)
+    except Exception as e:
+        import traceback
+        print("[OAuth] /login error:", e)
+        traceback.print_exc()
+        return f"/login failed: {e}", 500
 
 @app.get("/oauth/discord/callback")
 def discord_callback():
