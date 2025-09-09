@@ -10,6 +10,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 DISCORD_API = "https://discord.com/api/v10"
+# OAuth endpoints (different base than REST!)
+DISCORD_OAUTH_AUTHORIZE = "https://discord.com/oauth2/authorize"
+DISCORD_OAUTH_TOKEN = "https://discord.com/api/oauth2/token"
 
 def get_oauth_env():
     cid = (os.getenv("DISCORD_CLIENT_ID") or "").strip()
@@ -78,7 +81,7 @@ def _discord_oauth_url(state: str):
         "state": state,
         "prompt": "consent",
     }
-    return f"{DISCORD_API}/oauth2/authorize?{urllib.parse.urlencode(params)}"
+    return f"{DISCORD_OAUTH_AUTHORIZE}?{urllib.parse.urlencode(params)}"
 
 def _exchange_code_for_token(code: str):
     if not _requests_ok:
@@ -92,7 +95,7 @@ def _exchange_code_for_token(code: str):
         "redirect_uri": redirect,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    r = requests.post(f"{DISCORD_API}/oauth2/token", data=data, headers=headers, timeout=20)
+    r = requests.post(DISCORD_OAUTH_TOKEN, data=data, headers=headers, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -152,7 +155,7 @@ def dbcheck():
 def envcheck():
     cid, secret, redirect = get_oauth_env()
     return {
-        "client_id_len": len(cid),
+        "client_id": cid,
         "client_secret_len": len(secret),
         "redirect_uri": redirect,
         "has_bot_token": bool(DISCORD_BOT_TOKEN),
@@ -481,8 +484,19 @@ _FORM_HTML = r"""
       const picker = $("#guildPicker");
       const inviteBtn = $("#inviteBtn");
 
-      // TODO: Replace this with your actual bot invite URL (scopes bot+applications.commands & permissions int)
-      inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=1374820135990460446&scope=bot+applications.commands&permissions=8&integration_type=0"
+      // Dynamically set invite URL using client_id from /envcheck
+      try {
+        const envr = await fetch("/envcheck");
+        const env = await envr.json();
+        if (env.client_id) {
+          const cid = encodeURIComponent(env.client_id);
+          inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=" + cid + "&scope=bot+applications.commands&permissions=8&integration_type=0";
+        } else {
+          inviteBtn.href = "#"; // no client id available
+        }
+      } catch(_e) {
+        inviteBtn.href = "#";
+      }
 
       if (info.logged_in && info.me){
         who.textContent = info.me.username + "#" + info.me.discriminator;
