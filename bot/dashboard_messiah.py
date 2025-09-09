@@ -9,13 +9,13 @@ from flask import Flask, request, jsonify, render_template_string, session, redi
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-# OAuth (dashboard login)
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
-DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
-DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI") or "http://localhost:5050/oauth/discord/callback"
-DISCORD_API = "https://discord.com/api/v10"          # REST (users, guilds, channels, etc.)
-DISCORD_AUTH_BASE = "https://discord.com/oauth2"      # OAuth authorize (no /api)
-DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"  # OAuth token (no version)
+DISCORD_API = "https://discord.com/api/v10"
+
+def get_oauth_env():
+    cid = (os.getenv("DISCORD_CLIENT_ID") or "").strip()
+    secret = (os.getenv("DISCORD_CLIENT_SECRET") or "").strip()
+    redirect = (os.getenv("DISCORD_REDIRECT_URI") or "").strip()
+    return cid, secret, redirect
 
 _psycopg_ok = False
 try:
