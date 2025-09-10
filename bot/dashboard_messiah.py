@@ -259,12 +259,31 @@ def discord_logout():
 
 @app.get("/whoami")
 def whoami():
-    return {
-        "logged_in": bool(session.get("discord_me")),
-        "me": session.get("discord_me"),
-        "guilds": session.get("discord_guilds", []),
-        "has_session_cookie": bool(request.cookies.get("session")),
-    }
+    access = session.get("access_token")
+    if not access:
+        return {
+            "logged_in": False,
+            "me": None,
+            "guilds": [],
+        }
+    try:
+        me = _discord_get("/users/@me", access)
+        guilds = _discord_get("/users/@me/guilds", access)
+        return {
+            "logged_in": True,
+            "me": me,
+            "guilds": guilds,
+            "has_session_cookie": bool(request.cookies.get("session")),
+        }
+    except Exception as e:
+        # token expired or something went wrong
+        return {
+            "logged_in": False,
+            "me": None,
+            "guilds": [],
+            "error": str(e),
+            "has_session_cookie": bool(request.cookies.get("session")),
+        }
 
 @app.get("/sessiondump")
 def sessiondump():
