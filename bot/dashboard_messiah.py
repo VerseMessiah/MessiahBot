@@ -265,6 +265,7 @@ def whoami():
             "logged_in": False,
             "me": None,
             "guilds": [],
+            "has_session_cookie": bool(request.cookies.get("session")),
         }
     try:
         me = _discord_get("/users/@me", access)
