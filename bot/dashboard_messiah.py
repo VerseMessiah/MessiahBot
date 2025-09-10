@@ -39,7 +39,7 @@ except Exception:
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", secrets.token_hex(32))
 app.config.update(
-    SESSION_COOKIE_SAMESITE="Lax",  
+    SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
 )
@@ -166,13 +166,10 @@ def envcheck():
         "has_bot_token": bool(DISCORD_BOT_TOKEN),
     }
 
-# ---------- OAuth debug route ----------
 @app.get("/oauth/debug")
 def oauth_debug():
-    """Return the exact authorize URL and what the server currently sees for OAuth env vars."""
     cid, secret, redirect = get_oauth_env()
     try:
-        # Use a fixed state for inspection only; /login still uses a random secure state
         debug_url = _discord_oauth_url("debug-state")
     except Exception as e:
         debug_url = f"<error building url: {e}>"
@@ -185,10 +182,6 @@ def oauth_debug():
 
 @app.get("/oauth/authorize_url")
 def oauth_authorize_url():
-    """
-    Return the exact authorize URL (no session or state changes).
-    Use this to verify Discord 'Redirects' config matches what's generated.
-    """
     try:
         url = _discord_oauth_url("inspect-only")
     except Exception as e:
@@ -200,7 +193,6 @@ def oauth_authorize_url():
 def discord_login():
     try:
         cid, secret, redirect_uri = get_oauth_env()
-        # Log exactly what the server sees
         print("[OAuth] /login env",
               {"client_id": cid, "has_secret": bool(secret), "redirect_uri": redirect_uri})
         if not (cid and secret and redirect_uri):
@@ -239,11 +231,9 @@ def discord_callback():
     if not access:
         return "Token exchange succeeded but no access_token in response.", 400
 
-    # Keep session minimal:
     session.clear()
     session["access_token"] = access
 
-    # Optional: quick sanity log (and confirms token really works)
     try:
         me = _discord_get("/users/@me", access)
         print(f"[OAuth] login ok: user={me.get('id')} {me.get('username')}#{me.get('discriminator')}")
@@ -277,7 +267,6 @@ def whoami():
             "has_session_cookie": bool(request.cookies.get("session")),
         }
     except Exception as e:
-        # token expired or something went wrong
         return {
             "logged_in": False,
             "me": None,
@@ -485,6 +474,9 @@ _FORM_HTML = r"""
     .bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
     .right{display:flex;gap:8px;align-items:center}
     .select{background:#11131a;border:1px solid #2a2a34;color:#e7e7ea;border-radius:8px;padding:6px 8px}
+    .draggable {cursor: grab;}
+    .drag-ghost {opacity: 0.5; background: #22242a;}
+    .drag-over {border: 2px dashed #8ab4ff; outline-offset: 2px; background: #1a1f2b;}
   </style>
 </head>
 <body>
@@ -549,74 +541,90 @@ _FORM_HTML = r"""
   </form>
 
   <script>
-  // ---------- small helper ----------
+  // ---------- utilities ----------
   function $(sel, el){ return (el||document).querySelector(sel); }
   function $all(sel, el){ return Array.prototype.slice.call((el||document).querySelectorAll(sel)); }
   var statusPill = $("#status");
   function setStatus(txt){ statusPill.textContent = txt; }
 
-  // ---------- header login/guild picker ----------
-  (async function initHeader(){
-    try{
-      const r = await fetch("/whoami");
-      const info = await r.json();
-      const who = $("#who");
-      const loginBtn = $("#loginBtn");
-      const logoutBtn = $("#logoutBtn");
-      const picker = $("#guildPicker");
-      const inviteBtn = $("#inviteBtn");
+  // ---------- Drag & Drop helpers ----------
+  let DND = { draggedEl: null };
 
-      // Dynamically set invite URL using client_id from /envcheck
-      try {
-        const envr = await fetch("/envcheck");
-        const env = await envr.json();
-        if (env.client_id) {
-          const cid = encodeURIComponent(env.client_id);
-          inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=" + cid + "&scope=bot+applications.commands&permissions=8&integration_type=0";
-        } else {
-          inviteBtn.href = "#"; // no client id available
-        }
-      } catch(_e) {
-        inviteBtn.href = "#";
+  function makeDraggableItem(el){
+    el.setAttribute("draggable", "true");
+    el.classList.add("draggable");
+    el.addEventListener("dragstart", e => {
+      DND.draggedEl = el;
+      el.classList.add("drag-ghost");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "drag");
+    });
+    el.addEventListener("dragend", () => {
+      el.classList.remove("drag-ghost");
+      DND.draggedEl = null;
+      $all(".drag-over").forEach(n => n.classList.remove("drag-over"));
+    });
+  }
+
+  function makeContainerSortable(container, itemSelector, acceptExternal){
+    if (container.dataset.sortable) return; // idempotent
+    container.dataset.sortable = "1";
+
+    container.addEventListener("dragover", e => {
+      if (!DND.draggedEl) return;
+      if (!acceptExternal && DND.draggedEl.parentElement !== container) return;
+      e.preventDefault();
+      const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
+      container.classList.add("drag-over");
+    });
+
+    container.addEventListener("dragleave", () => {
+      container.classList.remove("drag-over");
+    });
+
+    container.addEventListener("drop", e => {
+      if (!DND.draggedEl) return;
+      e.preventDefault();
+      container.classList.remove("drag-over");
+      const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
+      if (afterEl == null) container.appendChild(DND.draggedEl);
+      else container.insertBefore(DND.draggedEl, afterEl);
+    });
+  }
+
+  function getDragAfterElement(container, y, itemSelector){
+    const items = [...container.querySelectorAll(itemSelector + ":not(.drag-ghost)")];
+    let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
+    for (const child of items){
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset){
+        closest = { offset, element: child };
       }
-
-      if (info.logged_in && info.me){
-        who.textContent = info.me.username + "#" + info.me.discriminator;
-        who.classList.remove("muted");
-        loginBtn.style.display = "none";
-        logoutBtn.style.display = "inline-flex";
-
-        // Build picker
-        const guilds = info.guilds || [];
-        if (guilds.length){
-          picker.innerHTML = '';
-          guilds.forEach(g => {
-            // Only show guilds where the user can manage the bot (owner or has MANAGE_GUILD—optional filter)
-            const opt = document.createElement('option');
-            opt.value = g.id;
-            opt.textContent = g.name || g.id;
-            picker.appendChild(opt);
-          });
-          picker.style.display = "inline-flex";
-          picker.onchange = function(){
-            $("#guild_id").value = picker.value;
-          };
-          // prefill the first
-          $("#guild_id").value = picker.value;
-        }
-      } else {
-        who.textContent = "not signed in";
-        who.classList.add("muted");
-        loginBtn.style.display = "inline-flex";
-        logoutBtn.style.display = "none";
-        picker.style.display = "none";
-      }
-    }catch(e){
-      // ignore
     }
-  })();
+    return closest.element;
+  }
 
-  // ---------- roles ----------
+  function enableRoleDnD(){
+    const list = $("#roles");
+    $all("#roles > .row").forEach(makeDraggableItem);
+    makeContainerSortable(list, ":scope > .row", true);
+  }
+
+  function enableCatChanDnD(){
+    const catsWrap = $("#cats");
+    $all("#cats > .cat").forEach(cat => { makeDraggableItem(cat); });
+    makeContainerSortable(catsWrap, ":scope > .cat", true);
+
+    $all("#cats .cat").forEach(cat => {
+      const chList = $(".ch-list", cat);
+      if (!chList) return;
+      $all(".ch", chList).forEach(ch => makeDraggableItem(ch));
+      makeContainerSortable(chList, ":scope > .ch", true);
+    });
+  }
+
+  // ---------- Roles UI ----------
   function addRoleRow(name, color){
     if (!name) name = "";
     if (!color) color = "#000000";
@@ -627,10 +635,15 @@ _FORM_HTML = r"""
       '<input type="color" name="role_color" value="'+color+'">'+
       '<button type="button" class="del">✕</button>';
     d.querySelector(".del").onclick = function(){ d.remove(); };
+
+    makeDraggableItem(d);
+    var rolesEl = document.getElementById('roles');
+    makeContainerSortable(rolesEl, ":scope > .row", true);
+
     $("#roles").appendChild(d);
   }
 
-  // ---------- categories/channels ----------
+  // ---------- Categories/Channels UI ----------
   function catBox(name){
     if (!name) name = "";
     var wrap = document.createElement('div');
@@ -644,11 +657,23 @@ _FORM_HTML = r"""
       '</div>'+
       '<div class="stack ch-list"></div>';
     wrap.querySelector(".delCat").onclick = function(){ wrap.remove(); };
-    wrap.querySelector(".addChan").onclick = function(){ $(".ch-list", wrap).appendChild(channelRow({})); };
+
+    wrap.querySelector(".addChan").onclick = function(){
+      var row = channelRow({});
+      $(".ch-list", wrap).appendChild(row);
+      makeDraggableItem(row);
+      // ensure the list is sortable
+      makeContainerSortable($(".ch-list", wrap), ":scope > .ch", true);
+    };
+
+    makeDraggableItem(wrap);
+    // ensure the categories and this channel list are sortable
+    makeContainerSortable(document.getElementById('cats'), ":scope > .cat", true);
+    makeContainerSortable($(".ch-list", wrap), ":scope > .ch", true);
+
     return wrap;
   }
 
-  // Build a channel row. If original_type is provided, lock/limit type options.
   function channelRow(ch){
     ch = ch || {};
     var name = ch.name || "";
@@ -689,9 +714,12 @@ _FORM_HTML = r"""
       '<button type="button" class="del">✕</button>';
     d.setAttribute("data-original-type", original || "");
     d.querySelector(".del").onclick = function(){ d.remove(); };
+
+    makeDraggableItem(d);
     return d;
   }
 
+  // ---------- hydrate / collect ----------
   function hydrate(p){
     // Mode
     var mode = (p.mode || 'build');
@@ -705,8 +733,9 @@ _FORM_HTML = r"""
       addRoleRow(roles[i].name || "", roles[i].color || "#000000");
     }
     if (roles.length === 0) addRoleRow("", "#000000");
+    enableRoleDnD();
 
-    // categories + channels (nested preferred, else flat)
+    // categories + channels
     var C = $("#cats"); C.innerHTML = "";
     if (Array.isArray(p.categories) && p.categories.length && typeof p.categories[0] === "object"){
       for (var ci=0;ci<p.categories.length;ci++){
@@ -728,7 +757,7 @@ _FORM_HTML = r"""
         C.appendChild(bx);
         map[(nm||"").toLowerCase()] = $(".ch-list", bx);
       }
-      var hadUn = false;
+      var hadUn = False;
       var chansFlat = p.channels || [];
       for (var m=0;m<chansFlat.length;m++){
         var ch = chansFlat[m] || {};
@@ -749,6 +778,7 @@ _FORM_HTML = r"""
         C.appendChild(catBox(""));
       }
     }
+    enableCatChanDnD();
 
     // danger zone
     $("#prune_roles").checked = !!(p.prune && p.prune.roles);
@@ -793,7 +823,77 @@ _FORM_HTML = r"""
     return { mode:mode, roles:roles, categories:categories, prune:prune };
   }
 
-  // buttons
+  // ---------- header login/guild picker ----------
+  (async function initHeader(){
+    try{
+      const r = await fetch("/whoami");
+      const info = await r.json();
+      const who = $("#who");
+      const loginBtn = $("#loginBtn");
+      const logoutBtn = $("#logoutBtn");
+      const picker = $("#guildPicker");
+      const inviteBtn = $("#inviteBtn");
+
+      // Fill invite link from env
+      try {
+        const envr = await fetch("/envcheck");
+        const env = await envr.json();
+        if (env.client_id) {
+          const cid = encodeURIComponent(env.client_id);
+          inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=" + cid + "&scope=bot+applications.commands&permissions=8&integration_type=0";
+        } else {
+          inviteBtn.href = "#";
+        }
+      } catch(_e) {
+        inviteBtn.href = "#";
+      }
+
+      if (info.logged_in && info.me){
+        who.textContent = info.me.username + "#" + info.me.discriminator;
+        who.classList.remove("muted");
+        loginBtn.style.display = "none";
+        logoutBtn.style.display = "inline-flex";
+
+        const ADMINISTRATOR = 0x00000008;
+        const MANAGE_GUILD  = 0x00000020;
+
+        // Filter guilds: owner OR has ADMINISTRATOR/MANAGE_GUILD
+        const guilds = (info.guilds || []).filter(g => {
+          if (g.owner) return true;
+          const p = typeof g.permissions === "string" ? Number(g.permissions) : (g.permissions|0);
+          return (p & (ADMINISTRATOR | MANAGE_GUILD)) !== 0;
+        });
+
+        if (guilds.length){
+          picker.innerHTML = '';
+          guilds.forEach(g => {
+            const opt = document.createElement('option');
+            opt.value = g.id;
+            opt.textContent = g.name || g.id;
+            picker.appendChild(opt);
+          });
+          picker.style.display = "inline-flex";
+          picker.onchange = function(){
+            $("#guild_id").value = picker.value;
+          };
+          // prefill the first
+          $("#guild_id").value = picker.value;
+        } else {
+          picker.style.display = "none";
+        }
+      } else {
+        who.textContent = "not signed in";
+        who.classList.add("muted");
+        loginBtn.style.display = "inline-flex";
+        logoutBtn.style.display = "none";
+        picker.style.display = "none";
+      }
+    }catch(e){
+      console.warn("whoami failed", e);
+    }
+  })();
+
+  // ---------- buttons ----------
   $("#addRoleBtn").onclick = function(){ addRoleRow("", "#000000"); };
   $("#addCatBtn").onclick = function(){ $("#cats").appendChild(catBox("")); };
 
@@ -834,7 +934,7 @@ _FORM_HTML = r"""
     if (!gid){ alert("Enter Guild ID"); return; }
     var payload = collectPayload();
 
-    // flatten channels for legacy compatibility + validation
+    // flatten channels for validation + legacy readers
     var flatChannels = [];
     for (var i=0;i<payload.categories.length;i++){
       var c = payload.categories[i];
@@ -855,8 +955,8 @@ _FORM_HTML = r"""
     var saveBody = {
       mode: payload.mode,
       roles: payload.roles,
-      categories: payload.categories, // modern nested
-      channels: flatChannels,         // legacy + validation
+      categories: payload.categories,
+      channels: flatChannels,
       prune: payload.prune
     };
 
@@ -884,9 +984,11 @@ _FORM_HTML = r"""
     }
   };
 
-  // initial rows
+  // ---------- initial blank rows + DnD ----------
   addRoleRow("", "#000000");
   $("#cats").appendChild(catBox(""));
+  enableRoleDnD();
+  enableCatChanDnD();
   </script>
 </body>
 </html>
