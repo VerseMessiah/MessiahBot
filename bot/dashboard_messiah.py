@@ -41,6 +41,7 @@ app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", secrets.token_hex(32))
 app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",  
     SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
 )
 
 # ---------- DB helpers ----------
@@ -234,16 +235,21 @@ def discord_callback():
     except Exception as e:
         return f"Token exchange failed: {e}", 400
 
-    session["discord_token"] = tok
-    try:
-        me = _discord_get("/users/@me", tok["access_token"])
-        guilds = _discord_get("/users/@me/guilds", tok["access_token"])
-    except Exception as e:
-        return f"Failed to fetch profile: {e}", 400
+    access = tok.get("access_token")
+    if not access:
+        return "Token exchange succeeded but no access_token in response.", 400
 
-    session["discord_me"] = me
-    session["discord_guilds"] = guilds
-    print(f"[OAuth] login ok: user={me.get('id')} ({me.get('username')}#{me.get('discriminator')}) guilds={len(guilds)}")
+    # Keep session minimal:
+    session.clear()
+    session["access_token"] = access
+
+    # Optional: quick sanity log (and confirms token really works)
+    try:
+        me = _discord_get("/users/@me", access)
+        print(f"[OAuth] login ok: user={me.get('id')} {me.get('username')}#{me.get('discriminator')}")
+    except Exception as e:
+        print(f"[OAuth] token test failed: {e}")
+
     return redirect(url_for("form"))
 
 @app.get("/logout")
