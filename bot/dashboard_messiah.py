@@ -757,7 +757,7 @@ _FORM_HTML = r"""
         C.appendChild(bx);
         map[(nm||"").toLowerCase()] = $(".ch-list", bx);
       }
-      var hadUn = False;
+      var hadUn = false;
       var chansFlat = p.channels || [];
       for (var m=0;m<chansFlat.length;m++){
         var ch = chansFlat[m] || {};
