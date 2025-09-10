@@ -38,6 +38,10 @@ except Exception:
 
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", secrets.token_hex(32))
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",  
+    SESSION_COOKIE_SECURE=True,
+)
 
 # ---------- DB helpers ----------
 def _db_exec(q: str, p=()):
@@ -239,6 +243,7 @@ def discord_callback():
 
     session["discord_me"] = me
     session["discord_guilds"] = guilds
+    print(f"[OAuth] login ok: user={me.get('id')} ({me.get('username')}#{me.get('discriminator')}) guilds={len(guilds)}")
     return redirect(url_for("form"))
 
 @app.get("/logout")
@@ -252,6 +257,14 @@ def whoami():
         "logged_in": bool(session.get("discord_me")),
         "me": session.get("discord_me"),
         "guilds": session.get("discord_guilds", []),
+        "has_session_cookie": bool(request.cookies.get("session")),
+    }
+
+@app.get("/sessiondump")
+def sessiondump():
+    return {
+        "keys": list(session.keys()),
+        "has_session_cookie": bool(request.cookies.get("session")),
     }
 
 # ---------- live snapshot via Discord REST ----------
