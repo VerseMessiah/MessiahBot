@@ -781,6 +781,7 @@ _FORM_HTML = r"""
 
     var d = document.createElement('div');
     d.className = "ch";
+    d.setAttribute("draggable", "true");
 
     var selectHTML;
     if (opts.length === 1 && opts[0] === "forum"){
