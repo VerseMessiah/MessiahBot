@@ -630,8 +630,17 @@ _FORM_HTML = r"""
     return Array.prototype.filter.call(container.children, el => el.classList && el.classList.contains(className));
   }
 
-  function makeContainerSortable(container, childClass, acceptExternal){
-    if (container.dataset.sortable) return; // idempotent
+  // Direct children by class name (no :scope needed; works in Safari/WebKit)
+  function directChildrenByClass(container, className) {
+    const out = [];
+    for (const el of container.children) {
+      if (el.classList && el.classList.contains(className)) out.push(el);
+    }
+    return out;
+  }
+
+  function makeContainerSortable(container, childClassName, acceptExternal){
+    if (container.dataset.sortable) return;
     container.dataset.sortable = "1";
     container.classList.add("dropzone");
 
@@ -639,14 +648,13 @@ _FORM_HTML = r"""
       const dragged = DND.draggedEl;
       if (!dragged) return;
       if (!acceptExternal && dragged.parentElement !== container) return;
-      e.preventDefault(); // must preventDefault to allow drop
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move"; // Safari needs this
       container.classList.add("drag-over");
     });
 
-    container.addEventListener("dragleave", e => {
-      if (!container.contains(e.relatedTarget)) {
-        container.classList.remove("drag-over");
-      }
+    container.addEventListener("dragleave", () => {
+      container.classList.remove("drag-over");
     });
 
     container.addEventListener("drop", e => {
@@ -654,19 +662,20 @@ _FORM_HTML = r"""
       if (!dragged) return;
       e.preventDefault();
       container.classList.remove("drag-over");
-
-      const afterEl = getDragAfterElement(container, e.clientY, childClass);
+      const afterEl = getDragAfterElement(container, e.clientY, childClassName);
       if (afterEl == null) container.appendChild(dragged);
       else container.insertBefore(dragged, afterEl);
     });
   }
 
-  function getDragAfterElement(container, mouseY, childClass){
-    const items = childrenByClass(container, childClass).filter(el => !el.classList.contains("drag-ghost"));
+  function getDragAfterElement(container, y, childClassName){
+    const items = directChildrenByClass(container, childClassName)
+      .filter(el => !el.classList.contains("drag-ghost"));
+
     let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
     for (const child of items){
       const box = child.getBoundingClientRect();
-      const offset = mouseY - box.top - box.height / 2;
+      const offset = y - box.top - box.height / 2;
       if (offset < 0 && offset > closest.offset){
         closest = { offset, element: child };
       }
