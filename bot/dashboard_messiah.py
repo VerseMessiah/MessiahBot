@@ -582,54 +582,124 @@ _FORM_HTML = r"""
   function setStatus(txt){ statusPill.textContent = txt; }
 
   // ---------- Drag & Drop helpers ----------
-  let DND = { draggedEl: null };
+  const DND = {
+    draggedEl: null,
+    armed: false,
+    // a tiny transparent drag image so Safari reliably starts dragging
+    shim: (() => {
+      const c = document.createElement('canvas');
+      c.width = 1; c.height = 1;
+      return c;
+    })()
+  };
 
   function makeDraggableItem(el){
-  // add a visible "grab" handle if not present
-  if (!el.querySelector(".grab")){
-    const h = document.createElement("span");
-    h.className = "grab";
-    h.title = "Drag to reorder";
-    h.textContent = "⋮⋮";
-    const first = el.firstElementChild;
-    if (first) el.insertBefore(h, first); else el.appendChild(h);
+    // handle button
+    if (!el.querySelector(".grab")){
+      const h = document.createElement("span");
+      h.className = "grab";
+      h.title = "Drag to reorder";
+      h.textContent = "⋮⋮";
+      const first = el.firstElementChild;
+      if (first) el.insertBefore(h, first); else el.appendChild(h);
+    }
+
+    // Always draggable: Safari requires the attribute to exist before interaction
+    el.setAttribute("draggable", "true");
+    el.classList.add("draggable");
+
+    const handle = el.querySelector(".grab");
+
+    // Arm only if user starts on the handle (prevents drags while editing inputs)
+    const arm = (e) => { DND.armed = true; e.preventDefault(); };
+    handle.addEventListener("mousedown", arm, {passive:false});
+    handle.addEventListener("touchstart", arm, {passive:false});
+
+    const disarm = () => { DND.armed = false; };
+    document.addEventListener("mouseup", disarm, {passive:true});
+    document.addEventListener("touchend", disarm, {passive:true});
+    document.addEventListener("touchcancel", disarm, {passive:true});
+
+    el.addEventListener("dragstart", (e) => {
+      // Only drag if armed by the handle
+      if (!DND.armed) { e.preventDefault(); return; }
+      DND.draggedEl = el;
+      el.classList.add("drag-ghost");
+      // Force dataTransfer on all browsers (Safari needs this)
+      try {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", "drag");
+        e.dataTransfer.setDragImage?.(DND.shim, 0, 0);
+      } catch(_) {}
+    });
+
+    el.addEventListener("dragend", () => {
+      el.classList.remove("drag-ghost");
+      DND.draggedEl = null;
+      DND.armed = false;
+      $all(".drag-over").forEach(n => n.classList.remove("drag-over"));
+    });
   }
 
-  // Keep the element draggable at all times (Safari requires it to be present before mousedown)
-  el.setAttribute("draggable", "true");
-  el.classList.add("draggable");
+function makeContainerSortable(container, itemSelector, acceptExternal){
+  if (container.dataset.sortable) return; // idempotent
+  container.dataset.sortable = "1";
+  container.classList.add("dropzone");
 
-  const handle = el.querySelector(".grab");
-  let armed = false; // only true if the drag was initiated from the handle
+  container.addEventListener("dragover", (e) => {
+    const dragged = DND.draggedEl;
+    if (!dragged) return;
+    if (!acceptExternal && dragged.parentElement !== container) return;
+    e.preventDefault(); // allow drop
+    container.classList.add("drag-over");
+  });
 
-  // arm on handle mousedown only
-  handle.addEventListener("mousedown", (e) => {
-    armed = true;
-    // avoid text selection while beginning a drag
+  container.addEventListener("dragleave", () => {
+    container.classList.remove("drag-over");
+  });
+
+  container.addEventListener("drop", (e) => {
+    const dragged = DND.draggedEl;
+    if (!dragged) return;
     e.preventDefault();
+    container.classList.remove("drag-over");
+    const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
+    if (afterEl == null) container.appendChild(dragged);
+    else container.insertBefore(dragged, afterEl);
   });
+}
 
-  // disarm on any mouseup
-  document.addEventListener("mouseup", () => { armed = false; });
-
-  el.addEventListener("dragstart", (e) => {
-    // Only allow drag if we started on the handle
-    if (!armed) {
-      e.preventDefault();
-      return;
+function getDragAfterElement(container, y, itemSelector){
+  const items = [...container.querySelectorAll(`${itemSelector}:not(.drag-ghost)`)];
+  let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
+  for (const child of items){
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset){
+      closest = { offset, element: child };
     }
-    DND.draggedEl = el;
-    el.classList.add("drag-ghost");
-    // These improve Safari behavior
-    e.dataTransfer.effectAllowed = "move";
-    try { e.dataTransfer.setData("text/plain", "drag"); } catch(_) {}
-  });
+  }
+  return closest.element;
+}
 
-  el.addEventListener("dragend", () => {
-    el.classList.remove("drag-ghost");
-    DND.draggedEl = null;
-    armed = false;
-    $all(".drag-over").forEach(n => n.classList.remove("drag-over"));
+// Convenience wiring
+function enableRoleDnD(){
+  const list = $("#roles");
+  $all("#roles > .row").forEach(makeDraggableItem);
+  makeContainerSortable(list, ":scope > .row", true);
+}
+
+function enableCatChanDnD(){
+  const catsWrap = $("#cats");
+  $all("#cats > .cat").forEach(cat => { makeDraggableItem(cat); });
+  makeContainerSortable(catsWrap, ":scope > .cat", true);
+  catsWrap.classList.add('dropzone');
+
+  $all("#cats .cat").forEach(cat => {
+    const chList = $(".ch-list", cat);
+    if (!chList) return;
+    $all(".ch", chList).forEach(ch => makeDraggableItem(ch));
+    makeContainerSortable(chList, ":scope > .ch", true);
   });
 }
 
@@ -717,6 +787,7 @@ _FORM_HTML = r"""
     if (!color) color = "#000000";
     var d = document.createElement('div');
     d.className = "row";
+    d.setAttribute("draggable", "true");
     d.innerHTML =
       '<span class="grab" title="Drag">⋮⋮</span>'+
       '<input placeholder="Role" name="role_name" value="'+name+'">'+
