@@ -585,45 +585,53 @@ _FORM_HTML = r"""
   let DND = { draggedEl: null };
 
   function makeDraggableItem(el){
-    // add a visible "grab" handle if not present
-    if (!el.querySelector(".grab")){
-      const h = document.createElement("span");
-      h.className = "grab";
-      h.title = "Drag to reorder";
-      h.textContent = "⋮⋮";
-      const first = el.firstElementChild;
-      if (first) el.insertBefore(h, first); else el.appendChild(h);
-    }
-
-    const handle = el.querySelector(".grab");
-    let armed = false;
-
-    // Only allow drag when user holds the handle (prevents accidental drags while typing)
-    handle.addEventListener("mousedown", () => {
-      armed = true;
-      el.setAttribute("draggable", "true");
-    });
-    document.addEventListener("mouseup", () => {
-      if (armed){
-        armed = false;
-        el.removeAttribute("draggable");
-      }
-    });
-
-    el.classList.add("draggable");
-    el.addEventListener("dragstart", e => {
-      if (!armed){ e.preventDefault(); return; }
-      DND.draggedEl = el;
-      el.classList.add("drag-ghost");
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", "drag");
-    });
-    el.addEventListener("dragend", () => {
-      el.classList.remove("drag-ghost");
-      DND.draggedEl = null;
-      $all(".drag-over").forEach(n => n.classList.remove("drag-over"));
-    });
+  // add a visible "grab" handle if not present
+  if (!el.querySelector(".grab")){
+    const h = document.createElement("span");
+    h.className = "grab";
+    h.title = "Drag to reorder";
+    h.textContent = "⋮⋮";
+    const first = el.firstElementChild;
+    if (first) el.insertBefore(h, first); else el.appendChild(h);
   }
+
+  // Keep the element draggable at all times (Safari requires it to be present before mousedown)
+  el.setAttribute("draggable", "true");
+  el.classList.add("draggable");
+
+  const handle = el.querySelector(".grab");
+  let armed = false; // only true if the drag was initiated from the handle
+
+  // arm on handle mousedown only
+  handle.addEventListener("mousedown", (e) => {
+    armed = true;
+    // avoid text selection while beginning a drag
+    e.preventDefault();
+  });
+
+  // disarm on any mouseup
+  document.addEventListener("mouseup", () => { armed = false; });
+
+  el.addEventListener("dragstart", (e) => {
+    // Only allow drag if we started on the handle
+    if (!armed) {
+      e.preventDefault();
+      return;
+    }
+    DND.draggedEl = el;
+    el.classList.add("drag-ghost");
+    // These improve Safari behavior
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", "drag"); } catch(_) {}
+  });
+
+  el.addEventListener("dragend", () => {
+    el.classList.remove("drag-ghost");
+    DND.draggedEl = null;
+    armed = false;
+    $all(".drag-over").forEach(n => n.classList.remove("drag-over"));
+  });
+}
 
   // Return direct children of `container` that match a class (no :scope)
   function childrenByClass(container, className){
