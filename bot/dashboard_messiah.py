@@ -1,6 +1,7 @@
 # bot/dashboard_messiah.py
 import os
 import json
+import time
 import secrets
 import urllib.parse
 
@@ -74,6 +75,28 @@ def _discord_headers():
         "User-Agent": "MessiahBotDashboard/1.0",
         "Content-Type": "application/json",
     }
+
+# ---------- robust GET with retry/backoff (helps with 1015/429/5xx) ----------
+def _get_with_retry(url, headers, tries=3, backoff=0.6):
+    if not _requests_ok:
+        raise RuntimeError("requests not available")
+    last = None
+    for i in range(tries):
+        r = requests.get(url, headers=headers, timeout=20)
+        # Rate limited
+        if r.status_code == 429 and i < tries - 1:
+            try:
+                delay = float(r.headers.get("Retry-After") or backoff * (i + 1))
+            except Exception:
+                delay = backoff * (i + 1)
+            time.sleep(delay)
+            continue
+        # Upstream 5xx
+        if r.status_code >= 500 and i < tries - 1:
+            time.sleep(backoff * (i + 1))
+            continue
+        return r
+    return r
 
 # ---------- OAuth helpers ----------
 def _discord_oauth_url(state: str):
@@ -299,7 +322,7 @@ def live_layout(guild_id: str):
     headers = _discord_headers()
 
     # roles
-    r_roles = requests.get(f"{base}/guilds/{guild_id}/roles", headers=headers, timeout=20)
+    r_roles = _get_with_retry(f"{base}/guilds/{guild_id}/roles", headers)
     if r_roles.status_code == 403:
         return jsonify({"ok": False, "error": "Forbidden: bot lacks permission or is not in this guild"}), 403
     if r_roles.status_code == 404:
@@ -309,7 +332,7 @@ def live_layout(guild_id: str):
     roles_json = r_roles.json()
 
     # channels
-    r_channels = requests.get(f"{base}/guilds/{guild_id}/channels", headers=headers, timeout=20)
+    r_channels = _get_with_retry(f"{base}/guilds/{guild_id}/channels", headers)
     if r_channels.status_code == 403:
         return jsonify({"ok": False, "error": "Forbidden fetching channels (permissions?)"}), 403
     if r_channels.status_code == 404:
@@ -477,6 +500,14 @@ _FORM_HTML = r"""
     .draggable {cursor: grab;}
     .drag-ghost {opacity: 0.5; background: #22242a;}
     .drag-over {border: 2px dashed #8ab4ff; outline-offset: 2px; background: #1a1f2b;}
+
+    /* Added: clearer handles and dropzone styling */
+    .grab{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#1a1f2b;border:1px solid #2a2a34;margin-right:6px;cursor:grab;user-select:none}
+    .grab:active{cursor:grabbing}
+    .row,.ch,.cat>.row{position:relative}
+    .drag-ghost{opacity:.55;transform:scale(.98)}
+    .drag-over{border:2px dashed #8ab4ff !important;background:#131722 !important}
+    .dropzone{transition:background .12s ease,border .12s ease}
   </style>
 </head>
 <body>
@@ -551,9 +582,34 @@ _FORM_HTML = r"""
   let DND = { draggedEl: null };
 
   function makeDraggableItem(el){
-    el.setAttribute("draggable", "true");
+    // add a visible "grab" handle if not present
+    if (!el.querySelector(".grab")){
+      const h = document.createElement("span");
+      h.className = "grab";
+      h.title = "Drag to reorder";
+      h.textContent = "⋮⋮";
+      const first = el.firstElementChild;
+      if (first) el.insertBefore(h, first); else el.appendChild(h);
+    }
+
+    const handle = el.querySelector(".grab");
+    let armed = false;
+
+    // Only allow drag when user holds the handle (prevents accidental drags while typing)
+    handle.addEventListener("mousedown", () => {
+      armed = true;
+      el.setAttribute("draggable", "true");
+    });
+    document.addEventListener("mouseup", () => {
+      if (armed){
+        armed = false;
+        el.removeAttribute("draggable");
+      }
+    });
+
     el.classList.add("draggable");
     el.addEventListener("dragstart", e => {
+      if (!armed){ e.preventDefault(); return; }
       DND.draggedEl = el;
       el.classList.add("drag-ghost");
       e.dataTransfer.effectAllowed = "move";
@@ -569,12 +625,13 @@ _FORM_HTML = r"""
   function makeContainerSortable(container, itemSelector, acceptExternal){
     if (container.dataset.sortable) return; // idempotent
     container.dataset.sortable = "1";
+    container.classList.add("dropzone");
 
     container.addEventListener("dragover", e => {
-      if (!DND.draggedEl) return;
-      if (!acceptExternal && DND.draggedEl.parentElement !== container) return;
-      e.preventDefault();
-      const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
+      const dragged = DND.draggedEl;
+      if (!dragged) return;
+      if (!acceptExternal && dragged.parentElement !== container) return;
+      e.preventDefault(); // allow drop
       container.classList.add("drag-over");
     });
 
@@ -583,12 +640,13 @@ _FORM_HTML = r"""
     });
 
     container.addEventListener("drop", e => {
-      if (!DND.draggedEl) return;
+      const dragged = DND.draggedEl;
+      if (!dragged) return;
       e.preventDefault();
       container.classList.remove("drag-over");
       const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
-      if (afterEl == null) container.appendChild(DND.draggedEl);
-      else container.insertBefore(DND.draggedEl, afterEl);
+      if (afterEl == null) container.appendChild(dragged);
+      else container.insertBefore(dragged, afterEl);
     });
   }
 
@@ -615,6 +673,7 @@ _FORM_HTML = r"""
     const catsWrap = $("#cats");
     $all("#cats > .cat").forEach(cat => { makeDraggableItem(cat); });
     makeContainerSortable(catsWrap, ":scope > .cat", true);
+    catsWrap.classList.add('dropzone');
 
     $all("#cats .cat").forEach(cat => {
       const chList = $(".ch-list", cat);
@@ -631,16 +690,16 @@ _FORM_HTML = r"""
     var d = document.createElement('div');
     d.className = "row";
     d.innerHTML =
+      '<span class="grab" title="Drag">⋮⋮</span>'+
       '<input placeholder="Role" name="role_name" value="'+name+'">'+
       '<input type="color" name="role_color" value="'+color+'">'+
       '<button type="button" class="del">✕</button>';
     d.querySelector(".del").onclick = function(){ d.remove(); };
-
     makeDraggableItem(d);
+
     var rolesEl = document.getElementById('roles');
     makeContainerSortable(rolesEl, ":scope > .row", true);
-
-    $("#roles").appendChild(d);
+    rolesEl.appendChild(d);
   }
 
   // ---------- Categories/Channels UI ----------
@@ -650,6 +709,7 @@ _FORM_HTML = r"""
     wrap.className = "cat";
     wrap.innerHTML =
       '<div class="row">'+
+        '<span class="grab" title="Drag">⋮⋮</span>'+
         '<strong>Category</strong>'+
         '<input placeholder="Category name (blank = uncategorized bucket)" class="cat-name" value="'+name+'">'+
         '<button type="button" class="addChan">+ Channel</button>'+
@@ -662,14 +722,14 @@ _FORM_HTML = r"""
       var row = channelRow({});
       $(".ch-list", wrap).appendChild(row);
       makeDraggableItem(row);
-      // ensure the list is sortable
       makeContainerSortable($(".ch-list", wrap), ":scope > .ch", true);
     };
 
     makeDraggableItem(wrap);
-    // ensure the categories and this channel list are sortable
     makeContainerSortable(document.getElementById('cats'), ":scope > .cat", true);
     makeContainerSortable($(".ch-list", wrap), ":scope > .ch", true);
+
+    document.getElementById('cats').classList.add('dropzone');
 
     return wrap;
   }
@@ -693,6 +753,7 @@ _FORM_HTML = r"""
 
     var d = document.createElement('div');
     d.className = "ch";
+
     var selectHTML;
     if (opts.length === 1 && opts[0] === "forum"){
       selectHTML =
@@ -708,6 +769,7 @@ _FORM_HTML = r"""
     }
 
     d.innerHTML =
+      '<span class="grab" title="Drag">⋮⋮</span>'+
       '<input class="ch-name" placeholder="Channel name" value="'+name+'">'+
       selectHTML +
       '<input class="ch-topic" placeholder="Topic / Description" value="'+topic+'">'+
@@ -778,6 +840,9 @@ _FORM_HTML = r"""
         C.appendChild(catBox(""));
       }
     }
+
+    // make sure newly created channels have handles wired
+    $all('#cats .ch').forEach(makeDraggableItem);
     enableCatChanDnD();
 
     // danger zone
