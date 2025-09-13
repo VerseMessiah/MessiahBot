@@ -508,6 +508,9 @@ _FORM_HTML = r"""
     .drag-ghost{opacity:.55;transform:scale(.98)}
     .drag-over{border:2px dashed #8ab4ff !important;background:#131722 !important}
     .dropzone{transition:background .12s ease,border .12s ease}
+    /* Make empty channel lists easy to drop into */
+    .ch-list{min-height:24px;padding:6px;border-radius:8px}
+    .ch-list:empty::after{content:"(drop channels here)";opacity:.45;font-size:12px}
   </style>
 </head>
 <body>
@@ -622,7 +625,12 @@ _FORM_HTML = r"""
     });
   }
 
-  function makeContainerSortable(container, itemSelector, acceptExternal){
+  // Return direct children of `container` that match a class (no :scope)
+  function childrenByClass(container, className){
+    return Array.prototype.filter.call(container.children, el => el.classList && el.classList.contains(className));
+  }
+
+  function makeContainerSortable(container, childClass, acceptExternal){
     if (container.dataset.sortable) return; // idempotent
     container.dataset.sortable = "1";
     container.classList.add("dropzone");
@@ -631,12 +639,14 @@ _FORM_HTML = r"""
       const dragged = DND.draggedEl;
       if (!dragged) return;
       if (!acceptExternal && dragged.parentElement !== container) return;
-      e.preventDefault(); // allow drop
+      e.preventDefault(); // must preventDefault to allow drop
       container.classList.add("drag-over");
     });
 
-    container.addEventListener("dragleave", () => {
-      container.classList.remove("drag-over");
+    container.addEventListener("dragleave", e => {
+      if (!container.contains(e.relatedTarget)) {
+        container.classList.remove("drag-over");
+      }
     });
 
     container.addEventListener("drop", e => {
@@ -644,18 +654,19 @@ _FORM_HTML = r"""
       if (!dragged) return;
       e.preventDefault();
       container.classList.remove("drag-over");
-      const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
+
+      const afterEl = getDragAfterElement(container, e.clientY, childClass);
       if (afterEl == null) container.appendChild(dragged);
       else container.insertBefore(dragged, afterEl);
     });
   }
 
-  function getDragAfterElement(container, y, itemSelector){
-    const items = [...container.querySelectorAll(itemSelector + ":not(.drag-ghost)")];
+  function getDragAfterElement(container, mouseY, childClass){
+    const items = childrenByClass(container, childClass).filter(el => !el.classList.contains("drag-ghost"));
     let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
     for (const child of items){
       const box = child.getBoundingClientRect();
-      const offset = y - box.top - box.height / 2;
+      const offset = mouseY - box.top - box.height / 2;
       if (offset < 0 && offset > closest.offset){
         closest = { offset, element: child };
       }
@@ -664,22 +675,22 @@ _FORM_HTML = r"""
   }
 
   function enableRoleDnD(){
-    const list = $("#roles");
-    $all("#roles > .row").forEach(makeDraggableItem);
-    makeContainerSortable(list, ":scope > .row", true);
+    const list = document.getElementById("roles");
+    childrenByClass(list, "row").forEach(makeDraggableItem);
+    makeContainerSortable(list, "row", true);
   }
 
   function enableCatChanDnD(){
-    const catsWrap = $("#cats");
-    $all("#cats > .cat").forEach(cat => { makeDraggableItem(cat); });
-    makeContainerSortable(catsWrap, ":scope > .cat", true);
+    const catsWrap = document.getElementById("cats");
+    childrenByClass(catsWrap, "cat").forEach(cat => makeDraggableItem(cat));
+    makeContainerSortable(catsWrap, "cat", true);
     catsWrap.classList.add('dropzone');
 
-    $all("#cats .cat").forEach(cat => {
-      const chList = $(".ch-list", cat);
+    childrenByClass(catsWrap, "cat").forEach(cat => {
+      const chList = cat.querySelector(".ch-list");
       if (!chList) return;
-      $all(".ch", chList).forEach(ch => makeDraggableItem(ch));
-      makeContainerSortable(chList, ":scope > .ch", true);
+      childrenByClass(chList, "ch").forEach(ch => makeDraggableItem(ch));
+      makeContainerSortable(chList, "ch", true); // allow cross-category moves
     });
   }
 
@@ -698,7 +709,7 @@ _FORM_HTML = r"""
     makeDraggableItem(d);
 
     var rolesEl = document.getElementById('roles');
-    makeContainerSortable(rolesEl, ":scope > .row", true);
+    makeContainerSortable(rolesEl, "row", true);
     rolesEl.appendChild(d);
   }
 
@@ -722,12 +733,12 @@ _FORM_HTML = r"""
       var row = channelRow({});
       $(".ch-list", wrap).appendChild(row);
       makeDraggableItem(row);
-      makeContainerSortable($(".ch-list", wrap), ":scope > .ch", true);
+      makeContainerSortable($(".ch-list", wrap), "ch", true);
     };
 
     makeDraggableItem(wrap);
-    makeContainerSortable(document.getElementById('cats'), ":scope > .cat", true);
-    makeContainerSortable($(".ch-list", wrap), ":scope > .ch", true);
+    makeContainerSortable(document.getElementById('cats'), "cat", true);
+    makeContainerSortable($(".ch-list", wrap), "ch", true);
 
     document.getElementById('cats').classList.add('dropzone');
 
