@@ -802,6 +802,114 @@ class ServerBuilder(commands.Cog):
                 except Exception:
                     pass
 
+        # Ordering (roles, categories, channels)
+        if progress: await progress.set("ordering roles/categories/channels…")
+
+        # --- Roles order ---
+        try:
+            desired_roles = [( _norm(r.get("name")), r.get("position") ) for r in (layout.get("roles") or []) if r.get("name")]
+            # If explicit positions exist, sort by them; otherwise preserve given sequence
+            if any(isinstance(p, int) for _, p in desired_roles):
+                desired_roles.sort(key=lambda t: (999999 if t[1] is None else int(t[1])))
+            else:
+                # keep incoming order
+                desired_roles = [(name, i) for i, (name, _) in enumerate(desired_roles)]
+            # Build positions map for discord.py: higher number -> higher role
+            positions_map: Dict[discord.Role, int] = {}
+            top_base = max((getattr(r, "position", 1) for r in guild.roles), default=1) + len(desired_roles) + 5
+            for i, (name, _) in enumerate(desired_roles):
+                role_obj = _find_role(guild, name)
+                if role_obj and not role_obj.is_default() and not role_obj.managed:
+                    # assign descending targets so first in list ends up highest
+                    positions_map[role_obj] = top_base - i
+            if positions_map:
+                try:
+                    await guild.edit_role_positions(positions=positions_map)
+                    logs.append("📐 Roles reordered.")
+                except AttributeError:
+                    # Older discord.py fallback: try editing individual positions
+                    for i, (name, _) in enumerate(reversed([x for x in desired_roles if _find_role(guild, x[0])])):
+                        role_obj = _find_role(guild, name)
+                        if role_obj:
+                            try:
+                                await role_obj.edit(position=(top_base - i))
+                            except Exception:
+                                pass
+                    logs.append("📐 Roles reordered (fallback).")
+        except Exception as e:
+            logs.append(f"⚠️ Could not reorder roles: {e}")
+
+        # --- Categories order ---
+        try:
+            # Accept both nested objects (with .position) and simple list
+            desired_cats = layout.get("categories") or []
+            cat_seq: List[str] = []
+            if desired_cats and isinstance(desired_cats[0], dict):
+                # sort by provided position if present; otherwise by current index
+                tmp = []
+                for idx, c in enumerate(desired_cats):
+                    nm = _norm(c.get("name"))
+                    pos = c.get("position")
+                    tmp.append((nm, idx if pos is None else int(pos)))
+                tmp.sort(key=lambda x: x[1])
+                cat_seq = [nm for nm, _ in tmp if nm]  # skip empty/uncategorized here
+            else:
+                cat_seq = [_norm(x) for x in desired_cats if _norm(x)]
+
+            for idx, nm in enumerate(cat_seq):
+                cat = _find_category(guild, nm)
+                if cat:
+                    try:
+                        await cat.edit(position=idx, reason="MessiahBot reorder categories")
+                    except Exception:
+                        pass
+            if cat_seq:
+                logs.append("📐 Categories reordered.")
+        except Exception as e:
+            logs.append(f"⚠️ Could not reorder categories: {e}")
+
+        # --- Channels order within each category (and uncategorized) ---
+        try:
+            # Build mapping from category name -> desired channel name order list (with types)
+            if desired_cats and isinstance(desired_cats[0], dict):
+                for c_idx, c in enumerate(desired_cats):
+                    cname = _norm(c.get("name"))
+                    desired_chs = c.get("channels") or []
+                    # order by given position if present
+                    desired_chs_sorted = sorted(
+                        desired_chs,
+                        key=lambda ch: int(ch.get("position")) if isinstance(ch.get("position"), int) or str(ch.get("position") or "").isdigit() else desired_chs.index(ch)
+                    )
+                    parent = _find_category(guild, cname) if cname else None
+                    for ch_idx, ch in enumerate(desired_chs_sorted):
+                        nm = _norm(ch.get("name"))
+                        typ = (ch.get("type") or "text").lower()
+                        if not nm:
+                            continue
+                        # Find the existing channel of the right type
+                        target = None
+                        if typ in ("text", "announcement"):
+                            target = _find_text(guild, nm)
+                        elif typ in ("voice", "stage"):
+                            target = _find_voice(guild, nm)
+                        elif typ == "forum":
+                            target = _find_forum(guild, nm)
+                        if not target:
+                            continue
+                        try:
+                            # ensure parent is correct (already done earlier, but safe)
+                            if (parent and getattr(target, "category", None) != parent) or (not parent and getattr(target, "category", None) is not None):
+                                await target.edit(category=parent, reason="MessiahBot move for ordering")
+                            await target.edit(position=ch_idx, reason="MessiahBot reorder channels")
+                        except Exception:
+                            pass
+                logs.append("📐 Channels reordered within categories.")
+            else:
+                # Legacy flat layout: we can't reliably know per-category order beyond creation; skip.
+                pass
+        except Exception as e:
+            logs.append(f"⚠️ Could not reorder channels: {e}")
+
         # Community
         if progress: await progress.set("applying community settings…")
         await _apply_community(guild, layout.get("community") or {}, is_build=(not update_only))
