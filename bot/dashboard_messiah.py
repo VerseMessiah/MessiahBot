@@ -541,6 +541,13 @@ _FORM_HTML = r"""
     .dnd-scope .ghost { opacity: 0.35; }
     .dnd-scope .is-dragging { opacity: 0.9; transform: scale(1.01); }
 
+    /* Role permissions panel */
+    .perm-panel { display:none; padding:8px; margin-left:28px; border:1px dashed #2a2a34; border-radius:8px; background:#11131a }
+    .perm-panel .col { display:flex; flex-direction:column; gap:6px }
+    .perm-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap }
+    .perm-row label { display:flex; align-items:center; gap:6px; font-size:13px; opacity:.9 }
+    .perm-toggle { margin-left:8px }
+
     /* Only prevent selection on draggable items (not inputs/buttons elsewhere) */
     .dnd-scope .dnd-item, 
     .dnd-scope .drag-handle {
@@ -677,9 +684,11 @@ _FORM_HTML = r"""
     initCategoriesSortable();
     initChannelLists();
   }
-  function addRoleRow(name, color){
+  function addRoleRow(name, color, perms){
     if (!name) name = "";
     if (!color) color = "#000000";
+    perms = perms || null;
+
     var d = document.createElement('div');
     d.className = "row";
     d.setAttribute("draggable", "true");
@@ -687,8 +696,44 @@ _FORM_HTML = r"""
       '<span class="grab" title="Drag">⋮⋮</span>'+
       '<input placeholder="Role" name="role_name" value="'+name+'">'+
       '<input type="color" name="role_color" value="'+color+'">'+
-      '<button type="button" class="del">✕</button>';
+      '<label class="perm-toggle subtle"><input type="checkbox" class="role-apply-perms"> Set/Update permissions</label>'+
+      '<button type="button" class="del">✕</button>'+
+      '<div class="perm-panel">'+
+        '<div class="perm-row">'+
+          '<label><input type="checkbox" class="perm-admin"> Admin</label>'+
+          '<label><input type="checkbox" class="perm-manage-channels"> Manage Channels</label>'+
+          '<label><input type="checkbox" class="perm-manage-roles"> Manage Roles</label>'+
+          '<label><input type="checkbox" class="perm-view"> View Channel</label>'+
+          '<label><input type="checkbox" class="perm-send"> Send Messages</label>'+
+          '<label><input type="checkbox" class="perm-connect"> Connect (Voice)</label>'+
+          '<label><input type="checkbox" class="perm-speak"> Speak</label>'+
+        '</div>'+
+      '</div>';
+
+    // delete handler
     d.querySelector(".del").onclick = function(){ d.remove(); };
+
+    // toggle panel
+    var toggle = d.querySelector(".role-apply-perms");
+    var panel = d.querySelector(".perm-panel");
+    function setPanel(v){ panel.style.display = v ? 'block' : 'none'; }
+    toggle.addEventListener('change', function(){ setPanel(toggle.checked); });
+
+    // prefill from perms (if provided)
+    if (perms && typeof perms === 'object') {
+      toggle.checked = true;
+      setPanel(true);
+      if (perms.admin) d.querySelector('.perm-admin').checked = true;
+      if (perms.manage_channels) d.querySelector('.perm-manage-channels').checked = true;
+      if (perms.manage_roles) d.querySelector('.perm-manage-roles').checked = true;
+      if (perms.view_channel) d.querySelector('.perm-view').checked = true;
+      if (perms.send_messages) d.querySelector('.perm-send').checked = true;
+      if (perms.connect) d.querySelector('.perm-connect').checked = true;
+      if (perms.speak) d.querySelector('.perm-speak').checked = true;
+    } else {
+      setPanel(false);
+    }
+
     document.getElementById('roles').appendChild(d);
   }
 
@@ -775,7 +820,7 @@ _FORM_HTML = r"""
     var R = $("#roles"); R.innerHTML = "";
     var roles = p.roles || [];
     for (var i=0;i<roles.length;i++){
-      addRoleRow(roles[i].name || "", roles[i].color || "#000000");
+      addRoleRow(roles[i].name || "", roles[i].color || "#000000", roles[i].perms || null);
     }
     if (roles.length === 0) addRoleRow("", "#000000");
 
@@ -840,7 +885,25 @@ _FORM_HTML = r"""
     $all('#roles .row').forEach(function(r, idx){
       var name = r.querySelector('input[name="role_name"]').value.trim();
       var color = r.querySelector('input[name="role_color"]').value || "#000000";
-      if (name){ roles.push({name:name, color:color, position: idx}); }
+      if (!name) return;
+
+      var apply = r.querySelector('.role-apply-perms') && r.querySelector('.role-apply-perms').checked;
+      var perms = {};
+      if (apply) {
+        if (r.querySelector('.perm-admin')?.checked) perms.admin = true;
+        if (r.querySelector('.perm-manage-channels')?.checked) perms.manage_channels = true;
+        if (r.querySelector('.perm-manage-roles')?.checked) perms.manage_roles = true;
+        if (r.querySelector('.perm-view')?.checked) perms.view_channel = true;
+        if (r.querySelector('.perm-send')?.checked) perms.send_messages = true;
+        if (r.querySelector('.perm-connect')?.checked) perms.connect = true;
+        if (r.querySelector('.perm-speak')?.checked) perms.speak = true;
+      }
+
+      var roleObj = {name:name, color:color, position: idx};
+      if (apply && Object.keys(perms).length > 0) {
+        roleObj.perms = perms;
+      }
+      roles.push(roleObj);
     });
 
     // categories (nested)
