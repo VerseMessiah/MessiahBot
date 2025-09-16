@@ -647,19 +647,26 @@ class ServerBuilder(commands.Cog):
             if not name:
                 continue
             color = _hex_to_color(r.get("color"))
-            perm_flags = r.get("perms") or {}
-            perms_obj = _role_perms_from_flags(perm_flags)
+            has_perms = ("perms" in r) and isinstance(r.get("perms"), dict)
+            perms_obj = _role_perms_from_flags(r.get("perms") or {}) if has_perms else None
 
             existing = _find_role(guild, name)
             if existing is None:
                 try:
-                    await guild.create_role(name=name, colour=color, permissions=perms_obj, reason="MessiahBot builder")
+                    kwargs = dict(name=name, colour=color, reason="MessiahBot builder")
+                    if has_perms and perms_obj is not None:
+                        kwargs["permissions"] = perms_obj
+                    await guild.create_role(**kwargs)
                     logs.append(f"✅ Role created: **{name}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create role: **{name}**")
             else:
                 try:
-                    await existing.edit(colour=color, permissions=perms_obj, reason="MessiahBot update role")
+                    kwargs = dict(colour=color, reason="MessiahBot update role")
+                    if has_perms and perms_obj is not None:
+                        kwargs["permissions"] = perms_obj
+                    # If has_perms is False, omit 'permissions' so we preserve existing role perms
+                    await existing.edit(**kwargs)
                     logs.append(f"🔄 Role updated: **{name}**")
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to edit role: **{name}**")
