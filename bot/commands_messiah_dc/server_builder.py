@@ -155,10 +155,11 @@ def _safe_pos(obj, default=0):
         return default
 
 def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
-    """Primary: use discord.py live objects for a rich snapshot."""
+    """Primary: use discord.py live objects for a rich snapshot.
+    Emits nested categories with per-channel positions to preserve order.
+    Skips any categories with blank/whitespace names.
+    """
     roles: List[Dict[str, Any]] = []
-    categories: List[str] = []
-    channels: List[Dict[str, Any]] = []
 
     # Roles (skip @everyone + managed)
     for r in sorted(getattr(guild, "roles", []), key=lambda x: _safe_pos(x), reverse=True):
@@ -167,71 +168,97 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
         color_val = getattr(getattr(r, "colour", None), "value", 0) or 0
         roles.append({"name": r.name, "color": f"#{int(color_val):06x}"})
 
-    # Categories
-    for c in sorted(getattr(guild, "categories", []), key=_safe_pos):
-        categories.append(c.name)
+    # Build nested categories with channel lists and explicit positions
+    categories_payload: List[Dict[str, Any]] = []
 
-    # Helper for parent sort key
-    def parent_key(ch):
-        cat = getattr(ch, "category", None)
-        return (_safe_pos(cat, -1), _safe_pos(ch, 0))
-
-    # Text + announcement
-    for ch in sorted(getattr(guild, "text_channels", []), key=parent_key):
-        is_news = False
+    # Helper to detect announcement/text
+    def _is_announcement(ch: discord.TextChannel) -> bool:
         try:
             if hasattr(ch, "is_news"):
-                is_news = bool(ch.is_news())
+                return bool(ch.is_news())
             elif hasattr(discord, "ChannelType"):
-                is_news = (getattr(ch, "type", None) == getattr(discord.ChannelType, "news", object()))
+                return (getattr(ch, "type", None) == getattr(discord.ChannelType, "news", object()))
         except Exception:
-            is_news = False
+            return False
+        return False
 
-        channels.append({
-            "name": ch.name,
-            "type": "announcement" if is_news else "text",
-            "category": ch.category.name if getattr(ch, "category", None) else "",
-            "options": {
-                "topic": getattr(ch, "topic", "") or "",
-                "nsfw": bool(getattr(ch, "nsfw", False)),
-                "slowmode": int(getattr(ch, "slowmode_delay", 0) or 0),
-            }
+    # Categories in display order
+    categories_sorted: List[discord.CategoryChannel] = sorted(getattr(guild, "categories", []), key=_safe_pos)
+
+    for cat in categories_sorted:
+        name = (getattr(cat, "name", "") or "")
+        if not name.strip():
+            # Skip ghost/blank categories
+            continue
+
+        # Channels in category in display order
+        chans_sorted = sorted(getattr(cat, "channels", []), key=_safe_pos)
+        ch_items: List[Dict[str, Any]] = []
+
+        for ch in chans_sorted:
+            # Normalize type string
+            ctype = "text"
+            if hasattr(ch, "type"):
+                if str(ch.type) == "ChannelType.voice":
+                    ctype = "voice"
+                elif str(ch.type) == "ChannelType.forum":
+                    ctype = "forum"
+                elif str(ch.type) == "ChannelType.stage_voice":
+                    ctype = "stage"
+                else:
+                    ctype = "announcement" if _is_announcement(ch) else "text"
+
+            # Channel options
+            options = {}
+            try:
+                if hasattr(ch, "topic") and ch.topic:
+                    options["topic"] = ch.topic
+            except Exception:
+                pass
+            try:
+                if hasattr(ch, "nsfw"):
+                    options["nsfw"] = bool(ch.nsfw)
+            except Exception:
+                pass
+            try:
+                if hasattr(ch, "slowmode_delay"):
+                    options["slowmode"] = int(ch.slowmode_delay or 0)
+            except Exception:
+                pass
+
+            ch_items.append({
+                "name": ch.name,
+                "type": ctype,
+                "position": _safe_pos(ch, 0),
+                "options": options,
+                # NOTE: We do not include overwrites unless the dashboard toggle is used to send them back.
+                # "overwrites": {},
+            })
+
+        categories_payload.append({
+            "name": name,
+            "position": _safe_pos(cat, 0),
+            "channels": ch_items,
+            # Category overwrites omitted by default to avoid accidental wipes
+            # "overwrites": {}
         })
 
-    # Voice
-    for ch in sorted(getattr(guild, "voice_channels", []), key=parent_key):
-        channels.append({
-            "name": ch.name,
-            "type": "voice",
-            "category": ch.category.name if getattr(ch, "category", None) else "",
-            "options": {}
-        })
-
-    # Forums (optional attribute)
-    try:
-        forums = list(getattr(guild, "forums", []))
-    except Exception:
-        forums = []
-    for ch in sorted(forums, key=parent_key):
-        channels.append({
-            "name": ch.name,
-            "type": "forum",
-            "category": ch.category.name if getattr(ch, "category", None) else "",
-            "options": {}
-        })
-
+    # Also include uncategorized channels if needed for UI (optional; kept empty here).
+    # The current applier handles ordering within categories from the nested structure.
     return {
         "mode": "update",
         "roles": roles,
-        "categories": categories,
-        "channels": channels,
+        "categories": categories_payload,
+        "channels": [],  # leave flat list empty when nested is present to avoid duplication
         "prune": {"roles": False, "categories": False, "channels": False},
         "renames": {"roles": [], "categories": [], "channels": []},
         "community": {"enable_on_build": False, "settings": {}}
     }
 
 def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
-    """Fallback: use REST API to avoid 'unknown integration' issues."""
+    """Fallback: use REST API and emit nested categories with per-channel positions.
+    Skips categories whose names are blank/whitespace.
+    """
     if not token:
         raise RuntimeError("DISCORD_BOT_TOKEN not set; cannot run REST snapshot fallback.")
     try:
@@ -259,11 +286,23 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
     r_channels.raise_for_status()
     ch_json = r_channels.json()
 
-    # Map category id->(name, position)
-    cats = [c for c in ch_json if c.get("type") == 4]
-    cat_map = {c["id"]: (c["name"], c.get("position", 0)) for c in cats}
-    categories_sorted = [c[0] for _, c in sorted(cat_map.items(), key=lambda kv: kv[1][1])]
+    # Separate categories and non-categories
+    cats = [c for c in ch_json if int(c.get("type", 0)) == 4]
+    non_cats = [c for c in ch_json if int(c.get("type", 0)) != 4]
 
+    # Build category map: id -> {name, position}
+    cat_map: Dict[str, Dict[str, Any]] = {}
+    for c in cats:
+        nm = (c.get("name") or "")
+        if not nm.strip():
+            # Skip ghost/blank categories
+            continue
+        cat_map[str(c["id"])] = {
+            "name": nm,
+            "position": int(c.get("position", 0))
+        }
+
+    # Helper for channel type names
     def ch_type_name(t: int) -> str:
         # 0 text, 2 voice, 4 category, 5 news, 13 stage, 15 forum
         return {
@@ -274,19 +313,15 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
             15: "forum"
         }.get(t, "text")
 
-    # Sort by (category position, channel position)
-    def sort_key(ch):
-        cat_pos = cat_map.get(ch.get("parent_id"), ("", -1))[1] if ch.get("parent_id") else -1
-        return (cat_pos, ch.get("position", 0))
-
-    channels: List[Dict[str, Any]] = []
-    for ch in sorted(ch_json, key=sort_key):
+    # Bucket channels under categories
+    cat_channels: Dict[str, List[Dict[str, Any]]] = {cid: [] for cid in cat_map.keys()}
+    for ch in non_cats:
         t = int(ch.get("type", 0))
-        if t == 4:
-            continue  # categories handled separately
-        name = ch.get("name", "")
         parent_id = ch.get("parent_id")
-        parent_name = cat_map.get(parent_id, ("", 0))[0] if parent_id else ""
+        # Only include channels that have a valid parent category (skip uncategorized here)
+        if not parent_id or str(parent_id) not in cat_map:
+            continue
+
         options = {}
         if t in (0, 5):  # text/announcement supports topic, nsfw, slowmode
             options = {
@@ -294,18 +329,32 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
                 "nsfw": bool(ch.get("nsfw", False)),
                 "slowmode": int(ch.get("rate_limit_per_user") or 0),
             }
-        channels.append({
-            "name": name,
+
+        cat_channels[str(parent_id)].append({
+            "name": ch.get("name", ""),
             "type": ch_type_name(t),
-            "category": parent_name,
+            "position": int(ch.get("position", 0) or 0),
             "options": options
+        })
+
+    # Sort channels within each category by their position
+    for cid, arr in cat_channels.items():
+        arr.sort(key=lambda x: int(x.get("position", 0)))
+
+    # Build nested categories payload sorted by category position
+    categories_payload: List[Dict[str, Any]] = []
+    for cid, meta in sorted(cat_map.items(), key=lambda kv: int(kv[1]["position"])):
+        categories_payload.append({
+            "name": meta["name"],
+            "position": int(meta["position"]),
+            "channels": cat_channels.get(cid, [])
         })
 
     return {
         "mode": "update",
         "roles": roles,
-        "categories": categories_sorted,
-        "channels": channels,
+        "categories": categories_payload,
+        "channels": [],  # leave flat list empty when nested is present to avoid duplication
         "prune": {"roles": False, "categories": False, "channels": False},
         "renames": {"roles": [], "categories": [], "channels": []},
         "community": {"enable_on_build": False, "settings": {}}
