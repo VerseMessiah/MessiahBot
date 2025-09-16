@@ -512,7 +512,34 @@ _FORM_HTML = r"""
     /* Make empty channel lists easy to drop into */
     .ch-list{min-height:24px;padding:6px;border-radius:8px}
     .ch-list:empty::after{content:"(drop channels here)";opacity:.45;font-size:12px}
+  
+    /* scope to just the DnD area */
+    .dnd-scope .drag-handle {
+      width: 14px; height: 14px; border-radius: 4px;
+      background: linear-gradient(180deg, #7a86ff, #5460ff);
+      cursor: grab;
+      display:inline-block;
+      margin-right: 8px;
+      flex: 0 0 14px;
+    }
+    .dnd-scope .drag-handle:active { cursor: grabbing; }
+
+    .dnd-scope .dnd-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; margin: 6px 0;
+      border: 1px solid rgba(124,130,255,0.25);
+      border-radius: 10px; background: rgba(255,255,255,0.03);
+    }
+    .dnd-scope .ghost { opacity: 0.35; }
+    .dnd-scope .is-dragging { opacity: 0.9; transform: scale(1.01); }
+
+    /* Only prevent selection on draggable items (not inputs/buttons elsewhere) */
+    .dnd-scope .dnd-item, 
+    .dnd-scope .drag-handle {
+      -webkit-user-select: none; user-select: none; -webkit-user-drag: none;
+    }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 </head>
 <body>
   <div class="bar">
@@ -582,209 +609,66 @@ _FORM_HTML = r"""
   var statusPill = $("#status");
   function setStatus(txt){ statusPill.textContent = txt; }
 
-  // ---------- Drag & Drop helpers ----------
-  const DND = {
-    draggedEl: null,
-    armed: false,
-    // a tiny transparent drag image so Safari reliably starts dragging
-    shim: (() => {
-      const c = document.createElement('canvas');
-      c.width = 1; c.height = 1;
-      return c;
-    })()
-  };
+  // ---------- Drag & Drop (SortableJS) ----------
+  // We use SortableJS for reliability across Safari/Chrome/Firefox.
+  // Handles are the ".grab" elements already present in the markup.
 
-  function makeDraggableItem(el){
-    // handle button
-    if (!el.querySelector(".grab")){
-      const h = document.createElement("span");
-      h.className = "grab";
-      h.title = "Drag to reorder";
-      h.textContent = "⋮⋮";
-      const first = el.firstElementChild;
-      if (first) el.insertBefore(h, first); else el.appendChild(h);
-    }
-
-    // Always draggable: Safari requires the attribute to exist before interaction
-    el.setAttribute("draggable", "true");
-    el.classList.add("draggable");
-
-    const handle = el.querySelector(".grab");
-
-    // Arm only if user starts on the handle (prevents drags while editing inputs)
-    const armMouse = () => { DND.armed = true; };
-    const armTouch = (e) => { DND.armed = true; e.preventDefault(); };
-    handle.addEventListener("mousedown", armMouse, {passive:true});
-    handle.addEventListener("touchstart", armTouch, {passive:false});
-
-    const disarm = () => { DND.armed = false; };
-    document.addEventListener("mouseup", disarm, {passive:true});
-    document.addEventListener("touchend", disarm, {passive:true});
-    document.addEventListener("touchcancel", disarm, {passive:true});
-
-    el.addEventListener("dragstart", (e) => {
-      // Only drag if armed by the handle
-      if (!DND.armed) { e.preventDefault(); return; }
-      DND.draggedEl = el;
-      el.classList.add("drag-ghost");
-      // Force dataTransfer on all browsers (Safari needs this)
-      try {
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", "drag");
-        e.dataTransfer.setDragImage?.(DND.shim, 0, 0);
-      } catch(_) {}
-    });
-
-    el.addEventListener("dragend", () => {
-      el.classList.remove("drag-ghost");
-      DND.draggedEl = null;
-      DND.armed = false;
-      $all(".drag-over").forEach(n => n.classList.remove("drag-over"));
+  function initRolesSortable() {
+    var el = document.getElementById('roles');
+    if (!el || el._sortableInit) return;
+    el._sortableInit = true;
+    new Sortable(el, {
+      handle: '.grab',
+      draggable: '.row',
+      animation: 150,
+      forceFallback: true,
+      fallbackTolerance: 5,
+      ghostClass: 'drag-ghost',
+      dragClass: 'is-dragging'
     });
   }
 
-function makeContainerSortable(container, itemSelector, acceptExternal){
-  if (container.dataset.sortable) return; // idempotent
-  container.dataset.sortable = "1";
-  container.classList.add("dropzone");
-
-  container.addEventListener("dragover", (e) => {
-    const dragged = DND.draggedEl;
-    if (!dragged) return;
-    if (!acceptExternal && dragged.parentElement !== container) return;
-    e.preventDefault(); // allow drop
-    try { e.dataTransfer.dropEffect = "move"; } catch(_) {} // Safari needs this
-    container.classList.add("drag-over");
-  });
-
-  container.addEventListener("dragleave", () => {
-    container.classList.remove("drag-over");
-  });
-
-  container.addEventListener("drop", (e) => {
-    const dragged = DND.draggedEl;
-    if (!dragged) return;
-    e.preventDefault();
-    container.classList.remove("drag-over");
-    const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
-    if (afterEl == null) container.appendChild(dragged);
-    else container.insertBefore(dragged, afterEl);
-  });
-}
-
-function getDragAfterElement(container, y, itemSelector){
-  const items = [...container.querySelectorAll(`${itemSelector}:not(.drag-ghost)`)];
-  let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
-  for (const child of items){
-    const box = child.getBoundingClientRect();
-    const offset = y - box.top - box.height / 2;
-    if (offset < 0 && offset > closest.offset){
-      closest = { offset, element: child };
-    }
-  }
-  return closest.element;
-}
-
-// Convenience wiring
-function enableRoleDnD(){
-  const list = $("#roles");
-  $all("#roles > .row").forEach(makeDraggableItem);
-  makeContainerSortable(list, ":scope > .row", true);
-}
-
-function enableCatChanDnD(){
-  const catsWrap = $("#cats");
-  $all("#cats > .cat").forEach(cat => { makeDraggableItem(cat); });
-  makeContainerSortable(catsWrap, ":scope > .cat", true);
-  catsWrap.classList.add('dropzone');
-
-  $all("#cats .cat").forEach(cat => {
-    const chList = $(".ch-list", cat);
-    if (!chList) return;
-    $all(".ch", chList).forEach(ch => makeDraggableItem(ch));
-    makeContainerSortable(chList, ":scope > .ch", true);
-  });
-}
-
-  // Return direct children of `container` that match a class (no :scope)
-  function childrenByClass(container, className){
-    return Array.prototype.filter.call(container.children, el => el.classList && el.classList.contains(className));
-  }
-
-  // Direct children by class name (no :scope needed; works in Safari/WebKit)
-  function directChildrenByClass(container, className) {
-    const out = [];
-    for (const el of container.children) {
-      if (el.classList && el.classList.contains(className)) out.push(el);
-    }
-    return out;
-  }
-
-  function makeContainerSortable(container, childClassName, acceptExternal){
-    if (container.dataset.sortable) return;
-    container.dataset.sortable = "1";
-    container.classList.add("dropzone");
-
-    container.addEventListener("dragover", e => {
-      const dragged = DND.draggedEl;
-      if (!dragged) return;
-      if (!acceptExternal && dragged.parentElement !== container) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move"; // Safari needs this
-      container.classList.add("drag-over");
-    });
-
-    container.addEventListener("dragleave", () => {
-      container.classList.remove("drag-over");
-    });
-
-    container.addEventListener("drop", e => {
-      const dragged = DND.draggedEl;
-      if (!dragged) return;
-      e.preventDefault();
-      container.classList.remove("drag-over");
-      const afterEl = getDragAfterElement(container, e.clientY, childClassName);
-      if (afterEl == null) container.appendChild(dragged);
-      else container.insertBefore(dragged, afterEl);
+  function initCategoriesSortable() {
+    var wrap = document.getElementById('cats');
+    if (!wrap || wrap._sortableInit) return;
+    wrap._sortableInit = true;
+    new Sortable(wrap, {
+      handle: '.cat > .row .grab',
+      draggable: '.cat',
+      animation: 150,
+      forceFallback: true,
+      fallbackTolerance: 5,
+      ghostClass: 'drag-ghost',
+      dragClass: 'is-dragging'
     });
   }
 
-  function getDragAfterElement(container, y, childClassName){
-    const items = directChildrenByClass(container, childClassName)
-      .filter(el => !el.classList.contains("drag-ghost"));
-
-    let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
-    for (const child of items){
-      const box = child.getBoundingClientRect();
-      const offset = y - box.top - box.height / 2;
-      if (offset < 0 && offset > closest.offset){
-        closest = { offset, element: child };
-      }
-    }
-    return closest.element;
-  }
-
-  function enableRoleDnD(){
-    const list = document.getElementById("roles");
-    childrenByClass(list, "row").forEach(makeDraggableItem);
-    makeContainerSortable(list, "row", true);
-  }
-
-  function enableCatChanDnD(){
-    const catsWrap = document.getElementById("cats");
-    childrenByClass(catsWrap, "cat").forEach(cat => makeDraggableItem(cat));
-    makeContainerSortable(catsWrap, "cat", true);
-    catsWrap.classList.add('dropzone');
-
-    childrenByClass(catsWrap, "cat").forEach(cat => {
-      const chList = cat.querySelector(".ch-list");
-      if (!chList) return;
-      childrenByClass(chList, "ch").forEach(ch => makeDraggableItem(ch));
-      makeContainerSortable(chList, "ch", true); // allow cross-category moves
+  function initChannelListSortable(listEl) {
+    if (!listEl || listEl._sortableInit) return;
+    listEl._sortableInit = true;
+    new Sortable(listEl, {
+      group: { name: 'channels', pull: true, put: true },
+      handle: '.ch .grab',
+      draggable: '.ch',
+      animation: 150,
+      forceFallback: true,
+      fallbackTolerance: 5,
+      bubbleScroll: true,
+      scroll: true,
+      ghostClass: 'drag-ghost',
+      dragClass: 'is-dragging'
     });
   }
 
-  // ---------- Roles UI ----------
+  function initChannelLists() {
+    document.querySelectorAll('#cats .ch-list').forEach(initChannelListSortable);
+  }
+
+  function initSortables() {
+    initRolesSortable();
+    initCategoriesSortable();
+    initChannelLists();
+  }
   function addRoleRow(name, color){
     if (!name) name = "";
     if (!color) color = "#000000";
@@ -797,11 +681,7 @@ function enableCatChanDnD(){
       '<input type="color" name="role_color" value="'+color+'">'+
       '<button type="button" class="del">✕</button>';
     d.querySelector(".del").onclick = function(){ d.remove(); };
-    makeDraggableItem(d);
-
-    var rolesEl = document.getElementById('roles');
-    makeContainerSortable(rolesEl, "row", true);
-    rolesEl.appendChild(d);
+    document.getElementById('roles').appendChild(d);
   }
 
   // ---------- Categories/Channels UI ----------
@@ -823,16 +703,10 @@ function enableCatChanDnD(){
     wrap.querySelector(".addChan").onclick = function(){
       var row = channelRow({});
       $(".ch-list", wrap).appendChild(row);
-      makeDraggableItem(row);
-      makeContainerSortable($(".ch-list", wrap), "ch", true);
     };
 
-    makeDraggableItem(wrap);
-    makeContainerSortable(document.getElementById('cats'), "cat", true);
-    makeContainerSortable($(".ch-list", wrap), "ch", true);
-
-    document.getElementById('cats').classList.add('dropzone');
-
+    // ensure the new channel list is sortable
+    initChannelListSortable($(".ch-list", wrap));
     return wrap;
   }
 
@@ -879,8 +753,6 @@ function enableCatChanDnD(){
       '<button type="button" class="del">✕</button>';
     d.setAttribute("data-original-type", original || "");
     d.querySelector(".del").onclick = function(){ d.remove(); };
-
-    makeDraggableItem(d);
     return d;
   }
 
@@ -898,7 +770,6 @@ function enableCatChanDnD(){
       addRoleRow(roles[i].name || "", roles[i].color || "#000000");
     }
     if (roles.length === 0) addRoleRow("", "#000000");
-    enableRoleDnD();
 
     // categories + channels
     var C = $("#cats"); C.innerHTML = "";
@@ -944,9 +815,8 @@ function enableCatChanDnD(){
       }
     }
 
-    // make sure newly created channels have handles wired
-    $all('#cats .ch').forEach(makeDraggableItem);
-    enableCatChanDnD();
+    // initialize SortableJS on all lists
+    initSortables();
 
     // danger zone
     $("#prune_roles").checked = !!(p.prune && p.prune.roles);
@@ -1155,8 +1025,7 @@ function enableCatChanDnD(){
   // ---------- initial blank rows + DnD ----------
   addRoleRow("", "#000000");
   $("#cats").appendChild(catBox(""));
-  enableRoleDnD();
-  enableCatChanDnD();
+  initSortables();
   </script>
 </body>
 </html>
