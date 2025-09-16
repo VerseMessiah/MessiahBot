@@ -502,6 +502,7 @@ _FORM_HTML = r"""
     .drag-over {border: 2px dashed #8ab4ff; outline-offset: 2px; background: #1a1f2b;}
 
     /* Added: clearer handles and dropzone styling */
+    .grab{ -webkit-user-select:none; user-select:none; touch-action:none; }
     .grab{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#1a1f2b;border:1px solid #2a2a34;margin-right:6px;cursor:grab;user-select:none}
     .grab:active{cursor:grabbing}
     .row,.ch,.cat>.row{position:relative}
@@ -611,9 +612,10 @@ _FORM_HTML = r"""
     const handle = el.querySelector(".grab");
 
     // Arm only if user starts on the handle (prevents drags while editing inputs)
-    const arm = (e) => { DND.armed = true; e.preventDefault(); };
-    handle.addEventListener("mousedown", arm, {passive:false});
-    handle.addEventListener("touchstart", arm, {passive:false});
+    const armMouse = () => { DND.armed = true; };
+    const armTouch = (e) => { DND.armed = true; e.preventDefault(); };
+    handle.addEventListener("mousedown", armMouse, {passive:true});
+    handle.addEventListener("touchstart", armTouch, {passive:false});
 
     const disarm = () => { DND.armed = false; };
     document.addEventListener("mouseup", disarm, {passive:true});
@@ -651,6 +653,7 @@ function makeContainerSortable(container, itemSelector, acceptExternal){
     if (!dragged) return;
     if (!acceptExternal && dragged.parentElement !== container) return;
     e.preventDefault(); // allow drop
+    try { e.dataTransfer.dropEffect = "move"; } catch(_) {} // Safari needs this
     container.classList.add("drag-over");
   });
 
