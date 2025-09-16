@@ -470,693 +470,460 @@ def get_latest_layout(guild_id: str):
 # ---------- Form UI ----------
 _FORM_HTML = r"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
   <title>MessiahBot — Server Builder</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    :root { color-scheme: dark light; }
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial;
-         max-width:1000px;margin:24px auto;padding:0 12px;background:#0b0b0f;color:#e7e7ea}
-    a{color:#8ab4ff}
-    fieldset{margin:16px 0;padding:12px;border-radius:10px;border:1px solid #2a2a34}
-    input,select,button{font:inherit}
-    input[type="text"]{background:#11131a;border:1px solid #2a2a34;color:#e7e7ea;border-radius:8px;padding:6px 8px}
-    select{background:#11131a;border:1px solid #2a2a34;color:#e7e7ea;border-radius:8px;padding:6px 8px}
-    button{background:#1a1f2b;border:1px solid #2a2a34;color:#e7e7ea;border-radius:8px;padding:8px 10px;cursor:pointer}
-    .row{display:flex;gap:6px;align-items:center;margin:6px 0}
-    .stack{display:flex;flex-direction:column;gap:6px}
-    .subtle{opacity:.8}
-    .pill{display:inline-flex;gap:6px;align-items:center;padding:2px 8px;border:1px solid #2a2a34;border-radius:999px;background:#131722;font-size:12px}
-    .grid{display:grid;grid-template-columns: 1fr 1fr;gap:12px}
-    .list{padding:8px;border:1px dashed #2a2a34;border-radius:10px;background:#0f1219}
-    .cat{padding:8px;border:1px solid #2a2a34;border-radius:10px;background:#0f1219;margin:8px 0}
-    .ch{display:flex;gap:6px;align-items:center;margin:6px 0}
-    .muted{opacity:.6}
-    .bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .right{display:flex;gap:8px;align-items:center}
-    .select{background:#11131a;border:1px solid #2a2a34;color:#e7e7ea;border-radius:8px;padding:6px 8px}
-    .draggable {cursor: grab;}
-    .drag-ghost {opacity: 0.5; background: #22242a;}
-    .drag-over {border: 2px dashed #8ab4ff; outline-offset: 2px; background: #1a1f2b;}
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    /* Added: clearer handles and dropzone styling */
-    .grab{ -webkit-user-select:none; user-select:none; touch-action:none; }
-    .grab{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#1a1f2b;border:1px solid #2a2a34;margin-right:6px;cursor:grab;user-select:none}
-    .grab:active{cursor:grabbing}
-    .row,.ch,.cat>.row{position:relative}
-    .drag-ghost{opacity:.55;transform:scale(.98)}
-    .drag-over{border:2px dashed #8ab4ff !important;background:#131722 !important}
-    .dropzone{transition:background .12s ease,border .12s ease}
-    /* Make empty channel lists easy to drop into */
-    .ch-list{min-height:24px;padding:6px;border-radius:8px}
-    .ch-list:empty::after{content:"(drop channels here)";opacity:.45;font-size:12px}
+  <!-- SortableJS (vanilla) -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
+
+  <style>
+    :root {
+      --bg: #0f1221;
+      --card: #151936;
+      --muted: #99a3ff;
+      --text: #e7e9ff;
+      --border: #2b3070;
+      --handle: #7a86ff;
+      --accent: #c5c9ff;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-user-select: none; /* Safari fix: stop selecting text while dragging */
+      user-select: none;
+      -webkit-user-drag: none;   /* Safari fix: stop image/element drag ghosting */
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #0f1221 0%, #0b0e1a 100%);
+      color: var(--text);
+    }
+    .shell {
+      max-width: 1100px;
+      margin: 32px auto;
+      padding: 0 16px 48px;
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+    .card h2 {
+      margin: 0;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+      font-size: 16px;
+      letter-spacing: 0.3px;
+      color: var(--accent);
+    }
+
+    .list {
+      margin: 0;
+      padding: 8px;
+      list-style: none;
+      min-height: 44px;
+    }
+    .item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+    }
+    .item.is-dragging {
+      opacity: 0.85;
+      transform: scale(1.01);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+    }
+    .ghost {
+      opacity: 0.35;
+    }
+    .drag-handle {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      border-radius: 4px;
+      background: linear-gradient(180deg, var(--handle), #5460ff);
+      box-shadow: inset 0 0 0 2px rgba(0,0,0,0.25);
+      cursor: grab;
+    }
+    .drag-handle:active { cursor: grabbing; }
+
+    .role-name, .category-name, .channel-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 14px;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .category {
+      margin: 8px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .category-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border);
+    }
+    .channels-list {
+      padding: 8px;
+      list-style: none;
+      min-height: 38px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+    }
+    button, .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover, .btn:hover {
+      background: rgba(255,255,255,0.07);
+    }
+
+    .save-row {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    textarea#layout-json {
+      width: 100%;
+      min-height: 140px;
+      background: #0c0f1d;
+      color: #b7c0ff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      resize: vertical;
+    }
   </style>
 </head>
+
 <body>
-  <div class="bar">
-    <div>
-      <strong>🧱 MessiahBot — Server Builder</strong>
-      <span id="who" class="pill muted" style="margin-left:8px;">not signed in</span>
+  <div class="shell">
+    <h1>MessiahBot — Server Layout Builder</h1>
+    <p class="muted">Drag to reorder roles, categories, and channels. Move channels between categories by dragging into another category’s list.</p>
+
+    <div class="grid">
+      <!-- ROLES -->
+      <section class="card" id="roles-card">
+        <h2>Roles (top = highest)</h2>
+        <ul class="list" id="roles-list">
+          <!-- Example items. On your server render, loop roles here with stable IDs -->
+          <!--
+          {% for r in roles %}
+            <li class="item" data-role-id="{{ r.id }}">
+              <span class="drag-handle" aria-hidden="true"></span>
+              <span class="role-name">{{ r.name }}</span>
+            </li>
+          {% endfor %}
+          -->
+        </ul>
+        <div class="toolbar">
+          <button type="button" id="add-role">Add Role</button>
+        </div>
+      </section>
+
+      <!-- CATEGORIES & CHANNELS -->
+      <section class="card" id="cats-card">
+        <h2>Categories & Channels</h2>
+
+        <div id="categories-list">
+          <!-- Each category contains its own channels list -->
+          <!-- Example structure; on your server render categories + their channels -->
+          <!--
+          {% for c in categories %}
+            <div class="category" data-category-id="{{ c.id }}">
+              <div class="category-header item">
+                <span class="drag-handle" aria-hidden="true"></span>
+                <span class="category-name">{{ c.name }}</span>
+              </div>
+              <ul class="channels-list" data-category-id="{{ c.id }}">
+                {% for ch in c.channels %}
+                  <li class="item" data-channel-id="{{ ch.id }}">
+                    <span class="drag-handle" aria-hidden="true"></span>
+                    <span class="channel-name">{{ ch.name }}</span>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endfor %}
+          -->
+        </div>
+
+        <div class="toolbar">
+          <button type="button" id="add-category">Add Category</button>
+          <button type="button" id="add-channel-to-first">Add Channel to First Category</button>
+        </div>
+      </section>
     </div>
-    <div class="right">
-      <select id="guildPicker" class="select" style="display:none;"></select>
-      <a id="inviteBtn" class="pill" href="#" target="_blank" rel="noopener">Invite Bot</a>
-      <a id="loginBtn" class="pill" href="/login">Login with Discord</a>
-      <a id="logoutBtn" class="pill" href="/logout" style="display:none;">Logout</a>
+
+    <!-- SAVE / JSON MIRROR -->
+    <div class="save-row">
+      <form id="save-form" method="POST" action="/submit-server-layout" style="flex:1">
+        <textarea id="layout-json" name="layout_json" readonly></textarea>
+        <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+          <button type="submit">Save Layout</button>
+          <span class="muted">JSON updates live as you drag.</span>
+        </div>
+      </form>
     </div>
   </div>
 
-  <p class="subtle">Enter your Guild ID, then <strong>Load From Live</strong> or <strong>Load Snapshot</strong>, edit, and <strong>Save</strong>.</p>
-
-  <p>
-    <a href="/dbcheck" target="_blank">/dbcheck</a> •
-    <a href="/routes" target="_blank">/routes</a> •
-    <a href="/whoami" target="_blank">/whoami</a>
-  </p>
-
-  <form id="layoutForm" class="stack" name="layoutForm">
-    <div class="row">
-      <label>Guild ID <input type="text" id="guild_id" required placeholder="123456789012345678"></label>
-      <button type="button" id="loadLatestBtn">Load Snapshot</button>
-      <button type="button" id="loadLiveBtn">Load From Live</button>
-      <span id="status" class="pill">idle</span>
-    </div>
-
-    <fieldset>
-      <legend>Mode</legend>
-      <label><input type="radio" name="mode" value="build" checked> Build</label>
-      <label><input type="radio" name="mode" value="update"> Update</label>
-    </fieldset>
-
-    <section>
-      <h3>Roles</h3>
-      <div id="roles" class="list"></div>
-      <button type="button" id="addRoleBtn">Add Role</button>
-    </section>
-
-    <section>
-      <h3>Categories & Channels</h3>
-      <div id="cats" class="list"></div>
-      <button type="button" id="addCatBtn">Add Category</button>
-    </section>
-
-    <section>
-      <h3>Danger Zone</h3>
-      <label><input type="checkbox" id="prune_roles"> Delete roles not listed here</label><br>
-      <label><input type="checkbox" id="prune_categories"> Delete categories not listed here (only if empty)</label><br>
-      <label><input type="checkbox" id="prune_channels"> Delete channels not listed here</label>
-    </section>
-
-    <div class="row">
-      <button type="button" id="saveBtn">Save Layout</button>
-      <span id="saveNote" class="pill muted"></span>
-    </div>
-  </form>
-
   <script>
-  // ---------- utilities ----------
-  function $(sel, el){ return (el||document).querySelector(sel); }
-  function $all(sel, el){ return Array.prototype.slice.call((el||document).querySelectorAll(sel)); }
-  var statusPill = $("#status");
-  function setStatus(txt){ statusPill.textContent = txt; }
-
-  // ---------- Drag & Drop helpers ----------
-  const DND = {
-    draggedEl: null,
-    armed: false,
-    // a tiny transparent drag image so Safari reliably starts dragging
-    shim: (() => {
-      const c = document.createElement('canvas');
-      c.width = 1; c.height = 1;
-      return c;
-    })()
-  };
-
-  function makeDraggableItem(el){
-    // handle button
-    if (!el.querySelector(".grab")){
-      const h = document.createElement("span");
-      h.className = "grab";
-      h.title = "Drag to reorder";
-      h.textContent = "⋮⋮";
-      const first = el.firstElementChild;
-      if (first) el.insertBefore(h, first); else el.appendChild(h);
-    }
-
-    // Always draggable: Safari requires the attribute to exist before interaction
-    el.setAttribute("draggable", "true");
-    el.classList.add("draggable");
-
-    const handle = el.querySelector(".grab");
-
-    // Arm only if user starts on the handle (prevents drags while editing inputs)
-    const armMouse = () => { DND.armed = true; };
-    const armTouch = (e) => { DND.armed = true; e.preventDefault(); };
-    handle.addEventListener("mousedown", armMouse, {passive:true});
-    handle.addEventListener("touchstart", armTouch, {passive:false});
-
-    const disarm = () => { DND.armed = false; };
-    document.addEventListener("mouseup", disarm, {passive:true});
-    document.addEventListener("touchend", disarm, {passive:true});
-    document.addEventListener("touchcancel", disarm, {passive:true});
-
-    el.addEventListener("dragstart", (e) => {
-      // Only drag if armed by the handle
-      if (!DND.armed) { e.preventDefault(); return; }
-      DND.draggedEl = el;
-      el.classList.add("drag-ghost");
-      // Force dataTransfer on all browsers (Safari needs this)
-      try {
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", "drag");
-        e.dataTransfer.setDragImage?.(DND.shim, 0, 0);
-      } catch(_) {}
-    });
-
-    el.addEventListener("dragend", () => {
-      el.classList.remove("drag-ghost");
-      DND.draggedEl = null;
-      DND.armed = false;
-      $all(".drag-over").forEach(n => n.classList.remove("drag-over"));
-    });
-  }
-
-function makeContainerSortable(container, itemSelector, acceptExternal){
-  if (container.dataset.sortable) return; // idempotent
-  container.dataset.sortable = "1";
-  container.classList.add("dropzone");
-
-  container.addEventListener("dragover", (e) => {
-    const dragged = DND.draggedEl;
-    if (!dragged) return;
-    if (!acceptExternal && dragged.parentElement !== container) return;
-    e.preventDefault(); // allow drop
-    try { e.dataTransfer.dropEffect = "move"; } catch(_) {} // Safari needs this
-    container.classList.add("drag-over");
-  });
-
-  container.addEventListener("dragleave", () => {
-    container.classList.remove("drag-over");
-  });
-
-  container.addEventListener("drop", (e) => {
-    const dragged = DND.draggedEl;
-    if (!dragged) return;
-    e.preventDefault();
-    container.classList.remove("drag-over");
-    const afterEl = getDragAfterElement(container, e.clientY, itemSelector);
-    if (afterEl == null) container.appendChild(dragged);
-    else container.insertBefore(dragged, afterEl);
-  });
-}
-
-function getDragAfterElement(container, y, itemSelector){
-  const items = [...container.querySelectorAll(`${itemSelector}:not(.drag-ghost)`)];
-  let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
-  for (const child of items){
-    const box = child.getBoundingClientRect();
-    const offset = y - box.top - box.height / 2;
-    if (offset < 0 && offset > closest.offset){
-      closest = { offset, element: child };
-    }
-  }
-  return closest.element;
-}
-
-// Convenience wiring
-function enableRoleDnD(){
-  const list = $("#roles");
-  $all("#roles > .row").forEach(makeDraggableItem);
-  makeContainerSortable(list, ":scope > .row", true);
-}
-
-function enableCatChanDnD(){
-  const catsWrap = $("#cats");
-  $all("#cats > .cat").forEach(cat => { makeDraggableItem(cat); });
-  makeContainerSortable(catsWrap, ":scope > .cat", true);
-  catsWrap.classList.add('dropzone');
-
-  $all("#cats .cat").forEach(cat => {
-    const chList = $(".ch-list", cat);
-    if (!chList) return;
-    $all(".ch", chList).forEach(ch => makeDraggableItem(ch));
-    makeContainerSortable(chList, ":scope > .ch", true);
-  });
-}
-
-  // Return direct children of `container` that match a class (no :scope)
-  function childrenByClass(container, className){
-    return Array.prototype.filter.call(container.children, el => el.classList && el.classList.contains(className));
-  }
-
-  // Direct children by class name (no :scope needed; works in Safari/WebKit)
-  function directChildrenByClass(container, className) {
-    const out = [];
-    for (const el of container.children) {
-      if (el.classList && el.classList.contains(className)) out.push(el);
-    }
-    return out;
-  }
-
-  function makeContainerSortable(container, childClassName, acceptExternal){
-    if (container.dataset.sortable) return;
-    container.dataset.sortable = "1";
-    container.classList.add("dropzone");
-
-    container.addEventListener("dragover", e => {
-      const dragged = DND.draggedEl;
-      if (!dragged) return;
-      if (!acceptExternal && dragged.parentElement !== container) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move"; // Safari needs this
-      container.classList.add("drag-over");
-    });
-
-    container.addEventListener("dragleave", () => {
-      container.classList.remove("drag-over");
-    });
-
-    container.addEventListener("drop", e => {
-      const dragged = DND.draggedEl;
-      if (!dragged) return;
-      e.preventDefault();
-      container.classList.remove("drag-over");
-      const afterEl = getDragAfterElement(container, e.clientY, childClassName);
-      if (afterEl == null) container.appendChild(dragged);
-      else container.insertBefore(dragged, afterEl);
-    });
-  }
-
-  function getDragAfterElement(container, y, childClassName){
-    const items = directChildrenByClass(container, childClassName)
-      .filter(el => !el.classList.contains("drag-ghost"));
-
-    let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
-    for (const child of items){
-      const box = child.getBoundingClientRect();
-      const offset = y - box.top - box.height / 2;
-      if (offset < 0 && offset > closest.offset){
-        closest = { offset, element: child };
-      }
-    }
-    return closest.element;
-  }
-
-  function enableRoleDnD(){
-    const list = document.getElementById("roles");
-    childrenByClass(list, "row").forEach(makeDraggableItem);
-    makeContainerSortable(list, "row", true);
-  }
-
-  function enableCatChanDnD(){
-    const catsWrap = document.getElementById("cats");
-    childrenByClass(catsWrap, "cat").forEach(cat => makeDraggableItem(cat));
-    makeContainerSortable(catsWrap, "cat", true);
-    catsWrap.classList.add('dropzone');
-
-    childrenByClass(catsWrap, "cat").forEach(cat => {
-      const chList = cat.querySelector(".ch-list");
-      if (!chList) return;
-      childrenByClass(chList, "ch").forEach(ch => makeDraggableItem(ch));
-      makeContainerSortable(chList, "ch", true); // allow cross-category moves
-    });
-  }
-
-  // ---------- Roles UI ----------
-  function addRoleRow(name, color){
-    if (!name) name = "";
-    if (!color) color = "#000000";
-    var d = document.createElement('div');
-    d.className = "row";
-    d.setAttribute("draggable", "true");
-    d.innerHTML =
-      '<span class="grab" title="Drag">⋮⋮</span>'+
-      '<input placeholder="Role" name="role_name" value="'+name+'">'+
-      '<input type="color" name="role_color" value="'+color+'">'+
-      '<button type="button" class="del">✕</button>';
-    d.querySelector(".del").onclick = function(){ d.remove(); };
-    makeDraggableItem(d);
-
-    var rolesEl = document.getElementById('roles');
-    makeContainerSortable(rolesEl, "row", true);
-    rolesEl.appendChild(d);
-  }
-
-  // ---------- Categories/Channels UI ----------
-  function catBox(name){
-    if (!name) name = "";
-    var wrap = document.createElement('div');
-    wrap.className = "cat";
-    wrap.innerHTML =
-      '<div class="row">'+
-        '<span class="grab" title="Drag">⋮⋮</span>'+
-        '<strong>Category</strong>'+
-        '<input placeholder="Category name (blank = uncategorized bucket)" class="cat-name" value="'+name+'">'+
-        '<button type="button" class="addChan">+ Channel</button>'+
-        '<button type="button" class="delCat">✕</button>'+
-      '</div>'+
-      '<div class="stack ch-list"></div>';
-    wrap.querySelector(".delCat").onclick = function(){ wrap.remove(); };
-
-    wrap.querySelector(".addChan").onclick = function(){
-      var row = channelRow({});
-      $(".ch-list", wrap).appendChild(row);
-      makeDraggableItem(row);
-      makeContainerSortable($(".ch-list", wrap), "ch", true);
+    // ---- Example seed data (remove when server renders real data) ----
+    const seed = {
+      roles: [
+        { id: "role_mod", name: "Moderator" },
+        { id: "role_vip", name: "VIP" },
+        { id: "role_member", name: "Member" }
+      ],
+      categories: [
+        {
+          id: "cat_announcements",
+          name: "Announcements",
+          channels: [
+            { id: "ch_updates", name: "updates" },
+            { id: "ch_schedule", name: "schedule" }
+          ]
+        },
+        {
+          id: "cat_general",
+          name: "General",
+          channels: [
+            { id: "ch_chat", name: "chat" },
+            { id: "ch_media", name: "media-share" }
+          ]
+        }
+      ]
     };
 
-    makeDraggableItem(wrap);
-    makeContainerSortable(document.getElementById('cats'), "cat", true);
-    makeContainerSortable($(".ch-list", wrap), "ch", true);
-
-    document.getElementById('cats').classList.add('dropzone');
-
-    return wrap;
-  }
-
-  function channelRow(ch){
-    ch = ch || {};
-    var name = ch.name || "";
-    var type = (ch.type || "text").toLowerCase();
-    var original = ch.original_type ? ch.original_type.toLowerCase() : null;
-    var topic = ch.topic || (ch.options && ch.options.topic) || "";
-
-    var full = ["text","announcement","voice","stage","forum"];
-    var opts = full.slice(0);
-    var lockedLabel = "";
-    if (original){
-      if (["text","announcement"].indexOf(original) >= 0){ opts = ["text","announcement"]; }
-      else if (["voice","stage"].indexOf(original) >= 0){ opts = ["voice","stage"]; }
-      else if (original === "forum"){ opts = ["forum"]; lockedLabel = "Forum · locked"; }
-    }
-    var useType = (opts.indexOf(type) >= 0) ? type : (original || "text");
-
-    var d = document.createElement('div');
-    d.className = "ch";
-    d.setAttribute("draggable", "true");
-
-    var selectHTML;
-    if (opts.length === 1 && opts[0] === "forum"){
-      selectHTML =
-        '<span class="pill">'+(lockedLabel || 'Forum · locked')+'</span>'+
-        '<input type="hidden" class="ch-type" value="forum">';
-    } else {
-      var options = '';
-      for (var i=0;i<opts.length;i++){
-        var o = opts[i];
-        options += '<option value="'+o+'"'+(o===useType?' selected':'')+'>'+o+'</option>';
-      }
-      selectHTML = '<select class="ch-type">'+options+'</select>';
-    }
-
-    d.innerHTML =
-      '<span class="grab" title="Drag">⋮⋮</span>'+
-      '<input class="ch-name" placeholder="Channel name" value="'+name+'">'+
-      selectHTML +
-      '<input class="ch-topic" placeholder="Topic / Description" value="'+topic+'">'+
-      '<button type="button" class="del">✕</button>';
-    d.setAttribute("data-original-type", original || "");
-    d.querySelector(".del").onclick = function(){ d.remove(); };
-
-    makeDraggableItem(d);
-    return d;
-  }
-
-  // ---------- hydrate / collect ----------
-  function hydrate(p){
-    // Mode
-    var mode = (p.mode || 'build');
-    var radio = document.querySelector('input[name="mode"][value="' + mode + '"]');
-    if (radio) radio.checked = true;
-
-    // roles
-    var R = $("#roles"); R.innerHTML = "";
-    var roles = p.roles || [];
-    for (var i=0;i<roles.length;i++){
-      addRoleRow(roles[i].name || "", roles[i].color || "#000000");
-    }
-    if (roles.length === 0) addRoleRow("", "#000000");
-    enableRoleDnD();
-
-    // categories + channels
-    var C = $("#cats"); C.innerHTML = "";
-    if (Array.isArray(p.categories) && p.categories.length && typeof p.categories[0] === "object"){
-      for (var ci=0;ci<p.categories.length;ci++){
-        var cat = p.categories[ci] || {};
-        var box = catBox(cat.name || "");
-        var listEl = $(".ch-list", box);
-        var chans = cat.channels || [];
-        for (var j=0;j<chans.length;j++){
-          listEl.appendChild(channelRow(chans[j]));
-        }
-        C.appendChild(box);
-      }
-    } else {
-      var catNames = p.categories || [];
-      var map = {};
-      for (var k=0;k<catNames.length;k++){
-        var nm = catNames[k] || "";
-        var bx = catBox(nm);
-        C.appendChild(bx);
-        map[(nm||"").toLowerCase()] = $(".ch-list", bx);
-      }
-      var hadUn = false;
-      var chansFlat = p.channels || [];
-      for (var m=0;m<chansFlat.length;m++){
-        var ch = chansFlat[m] || {};
-        var parent = (ch.category || "").toLowerCase();
-        var row = channelRow(ch);
-        if (map[parent]) map[parent].appendChild(row);
-        else {
-          if (!hadUn){
-            var u = catBox("");
-            C.appendChild(u);
-            map[""] = $(".ch-list", u);
-            hadUn = true;
-          }
-          map[""].appendChild(row);
-        }
-      }
-      if (C.children.length === 0){
-        C.appendChild(catBox(""));
-      }
-    }
-
-    // make sure newly created channels have handles wired
-    $all('#cats .ch').forEach(makeDraggableItem);
-    enableCatChanDnD();
-
-    // danger zone
-    $("#prune_roles").checked = !!(p.prune && p.prune.roles);
-    $("#prune_categories").checked = !!(p.prune && p.prune.categories);
-    $("#prune_channels").checked = !!(p.prune && p.prune.channels);
-  }
-
-  function collectPayload(){
-    var mode = document.forms.layoutForm.mode.value;
-
-    // roles
-    var roles = [];
-    $all('#roles .row').forEach(function(r){
-      var name = r.querySelector('input[name="role_name"]').value.trim();
-      var color = r.querySelector('input[name="role_color"]').value || "#000000";
-      if (name){ roles.push({name:name, color:color}); }
-    });
-
-    // categories (nested)
-    var categories = [];
-    $all('#cats .cat').forEach(function(catEl){
-      var cname = $('.cat-name', catEl).value.trim();
-      var channels = [];
-      $all('.ch-list .ch', catEl).forEach(function(chEl){
-        var nm = $('.ch-name', chEl).value.trim();
-        if (!nm) return;
-        var typeSel = $('.ch-type', chEl);
-        var typ = typeSel ? typeSel.value : "forum";
-        var topic = ($('.ch-topic', chEl) && $('.ch-topic', chEl).value) || "";
-        var original_type = chEl.getAttribute('data-original-type') || null;
-        channels.push({name:nm, type:typ, original_type:original_type, topic:topic});
-      });
-      categories.push({name:cname, channels:channels});
-    });
-
-    var prune = {
-      roles: $("#prune_roles").checked,
-      categories: $("#prune_categories").checked,
-      channels: $("#prune_channels").checked
-    };
-
-    return { mode:mode, roles:roles, categories:categories, prune:prune };
-  }
-
-  // ---------- header login/guild picker ----------
-  (async function initHeader(){
-    try{
-      const r = await fetch("/whoami");
-      const info = await r.json();
-      const who = $("#who");
-      const loginBtn = $("#loginBtn");
-      const logoutBtn = $("#logoutBtn");
-      const picker = $("#guildPicker");
-      const inviteBtn = $("#inviteBtn");
-
-      // Fill invite link from env
-      try {
-        const envr = await fetch("/envcheck");
-        const env = await envr.json();
-        if (env.client_id) {
-          const cid = encodeURIComponent(env.client_id);
-          inviteBtn.href = "https://discord.com/oauth2/authorize?client_id=" + cid + "&scope=bot+applications.commands&permissions=8&integration_type=0";
-        } else {
-          inviteBtn.href = "#";
-        }
-      } catch(_e) {
-        inviteBtn.href = "#";
-      }
-
-      if (info.logged_in && info.me){
-        who.textContent = info.me.username + "#" + info.me.discriminator;
-        who.classList.remove("muted");
-        loginBtn.style.display = "none";
-        logoutBtn.style.display = "inline-flex";
-
-        const ADMINISTRATOR = 0x00000008;
-        const MANAGE_GUILD  = 0x00000020;
-
-        // Filter guilds: owner OR has ADMINISTRATOR/MANAGE_GUILD
-        const guilds = (info.guilds || []).filter(g => {
-          if (g.owner) return true;
-          const p = typeof g.permissions === "string" ? Number(g.permissions) : (g.permissions|0);
-          return (p & (ADMINISTRATOR | MANAGE_GUILD)) !== 0;
+    // Render the seed into DOM if lists are empty (dev/demo only)
+    function mountSeed() {
+      const rolesList = document.getElementById('roles-list');
+      if (!rolesList.children.length) {
+        seed.roles.forEach(r => {
+          rolesList.insertAdjacentHTML('beforeend', `
+            <li class="item" data-role-id="${r.id}">
+              <span class="drag-handle" aria-hidden="true"></span>
+              <span class="role-name">${r.name}</span>
+            </li>
+          `);
         });
-
-        if (guilds.length){
-          picker.innerHTML = '';
-          guilds.forEach(g => {
-            const opt = document.createElement('option');
-            opt.value = g.id;
-            opt.textContent = g.name || g.id;
-            picker.appendChild(opt);
+      }
+      const catsWrap = document.getElementById('categories-list');
+      if (!catsWrap.children.length) {
+        seed.categories.forEach(c => {
+          const catHtml = `
+            <div class="category" data-category-id="${c.id}">
+              <div class="category-header item">
+                <span class="drag-handle" aria-hidden="true"></span>
+                <span class="category-name">${c.name}</span>
+              </div>
+              <ul class="channels-list" data-category-id="${c.id}"></ul>
+            </div>
+          `;
+          catsWrap.insertAdjacentHTML('beforeend', catHtml);
+          const ul = catsWrap.lastElementChild.querySelector('.channels-list');
+          c.channels.forEach(ch => {
+            ul.insertAdjacentHTML('beforeend', `
+              <li class="item" data-channel-id="${ch.id}">
+                <span class="drag-handle" aria-hidden="true"></span>
+                <span class="channel-name">${ch.name}</span>
+              </li>
+            `);
           });
-          picker.style.display = "inline-flex";
-          picker.onchange = function(){
-            $("#guild_id").value = picker.value;
-          };
-          // prefill the first
-          $("#guild_id").value = picker.value;
-        } else {
-          picker.style.display = "none";
-        }
-      } else {
-        who.textContent = "not signed in";
-        who.classList.add("muted");
-        loginBtn.style.display = "inline-flex";
-        logoutBtn.style.display = "none";
-        picker.style.display = "none";
-      }
-    }catch(e){
-      console.warn("whoami failed", e);
-    }
-  })();
-
-  // ---------- buttons ----------
-  $("#addRoleBtn").onclick = function(){ addRoleRow("", "#000000"); };
-  $("#addCatBtn").onclick = function(){ $("#cats").appendChild(catBox("")); };
-
-  $("#loadLiveBtn").onclick = async function(){
-    var gid = $("#guild_id").value.trim();
-    if (!gid){ alert("Enter Guild ID"); return; }
-    setStatus("loading live…");
-    try{
-      var res = await fetch("/api/live_layout/" + encodeURIComponent(gid));
-      var data = await res.json();
-      if (!data.ok){ alert(data.error || "Failed to load live"); setStatus("idle"); return; }
-      hydrate(data.payload || {});
-      setStatus("live loaded");
-    }catch(e){
-      setStatus("idle");
-      alert("Failed to load live");
-    }
-  };
-
-  $("#loadLatestBtn").onclick = async function(){
-    var gid = $("#guild_id").value.trim();
-    if (!gid){ alert("Enter Guild ID"); return; }
-    setStatus("loading snapshot…");
-    try{
-      var res = await fetch("/api/layout/" + encodeURIComponent(gid) + "/latest");
-      var data = await res.json();
-      if (!data.ok){ alert(data.error || "No layout"); setStatus("idle"); return; }
-      hydrate(data.payload || {});
-      setStatus("snapshot v" + data.version + " loaded");
-    }catch(e){
-      setStatus("idle");
-      alert("Failed to load snapshot");
-    }
-  };
-
-  $("#saveBtn").onclick = async function(){
-    var gid = $("#guild_id").value.trim();
-    if (!gid){ alert("Enter Guild ID"); return; }
-    var payload = collectPayload();
-
-    // flatten channels for validation + legacy readers
-    var flatChannels = [];
-    for (var i=0;i<payload.categories.length;i++){
-      var c = payload.categories[i];
-      var cname = c.name || "";
-      var chs = c.channels || [];
-      for (var j=0;j<chs.length;j++){
-        var ch = chs[j];
-        flatChannels.push({
-          name: ch.name,
-          type: ch.type,
-          original_type: ch.original_type || null,
-          category: cname,
-          options: { topic: ch.topic || "" }
         });
       }
     }
+    mountSeed();
+    // ---- end seed ----
 
-    var saveBody = {
-      mode: payload.mode,
-      roles: payload.roles,
-      categories: payload.categories,
-      channels: flatChannels,
-      prune: payload.prune
-    };
+    // Utility: build JSON model from DOM
+    function buildLayoutJSON() {
+      const roles = [...document.querySelectorAll('#roles-list > .item')]
+        .map((li, idx) => ({
+          id: li.dataset.roleId,
+          position: idx
+        }));
 
-    setStatus("saving…");
-    try{
-      var res = await fetch("/api/layout/" + encodeURIComponent(gid), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(saveBody)
+      const categories = [...document.querySelectorAll('#categories-list > .category')].map((cat, cIdx) => {
+        const catId = cat.dataset.categoryId;
+        const name = cat.querySelector('.category-name')?.textContent?.trim() || '';
+        const channels = [...cat.querySelectorAll('.channels-list > .item')].map((ch, chIdx) => ({
+          id: ch.dataset.channelId,
+          position: chIdx
+        }));
+        return { id: catId, name, position: cIdx, channels };
       });
-      var data = await res.json();
-      setStatus("saved");
-      if (data.warnings && data.warnings.length){
-        alert("Saved with warnings:\n\n" + data.warnings.join("\n"));
-      } else if (data.ok && data.no_change){
-        alert("No changes detected. Current version is still " + data.version + ".");
-      } else if (data.ok){
-        alert("Saved version " + data.version);
-      } else {
-        alert(data.error || "Error");
-      }
-    }catch(e){
-      setStatus("idle");
-      alert("Failed to save");
-    }
-  };
 
-  // ---------- initial blank rows + DnD ----------
-  addRoleRow("", "#000000");
-  $("#cats").appendChild(catBox(""));
-  enableRoleDnD();
-  enableCatChanDnD();
+      return { roles, categories };
+    }
+
+    // Mirror JSON to textarea
+    function syncTextarea() {
+      const ta = document.getElementById('layout-json');
+      const json = buildLayoutJSON();
+      ta.value = JSON.stringify(json, null, 2);
+    }
+
+    // Re-init channels Sortables after DOM changes
+    function initChannelLists() {
+      document.querySelectorAll('.channels-list').forEach(ul => {
+        if (ul._sortableInitialized) return; // avoid double init
+        ul._sortableInitialized = true;
+
+        new Sortable(ul, {
+          group: { name: 'channels', pull: true, put: true }, // cross-category moves
+          handle: '.drag-handle',
+          animation: 150,
+          forceFallback: true,      // improves Safari reliability
+          fallbackTolerance: 5,
+          bubbleScroll: true,
+          scroll: true,
+          ghostClass: 'ghost',
+          dragClass: 'is-dragging',
+          onSort: syncTextarea,
+          onAdd: syncTextarea,
+          onRemove: syncTextarea,
+          onEnd: syncTextarea
+        });
+      });
+    }
+
+    // Initialize Roles and Categories Sortables
+    function initSortables() {
+      // Roles (single list)
+      const rolesList = document.getElementById('roles-list');
+      new Sortable(rolesList, {
+        handle: '.drag-handle',
+        animation: 150,
+        forceFallback: true,
+        fallbackTolerance: 5,
+        ghostClass: 'ghost',
+        dragClass: 'is-dragging',
+        onSort: syncTextarea,
+        onEnd: syncTextarea
+      });
+
+      // Categories (container of .category cards)
+      const catsContainer = document.getElementById('categories-list');
+      new Sortable(catsContainer, {
+        handle: '.category-header .drag-handle',
+        animation: 150,
+        forceFallback: true,
+        fallbackTolerance: 5,
+        ghostClass: 'ghost',
+        dragClass: 'is-dragging',
+        draggable: '.category',
+        onSort: syncTextarea,
+        onEnd: syncTextarea
+      });
+
+      // Channel lists inside each category
+      initChannelLists();
+
+      // Keep JSON updated initially
+      syncTextarea();
+    }
+
+    // Call after Sortable library is loaded
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      initSortables();
+    } else {
+      window.addEventListener('DOMContentLoaded', initSortables);
+    }
+
+    // Demo add buttons (optional)
+    document.getElementById('add-role')?.addEventListener('click', () => {
+      const id = 'role_' + Math.random().toString(36).slice(2, 7);
+      document.getElementById('roles-list').insertAdjacentHTML('beforeend', `
+        <li class="item" data-role-id="${id}">
+          <span class="drag-handle" aria-hidden="true"></span>
+          <span class="role-name">New Role</span>
+        </li>
+      `);
+      syncTextarea();
+    });
+
+    document.getElementById('add-category')?.addEventListener('click', () => {
+      const id = 'cat_' + Math.random().toString(36).slice(2, 7);
+      const html = `
+        <div class="category" data-category-id="${id}">
+          <div class="category-header item">
+            <span class="drag-handle" aria-hidden="true"></span>
+            <span class="category-name">New Category</span>
+          </div>
+          <ul class="channels-list" data-category-id="${id}"></ul>
+        </div>
+      `;
+      document.getElementById('categories-list').insertAdjacentHTML('beforeend', html);
+      initChannelLists(); // init Sortable on the new .channels-list
+      syncTextarea();
+    });
+
+    document.getElementById('add-channel-to-first')?.addEventListener('click', () => {
+      const first = document.querySelector('.channels-list');
+      if (!first) return;
+      const id = 'ch_' + Math.random().toString(36).slice(2, 7);
+      first.insertAdjacentHTML('beforeend', `
+        <li class="item" data-channel-id="${id}">
+          <span class="drag-handle" aria-hidden="true"></span>
+          <span class="channel-name">new-channel</span>
+        </li>
+      `);
+      syncTextarea();
+    });
+
+    // Optional: handle form submit (Flask endpoint /submit-server-layout expects 'layout_json')
+    document.getElementById('save-form')?.addEventListener('submit', (e) => {
+      // Ensure JSON is up to date at submit
+      syncTextarea();
+      // default POST form submit — server should parse request.form['layout_json']
+    });
   </script>
 </body>
 </html>
