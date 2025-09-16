@@ -341,9 +341,9 @@ def live_layout(guild_id: str):
         return jsonify({"ok": False, "error": f"Discord channels error {r_channels.status_code}: {r_channels.text}"}), 502
     channels_json = r_channels.json()
 
-    # Convert roles (skip @everyone and managed)
+    # Convert roles (skip @everyone and managed) and sort by position DESC (Discord: higher = higher)
     roles = []
-    for r in roles_json:
+    for r in sorted(roles_json, key=lambda x: x.get("position", 0), reverse=True):
         if r.get("managed"):
             continue
         if r.get("name") == "@everyone":
@@ -351,13 +351,23 @@ def live_layout(guild_id: str):
         color_int = r.get("color") or 0
         roles.append({"name": r.get("name", ""), "color": f"#{color_int:06x}"})
 
-    # Categories and map
-    categories = [c["name"] for c in channels_json if c.get("type") == 4]
-    cat_map = {c["id"]: c["name"] for c in channels_json if c.get("type") == 4}
+    # Categories: build ordered objects with position
+    cats = {}
+    for c in channels_json:
+        if c.get("type") == 4:
+            cats[c["id"]] = {
+                "id": c["id"],
+                "name": c.get("name", "") or "",
+                "position": c.get("position", 0),
+                "channels": []
+            }
+    # Ensure we have an "uncategorized" bucket for channels without parent
+    UNC_KEY = "__uncat__"
+    if UNC_KEY not in cats:
+        cats[UNC_KEY] = {"id": "", "name": "", "position": 10_000_000, "channels": []}
 
     # helper to map Discord API types -> our UI types
     def ui_type(api_type: int) -> str:
-        # https://discord.com/developers/docs/resources/channel#channel-object-channel-types
         if api_type == 0:   # text
             return "text"
         if api_type == 2:   # voice
@@ -372,33 +382,31 @@ def live_layout(guild_id: str):
             return "stage"
         return "text"
 
-    # Sort by 'position' so order is stable
-    def pos(x): return x.get("position", 0)
-    channels_sorted = sorted(channels_json, key=pos)
+    # Sort all channel objects by their 'position' to maintain server order
+    channels_sorted = sorted(channels_json, key=lambda x: x.get("position", 0))
 
-    chans = []
+    # Assign non-category channels to their parent category (or uncategorized), preserving order
     for ch in channels_sorted:
-        t = ch.get("type")
-        name = ch.get("name", "")
-        if t == 4:
-            continue  # categories handled above
+        if ch.get("type") == 4:
+            continue
         parent_id = ch.get("parent_id")
-        parent_name = cat_map.get(parent_id, "") if parent_id else ""
-        t_ui = ui_type(t)
-        topic = ch.get("topic", "")
-        chans.append({
-            "name": name,
-            "type": t_ui,             # desired type (UI can change this)
-            "original_type": t_ui,    # live type (for validation)
-            "category": parent_name,
-            "topic": topic
+        bucket_key = parent_id if parent_id in cats else UNC_KEY
+        t_ui = ui_type(ch.get("type"))
+        cats[bucket_key]["channels"].append({
+            "name": ch.get("name", ""),
+            "type": t_ui,              # desired type (UI may change)
+            "original_type": t_ui,     # live type (for validation)
+            "topic": ch.get("topic", "") or ""
         })
+
+    # Build ordered categories list for payload (ascending by position; uncategorized at end)
+    categories_ordered = sorted(cats.values(), key=lambda c: c["position"])
+    categories_payload = [{"name": c["name"], "channels": c["channels"]} for c in categories_ordered]
 
     payload = {
         "mode": "update",
         "roles": roles,
-        "categories": categories,
-        "channels": chans
+        "categories": categories_payload
     }
     return jsonify({"ok": True, "payload": payload})
 
@@ -829,27 +837,27 @@ _FORM_HTML = r"""
 
     // roles
     var roles = [];
-    $all('#roles .row').forEach(function(r){
+    $all('#roles .row').forEach(function(r, idx){
       var name = r.querySelector('input[name="role_name"]').value.trim();
       var color = r.querySelector('input[name="role_color"]').value || "#000000";
-      if (name){ roles.push({name:name, color:color}); }
+      if (name){ roles.push({name:name, color:color, position: idx}); }
     });
 
     // categories (nested)
     var categories = [];
-    $all('#cats .cat').forEach(function(catEl){
+    $all('#cats .cat').forEach(function(catEl, cIdx){
       var cname = $('.cat-name', catEl).value.trim();
       var channels = [];
-      $all('.ch-list .ch', catEl).forEach(function(chEl){
+      $all('.ch-list .ch', catEl).forEach(function(chEl, chIdx){
         var nm = $('.ch-name', chEl).value.trim();
         if (!nm) return;
         var typeSel = $('.ch-type', chEl);
         var typ = typeSel ? typeSel.value : "forum";
         var topic = ($('.ch-topic', chEl) && $('.ch-topic', chEl).value) || "";
         var original_type = chEl.getAttribute('data-original-type') || null;
-        channels.push({name:nm, type:typ, original_type:original_type, topic:topic});
+        channels.push({name:nm, type:typ, original_type:original_type, topic:topic, position: chIdx});
       });
-      categories.push({name:cname, channels:channels});
+      categories.push({name:cname, position: cIdx, channels:channels});
     });
 
     var prune = {
@@ -985,6 +993,8 @@ _FORM_HTML = r"""
           type: ch.type,
           original_type: ch.original_type || null,
           category: cname,
+          category_position: i,
+          position: j,
           options: { topic: ch.topic || "" }
         });
       }
