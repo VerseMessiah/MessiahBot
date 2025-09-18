@@ -5,6 +5,37 @@ from typing import Dict, Any, List, Optional, Tuple
 import discord
 from discord.ext import commands
 from discord import app_commands
+import time
+import requests, time as _t
+
+# --- Tunables / safety knobs ---
+SNAPSHOT_COOLDOWN_SEC = int(os.getenv("SNAPSHOT_COOLDOWN_SEC", "90"))
+APPLY_EDIT_DELAY_SEC = float(os.getenv("APPLY_EDIT_DELAY_SEC", "0.35"))
+
+_last_rest_snapshot_ts = 0
+
+# CHANGE: small, consistent delay used after every write to Discord to avoid CF/Discord bursts
+async def _throttle():
+    await asyncio.sleep(APPLY_EDIT_DELAY_SEC)
+
+# Single session for HTTP calls
+sess = requests.Session()
+
+# CHANGE: _get now accepts headers (no invisible global),
+#         retries 3x w/ exponential backoff and detects CF 1015 HTML pages even on 200/403
+def _get(url: str, headers: Dict[str, str]):
+    back = 1.0
+    for _ in range(3):
+        r = sess.get(url, headers=headers, timeout=20)
+        # CF/Discord rate/ban pages can be HTML even with 200/403
+        body = r.text or ""
+        if r.status_code in (429, 500, 502, 503, 504) or "temporarily from accessing" in body or "error-1015" in body:
+            _t.sleep(back); back *= 2
+            continue
+        r.raise_for_status()
+        return r
+    r.raise_for_status()
+    return r
 
 # --- Config / DB & Token ---
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -259,19 +290,20 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
     """Fallback: use REST API and emit nested categories with per-channel positions.
     Skips categories whose names are blank/whitespace.
     """
+    # CHANGE: fixed token/base/headers scoping + cooldown logic order
+    global _last_rest_snapshot_ts
     if not token:
         raise RuntimeError("DISCORD_BOT_TOKEN not set; cannot run REST snapshot fallback.")
-    try:
-        import requests
-    except Exception:
-        raise RuntimeError("Python 'requests' is not installed.")
 
     base = "https://discord.com/api/v10"
     headers = {"Authorization": f"Bot {token}"}
 
-    # Roles
-    r_roles = requests.get(f"{base}/guilds/{guild_id}/roles", headers=headers, timeout=20)
-    r_roles.raise_for_status()
+    now = time.time()
+    if now - _last_rest_snapshot_ts < SNAPSHOT_COOLDOWN_SEC:
+        raise RuntimeError(f"REST snapshot cooling down ({SNAPSHOT_COOLDOWN_SEC}s). Try again shortly.")
+
+    # Roles (CHANGE: use resilient _get)
+    r_roles = _get(f"{base}/guilds/{guild_id}/roles", headers)
     roles_json = r_roles.json()
 
     roles: List[Dict[str, Any]] = []
@@ -281,9 +313,8 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
         color_int = int(r.get("color") or 0)
         roles.append({"name": r.get("name",""), "color": f"#{color_int:06x}"})
 
-    # Channels
-    r_channels = requests.get(f"{base}/guilds/{guild_id}/channels", headers=headers, timeout=20)
-    r_channels.raise_for_status()
+    # Channels (CHANGE: use resilient _get)
+    r_channels = _get(f"{base}/guilds/{guild_id}/channels", headers)
     ch_json = r_channels.json()
 
     # Separate categories and non-categories
@@ -350,6 +381,8 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
             "channels": cat_channels.get(cid, [])
         })
 
+    # CHANGE: record last REST snapshot moment only on success
+    _last_rest_snapshot_ts = now
     return {
         "mode": "update",
         "roles": roles,
@@ -388,6 +421,8 @@ async def _apply_community(guild: discord.Guild, community_payload: Dict[str, An
     if is_build and enable_on_build:
         try:
             await guild.edit(community=True)
+            # CHANGE: throttle after write
+            await _throttle()
         except Exception as e:
             print(f"[Messiah] community enable failed: {e}")
 
@@ -407,7 +442,10 @@ async def _apply_community(guild: discord.Guild, community_payload: Dict[str, An
         if ch:
             return ch
         try:
-            return await guild.create_text_channel(nm, reason="MessiahBot community channel")
+            ch = await guild.create_text_channel(nm, reason="MessiahBot community channel")
+            # CHANGE: throttle after create
+            await _throttle()
+            return ch
         except Exception:
             return None
 
@@ -446,6 +484,8 @@ async def _apply_community(guild: discord.Guild, community_payload: Dict[str, An
     if kwargs:
         try:
             await guild.edit(**kwargs)
+            # CHANGE: throttle after write
+            await _throttle()
         except Exception as e:
             print(f"[Messiah] community settings edit failed: {e}")
 
@@ -461,6 +501,8 @@ async def _apply_role_renames(guild: discord.Guild, renames: List[Dict[str, str]
         if role and not role.managed and not role.is_default():
             try:
                 await role.edit(name=dst, reason="Messiah rename (layout)")
+                # CHANGE: throttle after write
+                await _throttle()
             except Exception as e:
                 print(f"[Messiah] role rename failed {role.name} -> {dst}: {e}")
 
@@ -474,6 +516,8 @@ async def _apply_category_renames(guild: discord.Guild, renames: List[Dict[str, 
         if cat:
             try:
                 await cat.edit(name=dst, reason="Messiah rename (layout)")
+                # CHANGE: throttle after write
+                await _throttle()
             except Exception as e:
                 print(f"[Messiah] category rename failed {cat.name} -> {dst}: {e}")
 
@@ -492,6 +536,8 @@ async def _apply_channel_renames(guild: discord.Guild, renames: List[Dict[str, s
         if ch:
             try:
                 await ch.edit(name=dst, reason="Messiah rename (layout)")
+                # CHANGE: throttle after write
+                await _throttle()
             except Exception as e:
                 print(f"[Messiah] channel rename failed {ch.name} -> {dst}: {e}")
 
@@ -504,6 +550,8 @@ async def _prune_roles(guild: discord.Guild, desired_names: set[str]):
         if _norm(r.name) not in desired_names:
             try:
                 await r.delete(reason="Messiah prune (not in layout)")
+                # CHANGE: throttle after delete
+                await _throttle()
             except Exception as e:
                 print(f"[Messiah] role delete failed {r.name}: {e}")
 
@@ -513,6 +561,8 @@ async def _prune_categories(guild: discord.Guild, desired_names: set[str]):
             if len(c.channels) == 0:
                 try:
                     await c.delete(reason="Messiah prune (not in layout)")
+                    # CHANGE: throttle after delete
+                    await _throttle()
                 except Exception as e:
                     print(f"[Messiah] category delete failed {c.name}: {e}")
 
@@ -525,6 +575,8 @@ async def _prune_channels(guild: discord.Guild, desired_triplets: set[Tuple[str,
         if key not in desired_triplets:
             try:
                 await ch.delete(reason="Messiah prune (not in layout)")
+                # CHANGE: throttle after delete
+                await _throttle()
             except Exception as e:
                 print(f"[Messiah] text delete failed {ch.name}: {e}")
 
@@ -533,6 +585,8 @@ async def _prune_channels(guild: discord.Guild, desired_triplets: set[Tuple[str,
         if key not in desired_triplets:
             try:
                 await ch.delete(reason="Messiah prune (not in layout)")
+                # CHANGE: throttle after delete
+                await _throttle()
             except Exception as e:
                 print(f"[Messiah] voice delete failed {ch.name}: {e}")
 
@@ -545,6 +599,8 @@ async def _prune_channels(guild: discord.Guild, desired_triplets: set[Tuple[str,
         if key not in desired_triplets:
             try:
                 await ch.delete(reason="Messiah prune (not in layout)")
+                # CHANGE: throttle after delete
+                await _throttle()
             except Exception as e:
                 print(f"[Messiah] forum delete failed {ch.name}: {e}")
 
@@ -706,6 +762,8 @@ class ServerBuilder(commands.Cog):
                     if has_perms and perms_obj is not None:
                         kwargs["permissions"] = perms_obj
                     await guild.create_role(**kwargs)
+                    # CHANGE: throttle after create
+                    await _throttle()
                     logs.append(f"✅ Role created: **{name}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create role: **{name}**")
@@ -716,6 +774,8 @@ class ServerBuilder(commands.Cog):
                         kwargs["permissions"] = perms_obj
                     # If has_perms is False, omit 'permissions' so we preserve existing role perms
                     await existing.edit(**kwargs)
+                    # CHANGE: throttle after edit
+                    await _throttle()
                     logs.append(f"🔄 Role updated: **{name}**")
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to edit role: **{name}**")
@@ -732,6 +792,8 @@ class ServerBuilder(commands.Cog):
                 try:
                     ow = _build_overwrites(guild, cat_ow)
                     cat = await guild.create_category(cname_n, overwrites=(ow if isinstance(ow, dict) else None), reason="MessiahBot builder")
+                    # CHANGE: throttle after create
+                    await _throttle()
                     logs.append(f"✅ Category created: **{cname_n}**")
                 except discord.Forbidden:
                     logs.append(f"❌ Missing permission to create category: **{cname_n}**")
@@ -740,6 +802,8 @@ class ServerBuilder(commands.Cog):
                     try:
                         ow = _build_overwrites(guild, cat_ow)
                         await cat.edit(overwrites=(ow if isinstance(ow, dict) else None), reason="MessiahBot update category overwrites")
+                        # CHANGE: throttle after edit
+                        await _throttle()
                         logs.append(f"🔧 Category overwrites set: **{cname_n}**")
                     except Exception:
                         logs.append(f"⚠️ Could not edit overwrites: **{cname_n}**")
@@ -764,6 +828,8 @@ class ServerBuilder(commands.Cog):
                 if parent is None:
                     try:
                         parent = await guild.create_category(catname, reason="MessiahBot builder (parent for channel)")
+                        # CHANGE: throttle after create
+                        await _throttle()
                         cat_cache[catname] = parent
                         logs.append(f"✅ Category created for parent: **{catname}**")
                     except discord.Forbidden:
@@ -798,24 +864,36 @@ class ServerBuilder(commands.Cog):
                         created = await guild.create_text_channel(
                             chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
                         )
+                        # CHANGE: throttle after create
+                        await _throttle()
                         # Try convert to news if requested
                         try:
                             if is_announcement and hasattr(discord, "ChannelType") and created.type != discord.ChannelType.news:
                                 await created.edit(type=discord.ChannelType.news)
+                                # CHANGE: throttle after edit
+                                await _throttle()
                         except Exception:
                             pass
                     elif chtype == "voice":
                         created = await guild.create_voice_channel(
                             chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
                         )
+                        # CHANGE: throttle after create
+                        await _throttle()
                     elif chtype == "forum":
                         if hasattr(guild, "create_forum"):
                             created = await guild.create_forum(name=chname, category=parent, reason="MessiahBot builder")
+                            # CHANGE: throttle after create
+                            await _throttle()
                         elif hasattr(guild, "create_forum_channel"):
                             created = await guild.create_forum_channel(name=chname, category=parent, reason="MessiahBot builder")
+                            # CHANGE: throttle after create
+                            await _throttle()
                     elif chtype == "stage":
                         if hasattr(guild, "create_stage_channel"):
                             created = await guild.create_stage_channel(chname, category=parent, reason="MessiahBot builder")
+                            # CHANGE: throttle after create
+                            await _throttle()
 
                     if created:
                         try:
@@ -825,6 +903,8 @@ class ServerBuilder(commands.Cog):
                             if hasattr(created, "slowmode_delay"): kw["slowmode_delay"] = slowmode
                             if kw:
                                 await created.edit(**kw)
+                                # CHANGE: throttle after edit
+                                await _throttle()
                         except Exception:
                             pass
 
@@ -837,6 +917,8 @@ class ServerBuilder(commands.Cog):
                     has_parent_id = existing.category.id if getattr(existing, "category", None) else None
                     if need_parent_id != has_parent_id:
                         await existing.edit(category=parent, reason="MessiahBot move to correct category")
+                        # CHANGE: throttle after edit
+                        await _throttle()
                         logs.append(f"🔀 Moved **#{chname}** → **{parent.name if parent else 'no category'}**")
                 except discord.Forbidden:
                     logs.append(f"⚠️ No permission to move channel: **{chname}**")
@@ -844,6 +926,8 @@ class ServerBuilder(commands.Cog):
                 if ch_overwrites:
                     try:
                         await existing.edit(overwrites=ch_overwrites, reason="MessiahBot update overwrites")
+                        # CHANGE: throttle after edit
+                        await _throttle()
                         logs.append(f"🔧 Overwrites set: **#{chname}**")
                     except Exception:
                         logs.append(f"⚠️ Could not edit overwrites: **#{chname}**")
@@ -855,6 +939,8 @@ class ServerBuilder(commands.Cog):
                     if hasattr(existing, "slowmode_delay"): kw["slowmode_delay"] = slowmode
                     if kw:
                         await existing.edit(**kw)
+                        # CHANGE: throttle after edit
+                        await _throttle()
                 except Exception:
                     pass
 
@@ -881,6 +967,8 @@ class ServerBuilder(commands.Cog):
             if positions_map:
                 try:
                     await guild.edit_role_positions(positions=positions_map)
+                    # CHANGE: throttle after bulk reorder
+                    await _throttle()
                     logs.append("📐 Roles reordered.")
                 except AttributeError:
                     # Older discord.py fallback: try editing individual positions
@@ -889,6 +977,8 @@ class ServerBuilder(commands.Cog):
                         if role_obj:
                             try:
                                 await role_obj.edit(position=(top_base - i))
+                                # CHANGE: throttle after edit
+                                await _throttle()
                             except Exception:
                                 pass
                     logs.append("📐 Roles reordered (fallback).")
@@ -917,6 +1007,8 @@ class ServerBuilder(commands.Cog):
                 if cat:
                     try:
                         await cat.edit(position=idx, reason="MessiahBot reorder categories")
+                        # CHANGE: throttle after edit
+                        await _throttle()
                     except Exception:
                         pass
             if cat_seq:
@@ -956,7 +1048,11 @@ class ServerBuilder(commands.Cog):
                             # ensure parent is correct (already done earlier, but safe)
                             if (parent and getattr(target, "category", None) != parent) or (not parent and getattr(target, "category", None) is not None):
                                 await target.edit(category=parent, reason="MessiahBot move for ordering")
+                                # CHANGE: throttle after edit
+                                await _throttle()
                             await target.edit(position=ch_idx, reason="MessiahBot reorder channels")
+                            # CHANGE: throttle after edit
+                            await _throttle()
                         except Exception:
                             pass
                 logs.append("📐 Channels reordered within categories.")
