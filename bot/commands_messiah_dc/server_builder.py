@@ -10,7 +10,10 @@ import requests, time as _t
 
 # --- Tunables / safety knobs ---
 SNAPSHOT_COOLDOWN_SEC = int(os.getenv("SNAPSHOT_COOLDOWN_SEC", "90"))
-APPLY_EDIT_DELAY_SEC = float(os.getenv("APPLY_EDIT_DELAY_SEC", "0.35"))
+# Bumped default delay to reduce rate spikes during large updates
+APPLY_EDIT_DELAY_SEC = float(os.getenv("APPLY_EDIT_DELAY_SEC", "0.8"))
+# NEW: allow turning REST fallback completely off (default OFF)
+ALLOW_REST_SNAPSHOT = os.getenv("ALLOW_REST_SNAPSHOT", "0") == "1"
 
 _last_rest_snapshot_ts = 0
 
@@ -20,6 +23,9 @@ async def _throttle():
 
 # Single session for HTTP calls
 sess = requests.Session()
+sess.headers.update({
+    "User-Agent": "MessiahBot/1.0 (+server_builder.py)"
+})
 
 # CHANGE: _get now accepts headers (no invisible global),
 #         retries 3x w/ exponential backoff and detects CF 1015 HTML pages even on 200/403
@@ -30,7 +36,7 @@ def _get(url: str, headers: Dict[str, str]):
         # CF/Discord rate/ban pages can be HTML even with 200/403
         body = r.text or ""
         if r.status_code in (429, 500, 502, 503, 504) or "temporarily from accessing" in body or "error-1015" in body:
-            _t.sleep(back); back *= 2
+            _t.sleep(back); back = min(back * 2, 8.0)
             continue
         r.raise_for_status()
         return r
@@ -294,6 +300,8 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
     global _last_rest_snapshot_ts
     if not token:
         raise RuntimeError("DISCORD_BOT_TOKEN not set; cannot run REST snapshot fallback.")
+    if not ALLOW_REST_SNAPSHOT:
+        raise RuntimeError("REST snapshot disabled (set ALLOW_REST_SNAPSHOT=1 to enable).")
 
     base = "https://discord.com/api/v10"
     headers = {"Authorization": f"Bot {token}"}
@@ -397,14 +405,19 @@ def _snapshot_guild_best(guild: discord.Guild) -> Dict[str, Any]:
     """Try discord.py snapshot first; on error or empty result, fall back to REST."""
     try:
         dp = _snapshot_guild_discordpy(guild)
-        # If discord.py returns nothing meaningful (some shards/permissions issues), fallback
+        # If discord.py returns nothing meaningful (some shards/permissions issues), handle toggle
         if (len(dp.get("roles", [])) == 0 and
             len(dp.get("categories", [])) == 0 and
             len(dp.get("channels", [])) == 0):
+            if not ALLOW_REST_SNAPSHOT:
+                raise RuntimeError("discord.py snapshot empty and REST fallback is disabled.")
             raise RuntimeError("discord.py snapshot returned empty; using REST fallback.")
         print(f"[Messiah snapshot] discord.py OK: roles={len(dp['roles'])} cats={len(dp['categories'])} chans={len(dp['channels'])}")
         return dp
     except Exception as e:
+        if not ALLOW_REST_SNAPSHOT:
+            # Surface the error to callers when REST is disabled
+            raise
         print(f"[Messiah snapshot] discord.py failed: {e} -> falling back to REST")
         rest = _snapshot_guild_rest(guild.id, DISCORD_BOT_TOKEN)
         print(f"[Messiah snapshot] REST OK: roles={len(rest['roles'])} cats={len(rest['categories'])} chans={len(rest['channels'])}")
