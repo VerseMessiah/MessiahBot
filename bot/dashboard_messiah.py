@@ -290,6 +290,7 @@ def whoami():
             "has_session_cookie": bool(request.cookies.get("session")),
         }
     except Exception as e:
+        import traceback; traceback.print_exc()
         return {
             "logged_in": False,
             "me": None,
