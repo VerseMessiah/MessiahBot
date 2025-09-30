@@ -251,11 +251,17 @@ def discord_callback():
         return f"Token exchange failed: {e}", 400
 
     access = tok.get("access_token")
+    refresh = tok.get("refresh_token")
+    expires_in = tok.get("expires_in")  # seconds
     if not access:
         return "Token exchange succeeded but no access_token in response.", 400
 
     session.clear()
     session["access_token"] = access
+    if refresh:
+        session["refresh_token"] = refresh
+    if expires_in:
+        session["token_expiry"] = int(time.time()) + int(expires_in)
 
     try:
         me = _discord_get("/users/@me", access)
@@ -265,6 +271,39 @@ def discord_callback():
 
     return redirect(url_for("form"))
 
+
+# Helper: refresh Discord OAuth access token using refresh_token
+def _refresh_access_token():
+    if not _requests_ok:
+        raise RuntimeError("Python 'requests' not installed; add requests to requirements.txt")
+    refresh_token = session.get("refresh_token")
+    if not refresh_token:
+        raise RuntimeError("No refresh_token in session")
+    cid, secret, redirect = get_oauth_env()
+    data = {
+        "client_id": cid,
+        "client_secret": secret,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "redirect_uri": redirect,
+        "scope": "identify guilds",
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    r = requests.post(DISCORD_OAUTH_TOKEN, data=data, headers=headers, timeout=20)
+    r.raise_for_status()
+    tok = r.json()
+    access = tok.get("access_token")
+    refresh = tok.get("refresh_token")
+    expires_in = tok.get("expires_in")
+    if not access:
+        raise RuntimeError("Failed to refresh token: no access_token in response")
+    session["access_token"] = access
+    if refresh:
+        session["refresh_token"] = refresh
+    if expires_in:
+        session["token_expiry"] = int(time.time()) + int(expires_in)
+    return access
+
 @app.get("/logout")
 def discord_logout():
     session.clear()
@@ -273,6 +312,24 @@ def discord_logout():
 @app.get("/whoami")
 def whoami():
     access = session.get("access_token")
+    refresh = session.get("refresh_token")
+    expiry = session.get("token_expiry")
+    now = int(time.time())
+    # If we have expiry and it's expired or about to expire in 60s, refresh
+    if access and expiry and expiry - now < 60 and refresh:
+        try:
+            access = _refresh_access_token()
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            # Clear session on refresh failure
+            session.clear()
+            return {
+                "logged_in": False,
+                "me": None,
+                "guilds": [],
+                "error": f"Token refresh failed: {e}",
+                "has_session_cookie": bool(request.cookies.get("session")),
+            }
     if not access:
         return {
             "logged_in": False,
@@ -1007,8 +1064,13 @@ _FORM_HTML = r"""
         // Filter guilds: owner OR has ADMINISTRATOR/MANAGE_GUILD
         const guilds = (info.guilds || []).filter(g => {
           if (g.owner) return true;
-          const p = typeof g.permissions === "string" ? Number(g.permissions) : (g.permissions|0);
-          return (p & (ADMINISTRATOR | MANAGE_GUILD)) !== 0;
+          try {
+            // Use BigInt to avoid precision loss on large permission values
+            const p = BigInt(g.permissions):
+            return (p &(BigInt(ADMINISTRATOR) | BigInt(MANAGE_GUILD))) !== 0N:
+          } catch {
+            return false;
+          }
         });
 
         if (guilds.length){
