@@ -1000,32 +1000,37 @@ class ServerBuilder(commands.Cog):
 
         # --- Categories order ---
         try:
-            # Accept both nested objects (with .position) and simple list
             desired_cats = layout.get("categories") or []
-            cat_seq: List[str] = []
             if desired_cats and isinstance(desired_cats[0], dict):
-                # sort by provided position if present; otherwise by current index
                 tmp = []
                 for idx, c in enumerate(desired_cats):
                     nm = _norm(c.get("name"))
                     pos = c.get("position")
                     tmp.append((nm, idx if pos is None else int(pos)))
+                # sort categories by their intended positions
                 tmp.sort(key=lambda x: x[1])
-                cat_seq = [nm for nm, _ in tmp if nm]  # skip empty/uncategorized here
+                for nm, pos in tmp:
+                    cat = _find_category(guild, nm)
+                    if cat:
+                        try:
+                            await cat.edit(position=pos, reason="MessiahBot reorder categories")
+                            await _throttle()
+                        except Exception:
+                            pass
+                if tmp:
+                    logs.append("📐 Categories reordered.")
             else:
-                cat_seq = [_norm(x) for x in desired_cats if _norm(x)]
-
-            for idx, nm in enumerate(cat_seq):
-                cat = _find_category(guild, nm)
-                if cat:
-                    try:
-                        await cat.edit(position=idx, reason="MessiahBot reorder categories")
-                        # CHANGE: throttle after edit
-                        await _throttle()
-                    except Exception:
-                        pass
-            if cat_seq:
-                logs.append("📐 Categories reordered.")
+                # Legacy flat list, reorder by index
+                for idx, nm in enumerate([_norm(x) for x in desired_cats if _norm(x)]):
+                    cat = _find_category(guild, nm)
+                    if cat:
+                        try:
+                            await cat.edit(position=idx, reason="MessiahBot reorder categories")
+                            await _throttle()
+                        except Exception:
+                            pass
+                if desired_cats:
+                    logs.append("📐 Categories reordered (legacy).")
         except Exception as e:
             logs.append(f"⚠️ Could not reorder categories: {e}")
 
@@ -1063,7 +1068,11 @@ class ServerBuilder(commands.Cog):
                                 await target.edit(category=parent, reason="MessiahBot move for ordering")
                                 # CHANGE: throttle after edit
                                 await _throttle()
-                            await target.edit(position=ch_idx, reason="MessiahBot reorder channels")
+                            desired_pos = ch.get("position")
+                            await target.edit(
+                                position=desired_pos if desired_pos is not None else ch_idx,
+                                reason="MessiahBot reorder channels"   
+                            )
                             # CHANGE: throttle after edit
                             await _throttle()
                         except Exception:

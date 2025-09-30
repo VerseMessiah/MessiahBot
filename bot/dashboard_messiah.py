@@ -666,7 +666,7 @@ _FORM_HTML = r"""
       handle: '.grab',
       draggable: '.row',
       animation: 150,
-      forceFallback: true,
+      chosenClass: 'is-dragging',
       fallbackTolerance: 5,
       ghostClass: 'drag-ghost',
       dragClass: 'is-dragging'
@@ -681,7 +681,7 @@ _FORM_HTML = r"""
       handle: '.cat > .row .grab',
       draggable: '.cat',
       animation: 150,
-      forceFallback: true,
+      chosenClass: 'is-dragging',
       fallbackTolerance: 5,
       ghostClass: 'drag-ghost',
       dragClass: 'is-dragging'
@@ -696,7 +696,7 @@ _FORM_HTML = r"""
       handle: '.ch .grab',
       draggable: '.ch',
       animation: 150,
-      forceFallback: true,
+      chosenClass: 'is-dragging',
       fallbackTolerance: 5,
       bubbleScroll: true,
       scroll: true,
@@ -861,9 +861,16 @@ _FORM_HTML = r"""
         var cat = p.categories[ci] || {};
         var box = catBox(cat.name || "");
         var listEl = $(".ch-list", box);
-        var chans = cat.channels || [];
-        for (var j=0;j<chans.length;j++){
-          listEl.appendChild(channelRow(chans[j]));
+        var chans = cat.channels || []).slice()
+        // sort by position then name as fallback
+        chans.sort(function(a,b){
+          if (a.position !== undefined && b.position !== undefined && a.position !== b.position){
+            return a.position - b.position;
+          }
+          return (a.name || "").localeCompare(b.name || "");
+        });
+        for (var cj=0;cj<chans.length;cj++){
+          listEl.appendChild(channelRow(chans[cj] || {}));
         }
         C.appendChild(box);
       }
