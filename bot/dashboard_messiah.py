@@ -382,26 +382,56 @@ def live_layout(guild_id: str):
             return "stage"
         return "text"
 
-    # Sort all channel objects by their 'position' to maintain server order
-    channels_sorted = sorted(channels_json, key=lambda x: x.get("position", 0))
-
-    # Assign non-category channels to their parent category (or uncategorized), preserving order
-    for ch in channels_sorted:
+    # Build mapping of channels by parent category for proper ordering
+    channels_by_cat = {cat_id: [] for cat_id in cats}
+    # Also, keep the uncategorized bucket
+    channels_by_cat[UNC_KEY] = channels_by_cat.get(UNC_KEY, [])
+    # Assign non-category channels to their parent category (or uncategorized)
+    for ch in channels_json:
         if ch.get("type") == 4:
             continue
         parent_id = ch.get("parent_id")
         bucket_key = parent_id if parent_id in cats else UNC_KEY
         t_ui = ui_type(ch.get("type"))
-        cats[bucket_key]["channels"].append({
+        # Include position and id for sorting
+        channel_obj = {
             "name": ch.get("name", ""),
             "type": t_ui,              # desired type (UI may change)
             "original_type": t_ui,     # live type (for validation)
-            "topic": ch.get("topic", "") or ""
-        })
+            "topic": ch.get("topic", "") or "",
+            "position": ch.get("position", 0),
+            "id": ch.get("id", "")
+        }
+        channels_by_cat[bucket_key].append(channel_obj)
+    # Now, for each category, sort its channels by position, then id as tiebreaker
+    for cat_id, cat in cats.items():
+        chs = channels_by_cat.get(cat_id, [])
+        cat["channels"] = sorted(
+            chs,
+            key=lambda x: (x.get("position", 0), str(x.get("id", "")))
+        )
 
     # Build ordered categories list for payload (ascending by position; uncategorized at end)
     categories_ordered = sorted(cats.values(), key=lambda c: c["position"])
-    categories_payload = [{"name": c["name"], "channels": c["channels"]} for c in categories_ordered]
+    # Include position for categories and for channels
+    categories_payload = [
+        {
+            "name": c["name"],
+            "position": c["position"],
+            "channels": [
+                {
+                    "name": ch["name"],
+                    "type": ch["type"],
+                    "original_type": ch["original_type"],
+                    "topic": ch["topic"],
+                    "position": ch["position"],
+                    "id": ch["id"]
+                }
+                for ch in c["channels"]
+            ]
+        }
+        for c in categories_ordered
+    ]
 
     payload = {
         "mode": "update",
