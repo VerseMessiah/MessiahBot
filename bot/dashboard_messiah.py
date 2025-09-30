@@ -1067,7 +1067,7 @@ _FORM_HTML = r"""
           try {
             // Use BigInt to avoid precision loss on large permission values
             const p = BigInt(g.permissions):
-            return (p &(BigInt(ADMINISTRATOR) | BigInt(MANAGE_GUILD))) !== 0N:
+            return (p &(BigInt(ADMINISTRATOR) | BigInt(MANAGE_GUILD))) !== 0n;
           } catch {
             return false;
           }
