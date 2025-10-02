@@ -1061,11 +1061,9 @@ _FORM_HTML = r"""
         const ADMINISTRATOR = 0x00000008n;
         const MANAGE_GUILD  = 0x00000020n;
 
-        // Filter guilds: owner OR has ADMINISTRATOR/MANAGE_GUILD
         const guilds = (info.guilds || []).filter(g => {
           if (g.owner) return true;
           try {
-            // Use BigInt to avoid precision loss on large permission values
             const perms = BigInt(g.permissions || "0");:
             return (perms & (ADMINISTRATOR | MANAGE_GUILD)) !== 0n;
           } catch {
