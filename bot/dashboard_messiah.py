@@ -1060,16 +1060,19 @@ _FORM_HTML = r"""
 
         const ADMINISTRATOR = 0x00000008n;
         const MANAGE_GUILD  = 0x00000020n;
-
+        
         const guilds = (info.guilds || []).filter(g => {
           if (g.owner) return true;
           try {
-            const perms = BigInt(g.permissions || "0");:
+            // Discord sometimes sends permissions as string; ensure safe BigInt
+            const raw = g.permissions ? String(g.permissions) : "0";
+            const perms = BigInt(raw);
             return (perms & (ADMINISTRATOR | MANAGE_GUILD)) !== 0n;
-          } catch {
+          } catch (err) {
+            console.warn("Failed to parse permissions for guild:", g.name, g.permissions, err);
             return false;
-          }
-        });
+        }
+      });
 
         if (guilds.length){
           picker.innerHTML = '';
