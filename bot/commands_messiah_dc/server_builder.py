@@ -1044,10 +1044,8 @@ class ServerBuilder(commands.Cog):
                     cname = _norm(c.get("name"))
                     desired_chs = c.get("channels") or []
                     # order by given position if present
-                    desired_chs_sorted = sorted(
-                        desired_chs,
-                        key=lambda ch: int(ch.get("position")) if isinstance(ch.get("position"), int) or str(ch.get("position") or "").isdigit() else desired_chs.index(ch)
-                    )
+                    desired_chs_sorted = list(desired_chs)
+                    
                     parent = _find_category(guild, cname) if cname else None
                     for ch_idx, ch in enumerate(desired_chs_sorted):
                         nm = _norm(ch.get("name"))
@@ -1072,7 +1070,7 @@ class ServerBuilder(commands.Cog):
                                 await _throttle()
                             desired_pos = ch.get("position")
                             await target.edit(
-                                position=desired_pos if desired_pos is not None else ch_idx,
+                                position=ch_idx,
                                 reason="MessiahBot reorder channels"   
                             )
                             # CHANGE: throttle after edit
