@@ -919,7 +919,7 @@ _FORM_HTML = r"""
         var cat = p.categories[ci] || {};
         var box = catBox(cat.name || "");
         var listEl = $(".ch-list", box);
-        var chans = cat.channels || []).slice()
+        var chans = cat.channels || []).slice();
         // sort by position then name as fallback
         chans.sort(function(a,b){
           if (a.position !== undefined && b.position !== undefined && a.position !== b.position){
@@ -1067,7 +1067,7 @@ _FORM_HTML = r"""
           try {
             // Use BigInt to avoid precision loss on large permission values
             const p = BigInt(g.permissions):
-            return (p &(BigInt(ADMINISTRATOR) | BigInt(MANAGE_GUILD))) !== 0n;
+            return (p & (BigInt(ADMINISTRATOR) | BigInt(MANAGE_GUILD))) !== 0n;
           } catch {
             return false;
           }
