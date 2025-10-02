@@ -915,11 +915,16 @@ _FORM_HTML = r"""
     // categories + channels
     var C = $("#cats"); C.innerHTML = "";
     if (Array.isArray(p.categories) && p.categories.length && typeof p.categories[0] === "object"){
-      for (var ci=0;ci<p.categories.length;ci++){
-        var cat = p.categories[ci] || {};
+      var catsArr = (p.categories || []).slice().sort(function(a, b) {
+        return (a.position||0) - (b.position||0);
+      });
+      for (var ci=0;ci<catsArr.length;ci++){
+        var cat = catsArr[ci] || {};
         var box = catBox(cat.name || "");
         var listEl = $(".ch-list", box);
-        var chans = (cat.channels || []).slice();
+        var chans = (cat.channels || []).slice().sort(function(a, b) {
+          return (a.position||0) - (b.position||0);
+        });
         for (var cj=0;cj<chans.length;cj++){
           listEl.appendChild(channelRow(chans[cj] || {}));
         }

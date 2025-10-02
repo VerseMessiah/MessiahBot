@@ -219,17 +219,16 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
             return False
         return False
 
-    # Categories in display order
-    categories_sorted: List[discord.CategoryChannel] = sorted(getattr(guild, "categories", []), key=_safe_pos)
+    # Categories in display order (preserve API order)
+    categories_sorted: List[discord.CategoryChannel] = list(getattr(guild, "categories", []))
 
     for cat in categories_sorted:
         name = (getattr(cat, "name", "") or "")
         if not name.strip():
             # Skip ghost/blank categories
             continue
-
-        # Channels in category in display order
-        chans_sorted = sorted(getattr(cat, "channels", []), key=_safe_pos)
+        # Channels in category in display order (preserve API order)
+        chans_sorted = list(getattr(cat, "channels", []))
         ch_items: List[Dict[str, Any]] = []
 
         for ch in chans_sorted:
@@ -382,9 +381,9 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
     #     arr.sort(key=lambda x: int(x.get("position", 0)))
     pass
 
-    # Build nested categories payload sorted by category position
+    # Build nested categories payload preserving API order (do not re-sort)
     categories_payload: List[Dict[str, Any]] = []
-    for cid, meta in sorted(cat_map.items(), key=lambda kv: int(kv[1]["position"])):
+    for cid, meta in cat_map.items():  # preserve API order
         categories_payload.append({
             "name": meta["name"],
             "position": int(meta["position"]),
