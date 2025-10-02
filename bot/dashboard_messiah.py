@@ -464,10 +464,7 @@ def live_layout(guild_id: str):
     # Now, for each category, sort its channels by position, then id as tiebreaker
     for cat_id, cat in cats.items():
         chs = channels_by_cat.get(cat_id, [])
-        cat["channels"] = sorted(
-            chs,
-            key=lambda x: (x.get("position", 0), str(x.get("id", "")))
-        )
+        cat["channels"] = chs
 
     # Build ordered categories list for payload (ascending by position; uncategorized at end)
     categories_ordered = sorted(cats.values(), key=lambda c: c["position"])
