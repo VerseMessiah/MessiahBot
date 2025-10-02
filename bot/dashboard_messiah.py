@@ -464,7 +464,10 @@ def live_layout(guild_id: str):
     # Now, for each category, sort its channels by position, then id as tiebreaker
     for cat_id, cat in cats.items():
         chs = channels_by_cat.get(cat_id, [])
-        cat["channels"] = chs
+        cat["channels"] = sorted(
+            chs,
+            key=lambda x: (x.get("position", 0), str(x.get("id", "")))
+        )
 
     # Build ordered categories list for payload (ascending by position; uncategorized at end)
     categories_ordered = sorted(cats.values(), key=lambda c: c["position"])
@@ -917,13 +920,6 @@ _FORM_HTML = r"""
         var box = catBox(cat.name || "");
         var listEl = $(".ch-list", box);
         var chans = (cat.channels || []).slice();
-        // sort by position then name as fallback
-        chans.sort(function(a,b){
-          if (a.position !== undefined && b.position !== undefined && a.position !== b.position){
-            return a.position - b.position;
-          }
-          return (a.name || "").localeCompare(b.name || "");
-        });
         for (var cj=0;cj<chans.length;cj++){
           listEl.appendChild(channelRow(chans[cj] || {}));
         }

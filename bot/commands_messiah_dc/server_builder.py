@@ -376,9 +376,11 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
             "options": options
         })
 
-    # Sort channels within each category by their position
-    for cid, arr in cat_channels.items():
-        arr.sort(key=lambda x: int(x.get("position", 0)))
+    # Preserve Discord's REST API order (already in display order)
+    # Do not resort here, just trust the API response
+    # for cid, arr in cat_channels.items():
+    #     arr.sort(key=lambda x: int(x.get("position", 0)))
+    pass
 
     # Build nested categories payload sorted by category position
     categories_payload: List[Dict[str, Any]] = []
