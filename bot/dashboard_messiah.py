@@ -919,7 +919,7 @@ _FORM_HTML = r"""
         var cat = p.categories[ci] || {};
         var box = catBox(cat.name || "");
         var listEl = $(".ch-list", box);
-        var chans = cat.channels || []).slice();
+        var chans = (cat.channels || []).slice();
         // sort by position then name as fallback
         chans.sort(function(a,b){
           if (a.position !== undefined && b.position !== undefined && a.position !== b.position){
