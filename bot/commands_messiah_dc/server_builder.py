@@ -203,7 +203,20 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
         if r.is_default() or r.managed:
             continue
         color_val = getattr(getattr(r, "colour", None), "value", 0) or 0
-        roles.append({"name": r.name, "color": f"#{int(color_val):06x}"})
+        perms_dict = {
+            "admin": r.permissions.administrator,
+            "manage_channels": r.permissions.manage_channels,
+            "manage_roles": r.permissions.manage_roles,
+            "view_channel": r.permissions.view_channel,
+            "send_messages": r.permissions.send_messages,
+            "connect": r.permissions.connect,
+            "speak": r.permissions.speak,
+        }
+        roles.append({
+            "name": r.name,
+            "color": f"#{int(color_val):06x}",
+            "perms": perms_dict
+        })
 
     # Build nested categories with channel lists and explicit positions
     categories_payload: List[Dict[str, Any]] = []
@@ -318,7 +331,21 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
         if r.get("managed") or r.get("name") == "@everyone":
             continue
         color_int = int(r.get("color") or 0)
-        roles.append({"name": r.get("name",""), "color": f"#{color_int:06x}"})
+        perms_int = int(r.get("permissions") or 0)
+        perms = discord.Permissions(perms_int)
+        roles.append({
+            "name": r.get("name",""),
+            "color": f"#{color_int:06x}",
+            "perms": {
+                "admin": perms.administrator,
+                "manage_channels": perms.manage_channels,
+                "manage_roles": perms.manage_roles,
+                "view_channel": perms.view_channel,
+                "send_messages": perms.send_messages,
+                "connect": perms.connect,
+                "speak": perms.speak,
+            }
+        })
 
     # Channels (CHANGE: use resilient _get)
     r_channels = _get(f"{base}/guilds/{guild_id}/channels", headers)
@@ -379,7 +406,6 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
     # Do not resort here, just trust the API response
     # for cid, arr in cat_channels.items():
     #     arr.sort(key=lambda x: int(x.get("position", 0)))
-    pass
 
     # Build nested categories payload preserving API order (do not re-sort)
     categories_payload: List[Dict[str, Any]] = []
@@ -1069,8 +1095,8 @@ class ServerBuilder(commands.Cog):
                                 await _throttle()
                             desired_pos = ch.get("position")
                             await target.edit(
-                                position=ch_idx,
-                                reason="MessiahBot reorder channels"   
+                                position=desired_pos if desired_pos is not None else ch_idx,
+                                reason="MessiahBot reorder channels"
                             )
                             # CHANGE: throttle after edit
                             await _throttle()
