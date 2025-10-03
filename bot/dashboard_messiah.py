@@ -915,6 +915,7 @@ _FORM_HTML = r"""
     // categories + channels
     var C = $("#cats"); C.innerHTML = "";
     if (Array.isArray(p.categories) && p.categories.length && typeof p.categories[0] === "object"){
+      // Sort categories by position
       var catsArr = (p.categories || []).slice().sort(function(a, b) {
         return (a.position||0) - (b.position||0);
       });
@@ -922,6 +923,7 @@ _FORM_HTML = r"""
         var cat = catsArr[ci] || {};
         var box = catBox(cat.name || "");
         var listEl = $(".ch-list", box);
+        // Sort channels by position
         var chans = (cat.channels || []).slice().sort(function(a, b) {
           return (a.position||0) - (b.position||0);
         });
@@ -931,7 +933,10 @@ _FORM_HTML = r"""
         C.appendChild(box);
       }
     } else {
-      var catNames = p.categories || [];
+      var catNames = (p.categories || []).slice();
+      // For legacy flat categories, sort by position if possible
+      catNames = catNames.slice();
+      // If category objects, sort by position; if strings, leave as is
       var map = {};
       for (var k=0;k<catNames.length;k++){
         var nm = catNames[k] || "";
@@ -940,7 +945,11 @@ _FORM_HTML = r"""
         map[(nm||"").toLowerCase()] = $(".ch-list", bx);
       }
       var hadUn = false;
-      var chansFlat = p.channels || [];
+      var chansFlat = (p.channels || []).slice();
+      // Sort flat channels by position if present
+      chansFlat = chansFlat.slice().sort(function(a, b) {
+        return (a.position||0) - (b.position||0);
+      });
       for (var m=0;m<chansFlat.length;m++){
         var ch = chansFlat[m] || {};
         var parent = (ch.category || "").toLowerCase();
