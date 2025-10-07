@@ -1,5 +1,5 @@
 import os, asyncio, hashlib, datetime as dt
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -13,6 +13,8 @@ from .server_builder import _norm  # reuse normalizer
 DATABASE_URL = os.getenv("DATABASE_URL")
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
+
+PREMIUM_SYNC_FLAG = "sync_enabled"  # boolean column on schedule_sync_settings
 
 def _hash_payload(p: Dict[str, Any]) -> str:
     s = f"{p.get('title','')}|{p.get('start')}|{p.get('end')}|{p.get('desc','')}|{p.get('category','')}"
@@ -144,27 +146,70 @@ class ScheduleSync(commands.Cog):
             await cur.execute("SELECT * FROM twitch_oauth WHERE guild_id=%s", (str(gid),))
             return await cur.fetchone()
 
-    async def _crosswalk_all(self, conn, gid: int) -> List[dict]:
+    async def _user_premium(self, conn, gid: int) -> bool:
+        """Premium gating: rely on schedule_sync_settings.sync_enabled (boolean)."""
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM schedule_crosswalk WHERE guild_id=%s", (str(gid),))
-            return await cur.fetchall()
+            try:
+                await cur.execute("SELECT COALESCE(" + PREMIUM_SYNC_FLAG + ", false) AS on FROM schedule_sync_settings WHERE guild_id=%s", (str(gid),))
+                row = await cur.fetchone()
+                return bool(row and row.get("on"))
+            except Exception:
+                return False
 
-    async def _crosswalk_upsert(self, conn, *, gid: int, tw_id: Optional[str], dc_id: Optional[str], source: str, content_hash: str, tw_updated: Optional[str], dc_updated: Optional[str]):
+    async def _save_event(self, conn, *, gid: int, source: str, payload: Dict[str, Any], partner_id: Optional[str] = None):
+        """Upsert a normalized event into synced_events and mark last_seen=NOW().
+        Expected table columns:
+          guild_id (text), source (text), source_event_id (text), partner_event_id (text),
+          title (text), description (text), category (text), start_at (timestamptz), end_at (timestamptz),
+          status (text), updated_at (timestamptz), content_hash (text), last_seen (timestamptz)
+        Primary/unique key: (guild_id, source, source_event_id)
+        """
+        src_id = str(payload.get("id") or "")
+        content_hash = _hash_payload(payload)
+        start_at = _dt(payload.get("start"))
+        end_at = _dt(payload.get("end"))
+        updated_at = _dt(payload.get("updated_at")) or start_at or dt.datetime.now(dt.timezone.utc)
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                INSERT INTO schedule_crosswalk (guild_id, twitch_event_id, discord_event_id, source, content_hash, twitch_updated_at, discord_updated_at, last_synced_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
-                ON CONFLICT (guild_id, COALESCE(twitch_event_id,''), COALESCE(discord_event_id,''))
+                INSERT INTO synced_events (guild_id, source, source_event_id, partner_event_id,
+                                           title, description, category, start_at, end_at,
+                                           status, updated_at, content_hash, last_seen)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                ON CONFLICT (guild_id, source, source_event_id)
                 DO UPDATE SET
-                  source=EXCLUDED.source,
-                  content_hash=EXCLUDED.content_hash,
-                  twitch_updated_at=EXCLUDED.twitch_updated_at,
-                  discord_updated_at=EXCLUDED.discord_updated_at,
-                  last_synced_at=NOW()
+                  partner_event_id = COALESCE(EXCLUDED.partner_event_id, synced_events.partner_event_id),
+                  title = EXCLUDED.title,
+                  description = EXCLUDED.description,
+                  category = EXCLUDED.category,
+                  start_at = EXCLUDED.start_at,
+                  end_at = EXCLUDED.end_at,
+                  status = EXCLUDED.status,
+                  updated_at = EXCLUDED.updated_at,
+                  content_hash = EXCLUDED.content_hash,
+                  last_seen = NOW()
                 """,
-                (str(gid), tw_id, dc_id, source, content_hash, tw_updated, dc_updated),
+                (
+                    str(gid), source, src_id, (str(partner_id) if partner_id else None),
+                    payload.get("title") or "", payload.get("desc") or "", payload.get("category") or "",
+                    start_at, end_at, payload.get("status") or "scheduled", updated_at, content_hash,
+                ),
             )
+
+    async def _get_partner_map(self, conn, gid: int) -> Dict[str, Dict[str, Optional[str]]]:
+        """Return a mapping of source->source_event_id->partner_event_id for this guild."""
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT source, source_event_id, partner_event_id FROM synced_events WHERE guild_id=%s",
+                (str(gid),),
+            )
+            rows = await cur.fetchall()
+        out: Dict[str, Dict[str, Optional[str]]] = {"twitch": {}, "discord": {}}
+        for r in rows or []:
+            src = (r.get("source") or "").lower()
+            if src in ("twitch", "discord"):
+                out.setdefault(src, {})[str(r.get("source_event_id"))] = (r.get("partner_event_id") or None)
+        return out
 
     # -------- main sync --------
     async def _sync_all_guilds(self):
@@ -193,142 +238,75 @@ class ScheduleSync(commands.Cog):
             # Pull Discord events
             disc_events = await guild.fetch_scheduled_events()
             disc_norm = [_normalize_discord_event(ev) for ev in disc_events]
-            disc_by_id = { d["id"]: d for d in disc_norm }
-
             # Pull Twitch schedule
             from . import twitch_api_messiah as twmod
             tw = twmod.TwitchAPI(http, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)
             access_token = o["access_token"]
             segs = await tw.get_schedule_segments(o["broadcaster_id"], access_token)
             tw_norm = [_normalize_twitch_segment(sg) for sg in segs]
-            tw_by_id = { t["id"]: t for t in tw_norm if t.get("id") }
 
-            # Crosswalk
-            xw = await self._crosswalk_all(conn, guild.id)
-            by_dc = {(row.get("discord_event_id") or ""): row for row in xw}
-            by_tw = {(row.get("twitch_event_id") or ""): row for row in xw}
+            # Persist a snapshot of current platform events
+            for d in disc_norm:
+                await self._save_event(conn, gid=guild.id, source="discord", payload=d)
+            for t in tw_norm:
+                await self._save_event(conn, gid=guild.id, source="twitch", payload=t)
 
-            # 1) Resolve known pairs (in crosswalk) and sync by last-write-wins
-            handled_dc: Set[str] = set()
-            handled_tw: Set[str] = set()
+            # If premium sync is not enabled, stop after saving
+            premium_on = await self._user_premium(conn, guild.id)
+            if not premium_on:
+                return
 
-            for row in xw:
-                dc_id = (row.get("discord_event_id") or "")
-                tw_id = (row.get("twitch_event_id") or "")
+            # Partner map used to avoid creating Twitch events from Discord-only items
+            partner_map = await self._get_partner_map(conn, guild.id)
 
-                dc = disc_by_id.get(dc_id) if dc_id else None
-                twi = tw_by_id.get(tw_id) if tw_id else None
-
-                if not dc and not twi:
-                    continue  # dangling row; keep for now
-
-                # Compute hashes
-                dc_hash = _hash_payload(dc) if dc else None
-                tw_hash = _hash_payload(twi) if twi else None
-
-                # Decide direction
-                dc_up = _dt(dc["updated_at"]) if dc else None
-                tw_up = _dt(twi["updated_at"]) if twi else None
-
-                go = None
-                if dc and twi:
-                    if dc_hash != tw_hash:
-                        # Prefer whichever appears newer
-                        if dc_up and tw_up:
-                            go = "dc_to_tw" if dc_up >= tw_up else "tw_to_dc"
-                        elif dc_up:
-                            go = "dc_to_tw"
-                        elif tw_up:
-                            go = "tw_to_dc"
-                        else:
-                            go = "dc_to_tw"  # default
-                elif dc and not twi:
-                    go = "dc_create_tw"
-                elif twi and not dc:
-                    go = "tw_create_dc"
-
-                # Apply
-                new_dc_id = dc_id
-                new_tw_id = tw_id
-
-                try:
-                    if go == "dc_to_tw":
-                        # push Discord → Twitch update
-                        await self._upsert_twitch_from_dc(tw, o, access_token, twi, dc)
-                        handled_dc.add(dc["id"]); handled_tw.add(twi["id"])
-                    elif go == "tw_to_dc":
-                        # push Twitch → Discord update
-                        await self._upsert_discord_from_tw(guild, twi, dc, default_channel_id)
-                        handled_dc.add(dc["id"]); handled_tw.add(twi["id"])
-                    elif go == "dc_create_tw":
-                        created_id = await self._create_tw_from_dc(tw, o, access_token, dc)
-                        new_tw_id = created_id
-                        handled_dc.add(dc["id"])
-                    elif go == "tw_create_dc":
-                        ev = await _discord_create_event(guild, twi, default_channel_id)
-                        new_dc_id = str(ev.id)
-                        handled_tw.add(twi["id"])
-
-                    # Update crosswalk row
-                    new_hash = _hash_payload(dc or twi)
-                    await self._crosswalk_upsert(
-                        conn,
-                        gid=guild.id,
-                        tw_id=new_tw_id or (twi["id"] if twi else None),
-                        dc_id=new_dc_id or (dc["id"] if dc else None),
-                        source="both" if (dc and twi) else ("discord" if dc else "twitch"),
-                        content_hash=new_hash,
-                        tw_updated=(twi or {}).get("updated_at"),
-                        dc_updated=(dc or {}).get("updated_at"),
-                    )
-                except Exception as e:
-                    print(f"[ScheduleSync] pair sync error (dc:{dc_id} tw:{tw_id}): {e}")
-
-            # 2) Orphans: Discord events not in crosswalk
-            for dc in disc_norm:
-                if dc["id"] in handled_dc: 
-                    continue
-                if dc["id"] in by_dc:
-                    continue
-                # Try time/title match with Twitch
-                match = self._fuzzy_find(tw_norm, dc)
-                try:
-                    if match:
-                        # create pair by updating twitch from dc or vice versa if materially different
-                        await self._upsert_twitch_from_dc(tw, o, access_token, match, dc)
-                        await self._crosswalk_upsert(conn, gid=guild.id, tw_id=match["id"], dc_id=dc["id"],
-                                                     source="both", content_hash=_hash_payload(dc),
-                                                     tw_updated=match.get("updated_at"), dc_updated=dc.get("updated_at"))
-                    else:
-                        # create Twitch counterpart
-                        new_tw_id = await self._create_tw_from_dc(tw, o, access_token, dc)
-                        await self._crosswalk_upsert(conn, gid=guild.id, tw_id=new_tw_id, dc_id=dc["id"],
-                                                     source="discord", content_hash=_hash_payload(dc),
-                                                     tw_updated=None, dc_updated=dc.get("updated_at"))
-                except Exception as e:
-                    print(f"[ScheduleSync] orphan DC create error: {e}")
-
-            # 3) Orphans: Twitch segments not in crosswalk
+            # Twitch is primary: ensure each Twitch segment has a Discord counterpart; updates flow both ways only if a pair exists
             for twi in tw_norm:
-                tid = twi.get("id")
-                if not tid or tid in handled_tw:
+                tw_id = twi.get("id")
+                if not tw_id:
                     continue
-                if tid in by_tw:
-                    continue
-                match = self._fuzzy_find(disc_norm, twi)
-                try:
-                    if match:
-                        await self._upsert_discord_from_tw(guild, twi, match, default_channel_id)
-                        await self._crosswalk_upsert(conn, gid=guild.id, tw_id=tid, dc_id=match["id"],
-                                                     source="both", content_hash=_hash_payload(twi),
-                                                     tw_updated=twi.get("updated_at"), dc_updated=match.get("updated_at"))
+                dc_partner_id = (partner_map.get("twitch", {}).get(str(tw_id)))
+
+                if dc_partner_id:
+                    # Update the existing Discord event from Twitch
+                    try:
+                        await self._upsert_discord_from_tw(guild, twi, {"id": str(dc_partner_id)}, default_channel_id)
+                    except Exception as e:
+                        print(f"[ScheduleSync] tw->dc update error for {tw_id}: {e}")
                     else:
+                        await self._save_event(conn, gid=guild.id, source="twitch", payload=twi, partner_id=str(dc_partner_id))
+                    continue
+
+                # No known partner: try fuzzy match against current Discord events (don’t touch unrelated Discord-only events)
+                match = self._fuzzy_find(disc_norm, twi)
+                if match:
+                    try:
+                        await self._upsert_discord_from_tw(guild, twi, match, default_channel_id)
+                        await self._save_event(conn, gid=guild.id, source="twitch", payload=twi, partner_id=str(match["id"]))
+                    except Exception as e:
+                        print(f"[ScheduleSync] tw orphan pair error: {e}")
+                else:
+                    # Create a new Discord event for this Twitch segment
+                    try:
                         ev = await _discord_create_event(guild, twi, default_channel_id)
-                        await self._crosswalk_upsert(conn, gid=guild.id, tw_id=tid, dc_id=str(ev.id),
-                                                     source="twitch", content_hash=_hash_payload(twi),
-                                                     tw_updated=twi.get("updated_at"), dc_updated=None)
+                        await self._save_event(conn, gid=guild.id, source="twitch", payload=twi, partner_id=str(ev.id))
+                    except Exception as e:
+                        print(f"[ScheduleSync] tw create dc error: {e}")
+
+            # Discord updates should only flow to Twitch if a Twitch partner already exists (no creation from Discord-only events)
+            from . import twitch_api_messiah as twmod
+            tw = twmod.TwitchAPI(http, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)
+            for dc in disc_norm:
+                dc_id = dc.get("id")
+                if not dc_id:
+                    continue
+                tw_partner_id = (partner_map.get("discord", {}).get(str(dc_id)))
+                if not tw_partner_id:
+                    continue  # Discord-only event; leave it
+                try:
+                    await self._upsert_twitch_from_dc(tw, o, access_token, {"id": str(tw_partner_id)}, dc)
+                    await self._save_event(conn, gid=guild.id, source="discord", payload=dc, partner_id=str(tw_partner_id))
                 except Exception as e:
-                    print(f"[ScheduleSync] orphan TW create error: {e}")
+                    print(f"[ScheduleSync] dc->tw update error for {dc_id}: {e}")
 
     # ---- reconcile helpers ----
     def _fuzzy_find(self, pool: List[Dict[str, Any]], target: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -407,17 +385,17 @@ class ScheduleSync(commands.Cog):
                 await interaction.followup.send("✅ Schedules synced.", ephemeral=True)
             except Exception as e:
                 await interaction.followup.send(f"❌ Sync failed: {e}", ephemeral=True)
-        elif action in ("enable", "disable"):
-            on = action == "enable"
+        elif action in ("enable_sync", "disable_sync"):
+            on = action == "enable_sync"
             async with await self._db() as conn, conn.cursor() as cur:
                 await cur.execute(
-                    "INSERT INTO schedule_sync_settings (guild_id, enabled) VALUES (%s,%s) "
-                    "ON CONFLICT (guild_id) DO UPDATE SET enabled=EXCLUDED.enabled",
+                    "INSERT INTO schedule_sync_settings (guild_id, " + PREMIUM_SYNC_FLAG + ") VALUES (%s,%s) "
+                    "ON CONFLICT (guild_id) DO UPDATE SET " + PREMIUM_SYNC_FLAG + "=EXCLUDED." + PREMIUM_SYNC_FLAG,
                     (str(interaction.guild.id), on),
                 )
-            await interaction.response.send_message(f"🔁 Sync {'enabled' if on else 'disabled'}.", ephemeral=True)
+            await interaction.response.send_message(f"🔁 Premium sync {'enabled' if on else 'disabled' }.", ephemeral=True)
         else:
-            await interaction.response.send_message("Usage: /schedule_sync <now|enable|disable>", ephemeral=True)
+            await interaction.response.send_message("Usage: /schedule_sync <now|enable_sync|disable_sync>", ephemeral=True)
 
     @app_commands.command(name="schedule_sync_set_channel", description="Messiah: set default Discord channel for events")
     async def schedule_sync_set_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
