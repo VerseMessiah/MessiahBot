@@ -417,5 +417,54 @@ class ScheduleSync(commands.Cog):
             )
         await interaction.response.send_message(f"🕒 Time zone set to `{tz_name}`.", ephemeral=True)
 
+        @app_commands.command(name="schedule_sync_status", description="Messiah: show current Twitch↔Discord sync status")
+    async def schedule_sync_status(self, interaction: discord.Interaction):
+        guild_id = str(interaction.guild.id)
+
+        async with await self._db() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("""
+                SELECT 
+                    guild_id,
+                    COUNT(*) AS total_events,
+                    COUNT(*) FILTER (WHERE source = 'twitch') AS twitch_events,
+                    COUNT(*) FILTER (WHERE source = 'discord') AS discord_events,
+                    COUNT(*) FILTER (WHERE partner_event_id IS NOT NULL) AS paired_events,
+                    MAX(updated_at) AS last_update,
+                    MAX(last_seen) AS last_seen
+                FROM synced_events
+                WHERE guild_id = %s
+                GROUP BY guild_id
+            """, (guild_id,))
+            row = await cur.fetchone()
+
+            premium_on = await self._user_premium(conn, interaction.guild.id)
+
+        if not row:
+            embed = discord.Embed(
+                title="📅 Schedule Sync Status",
+                description="No synced events found for this guild yet.",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        color = discord.Color.gold() if premium_on else discord.Color.dark_grey()
+        embed = discord.Embed(
+            title=f"📅 Schedule Sync Status — {interaction.guild.name}",
+            color=color
+        )
+
+        embed.add_field(name="Premium Sync", value="✅ Enabled" if premium_on else "❌ Disabled", inline=False)
+        embed.add_field(name="Total Events", value=str(row["total_events"]), inline=True)
+        embed.add_field(name="Twitch Events", value=str(row["twitch_events"]), inline=True)
+        embed.add_field(name="Discord Events", value=str(row["discord_events"]), inline=True)
+        embed.add_field(name="Paired Events", value=str(row["paired_events"]), inline=True)
+        embed.add_field(name="Last Updated", value=str(row["last_update"] or "N/A"), inline=True)
+        embed.add_field(name="Last Seen", value=str(row["last_seen"] or "N/A"), inline=True)
+
+        embed.set_footer(text="MessiahBot • Schedule Sync Overview")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(ScheduleSync(bot))
