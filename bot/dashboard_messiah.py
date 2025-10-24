@@ -7,9 +7,8 @@ import urllib.parse
 
 from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from bot.discord_oauth import discord_bp
-from twitch_bp import twitch_bp
-
 app.register_blueprint(discord_bp)
+from bot.twitch_bp import twitch_bp
 app.register_blueprint(twitch_bp)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
