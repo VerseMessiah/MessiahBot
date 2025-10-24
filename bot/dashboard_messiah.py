@@ -7,9 +7,7 @@ import urllib.parse
 
 from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from bot.discord_oauth import discord_bp
-app.register_blueprint(discord_bp)
 from bot.twitch_bp import twitch_bp
-app.register_blueprint(twitch_bp)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -48,6 +46,9 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
 )
+
+app.register_blueprint(discord_bp)
+app.register_blueprint(twitch_bp)
 
 # ---------- DB helpers ----------
 def _db_exec(q: str, p=()):
