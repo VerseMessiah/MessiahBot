@@ -417,7 +417,7 @@ class ScheduleSync(commands.Cog):
             )
         await interaction.response.send_message(f"🕒 Time zone set to `{tz_name}`.", ephemeral=True)
 
-        @app_commands.command(name="schedule_sync_status", description="Messiah: show current Twitch↔Discord sync status")
+    @app_commands.command(name="schedule_sync_status", description="Messiah: show current Twitch↔Discord sync status")
     async def schedule_sync_status(self, interaction: discord.Interaction):
         guild_id = str(interaction.guild.id)
 
