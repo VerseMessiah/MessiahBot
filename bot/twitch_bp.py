@@ -1,8 +1,6 @@
 import os
 from flask import Blueprint, redirect, request, session
-import aiohttp, psycopg
-from psycopg.rows import dict_row
-from twitchAPI.twitch import Twitch
+import requests, psycopg
 
 twitch_bp = Blueprint("twitch_bp", __name__)
 
@@ -14,7 +12,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 @twitch_bp.route("/api/twitch/oauth/start/<guild_id>")
 def twitch_oauth_start(guild_id):
-    scope = "channel:read:stream_schedule channel:manage:stream_schedule user:read:email"
+    # Twitch has deprecated channel:read:schedule and channel:read:stream_schedule
+    # Keep only user:read:email for now (identity + linking)
+    scope = "user:read:email"
     url = (
         f"https://id.twitch.tv/oauth2/authorize"
         f"?client_id={TWITCH_CLIENT_ID}"
@@ -39,22 +39,36 @@ def twitch_oauth_callback():
         "redirect_uri": TWITCH_REDIRECT_URI,
     }
 
-    import requests
     token = requests.post("https://id.twitch.tv/oauth2/token", data=token_data).json()
-    headers = {"Authorization": f"Bearer {token['access_token']}", "Client-Id": TWITCH_CLIENT_ID}
+
+    headers = {
+        "Authorization": f"Bearer {token['access_token']}",
+        "Client-Id": TWITCH_CLIENT_ID,
+    }
     user_data = requests.get("https://api.twitch.tv/helix/users", headers=headers).json()
     twitch_user = user_data["data"][0]
 
     with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO bot_users (twitch_id, premium)
-                VALUES (%s, false)
-                ON CONFLICT (twitch_id) DO NOTHING
-            """, (str(twitch_user["id"]),))
+            # Link Twitch ID with Discord if available in session
+            discord_user = session.get("discord_user")
+            if discord_user:
+                cur.execute("""
+                    INSERT INTO bot_users (discord_id, twitch_id, premium)
+                    VALUES (%s, %s, false)
+                    ON CONFLICT (discord_id)
+                    DO UPDATE SET twitch_id = EXCLUDED.twitch_id
+                """, (str(discord_user["id"]), str(twitch_user["id"])))
+            else:
+                cur.execute("""
+                    INSERT INTO bot_users (twitch_id, premium)
+                    VALUES (%s, false)
+                    ON CONFLICT (twitch_id) DO NOTHING
+                """, (str(twitch_user["id"]),))
         conn.commit()
 
     session["twitch_user"] = twitch_user
+
     return f"""
         ✅ Connected Twitch account: {twitch_user['display_name']}<br>
         Linked to Discord guild: {guild_id or '(none)'}<br><br>
