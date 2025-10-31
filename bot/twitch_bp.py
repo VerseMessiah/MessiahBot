@@ -13,7 +13,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 @twitch_bp.route("/api/twitch/oauth/start/<guild_id>")
 def twitch_oauth_start(guild_id):
-    scope = "channel:read:schedule user:read:email"
+    scope = "channel:read:stream_schedule channel:manage:stream_schedule user:read:email"
     url = (
         f"https://id.twitch.tv/oauth2/authorize"
         f"?client_id={TWITCH_CLIENT_ID}"
@@ -82,7 +82,7 @@ async def twitch_oauth_callback():
                 bot_user[0],
                 token["access_token"],
                 token.get("refresh_token"),
-                ["channel:read:schedule", "user:read:email"],
+                ["channel:read:stream_schedule", "channel:manage:stream_schedule," "user:read:email"],
                 token.get("expires_in", 3600),
                 twitch_user["id"],
                 twitch_user["login"]
