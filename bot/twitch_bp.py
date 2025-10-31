@@ -48,24 +48,47 @@ async def twitch_oauth_callback():
 
     twitch_user = user_data["data"][0]
 
-    # Save Twitch account
+        # Save Twitch account and tokens
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, sslmode="require") as conn:
         async with conn.cursor() as cur:
+            # Ensure the user exists in bot_users
             await cur.execute("""
-                UPDATE bot_users
-                SET twitch_id = %s
-                WHERE discord_id IS NOT NULL AND discord_id = %s
+                INSERT INTO bot_users (discord_id, twitch_id, premium)
+                VALUES (%s, %s, false)
+                ON CONFLICT (discord_id) DO UPDATE SET twitch_id = EXCLUDED.twitch_id
                 RETURNING id
-            """, (str(twitch_user["id"]), session.get("discord_user", {}).get("id")))
-            if cur.rowcount == 0:
-                await cur.execute("""
-                    INSERT INTO bot_users (twitch_id, premium)
-                    VALUES (%s, false)
-                    ON CONFLICT (twitch_id) DO NOTHING
-                """, (str(twitch_user["id"]),))
-        await conn.commit()
+            """, (
+                session.get("discord_user", {}).get("id"),
+                str(twitch_user["id"])
+            ))
+            bot_user = await cur.fetchone()
 
-    session["twitch_user"] = twitch_user
+            # Store Twitch token info in twitch_tokens
+            await cur.execute("""
+                INSERT INTO twitch_tokens (
+                    user_id, access_token, refresh_token, scope,
+                    token_obtained_at, token_expires_at, broadcaster_id, login
+                )
+                VALUES (
+                    %s, %s, %s, %s, NOW(),
+                    NOW() + interval '%s seconds',
+                    %s, %s
+                )
+                ON CONFLICT (user_id) DO UPDATE SET
+                    access_token = EXCLUDED.access_token,
+                    refresh_token = EXCLUDED.refresh_token,
+                    token_expires_at = EXCLUDED.token_expires_at
+            """, (
+                bot_user[0],
+                token["access_token"],
+                token.get("refresh_token"),
+                ["channel:read:schedule", "user:read:email"],
+                token.get("expires_in", 3600),
+                twitch_user["id"],
+                twitch_user["login"]
+            ))
+
+        await conn.commit()
 
     return f"""
         ✅ Connected Twitch account: {twitch_user['display_name']}<br>

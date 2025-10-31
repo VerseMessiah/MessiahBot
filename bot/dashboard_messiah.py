@@ -9,6 +9,7 @@ from flask import Flask, request, jsonify, render_template_string, session, redi
 from bot.discord_oauth import discord_bp
 from bot.twitch_bp import twitch_bp
 
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
@@ -49,6 +50,7 @@ app.config.update(
 
 app.register_blueprint(discord_bp)
 app.register_blueprint(twitch_bp)
+
 
 # ---------- DB helpers ----------
 def _db_exec(q: str, p=()):
