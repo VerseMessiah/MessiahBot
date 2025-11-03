@@ -10,7 +10,6 @@ from bot.discord_oauth import discord_bp
 from bot.twitch_bp import twitch_bp
 from flask_talisman import Talisman
 
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
