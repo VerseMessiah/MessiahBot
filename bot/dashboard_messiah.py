@@ -43,6 +43,11 @@ except Exception:
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", secrets.token_hex(32))
 
+@app.after_request
+def allow_inline(resp):
+    resp.headers.pop("Content-Security-Policy", None)
+    return resp
+
 from flask_session import Session
 
 app.config["SESSION_TYPE"] = "filesystem"  # Safe for Render’s ephemeral FS
