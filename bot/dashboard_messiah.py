@@ -8,6 +8,7 @@ import urllib.parse
 from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from bot.discord_oauth import discord_bp
 from bot.twitch_bp import twitch_bp
+from flask_talisman import Talisman
 
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -50,6 +51,7 @@ app.config.update(
 
 app.register_blueprint(discord_bp)
 app.register_blueprint(twitch_bp)
+Talisman(app, force_https=True)
 
 
 # ---------- DB helpers ----------
