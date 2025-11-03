@@ -50,21 +50,22 @@ def twitch_oauth_callback():
 
     with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
         with conn.cursor() as cur:
-            # Link Twitch ID with Discord if available in session
-            discord_user = session.get("discord_user")
-            if discord_user:
-                cur.execute("""
-                    INSERT INTO bot_users (discord_id, twitch_id, premium)
-                    VALUES (%s, %s, false)
-                    ON CONFLICT (discord_id)
-                    DO UPDATE SET twitch_id = EXCLUDED.twitch_id
-                """, (str(discord_user["id"]), str(twitch_user["id"])))
-            else:
-                cur.execute("""
-                    INSERT INTO bot_users (twitch_id, premium)
-                    VALUES (%s, false)
-                    ON CONFLICT (twitch_id) DO NOTHING
-                """, (str(twitch_user["id"]),))
+            cur.execute("""
+                INSERT INTO twitch_tokens (guild_id, twitch_user_id, access_token, refresh_token, expires_in)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    twitch_user_id = EXCLUDED.twitch_user_id,
+                    access_token = EXCLUDED.access_token,
+                    refresh_token = EXCLUDED.refresh_token,
+                    expires_in = EXCLUDED.expires_in
+            """, (
+                guild_id,
+                str(twitch_user["id"]),
+                token["access_token"],
+                token.get("refresh_token"),
+                token.get("expires_in"),
+            ))
         conn.commit()
 
     session["twitch_user"] = twitch_user
