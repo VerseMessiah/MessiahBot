@@ -43,11 +43,16 @@ except Exception:
 
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", secrets.token_hex(32))
-app.config.update(
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=True,
-    SESSION_COOKIE_HTTPONLY=True,
-)
+
+from flask_session import Session
+
+app.config["SESSION_TYPE"] = "filesystem"  # Safe for Render’s ephemeral FS
+app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"  # Exists across requests in same instance
+app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "None"
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_USE_SIGNER"] = True
+Session(app)
 
 app.register_blueprint(discord_bp)
 app.register_blueprint(twitch_bp)
