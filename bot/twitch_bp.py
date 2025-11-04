@@ -1,6 +1,8 @@
+# bot/twitch_bp.py
 import os
+import psycopg
 from flask import Blueprint, redirect, request, session
-import requests, psycopg
+import requests
 
 twitch_bp = Blueprint("twitch_bp", __name__, url_prefix="/api/twitch")
 
@@ -10,12 +12,33 @@ TWITCH_REDIRECT_URI = os.getenv("TWITCH_REDIRECT_URI")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
-@twitch_bp.route("/api/twitch/oauth/callback")
-def twitch_oauth_callback():
-    import requests  # make sure requests is imported
+@twitch_bp.route("/oauth/start/<guild_id>")
+def twitch_oauth_start(guild_id):
+    """Start the Twitch OAuth flow"""
+    scope = "user:read:email"
+    url = (
+        f"https://id.twitch.tv/oauth2/authorize"
+        f"?client_id={TWITCH_CLIENT_ID}"
+        f"&redirect_uri={TWITCH_REDIRECT_URI}"
+        f"&response_type=code"
+        f"&scope={scope}"
+        f"&state={guild_id}"
+    )
+    return redirect(url)
 
+
+@twitch_bp.route("/oauth/callback")
+def twitch_oauth_callback():
+    """Handle the OAuth redirect and store the access token"""
     code = request.args.get("code")
     guild_id = request.args.get("state")
+
+    if not code:
+        return (
+            "<h3>❌ Missing authorization code</h3>"
+            "<p>Try starting the OAuth flow again.</p>",
+            400,
+        )
 
     token_data = {
         "client_id": TWITCH_CLIENT_ID,
@@ -25,18 +48,16 @@ def twitch_oauth_callback():
         "redirect_uri": TWITCH_REDIRECT_URI,
     }
 
-    # Step 1: Exchange authorization code for access token
+    # Step 1 — Exchange authorization code for access token
     token_resp = requests.post("https://id.twitch.tv/oauth2/token", data=token_data)
     token = token_resp.json()
 
-    # --- Safety check ---
     if "access_token" not in token:
         return (
             f"<h3>❌ Twitch OAuth failed</h3>"
-            f"<p>No access_token found in response. This means the authorization failed.</p>"
-            f"<pre>{token}</pre>"
-            f"<p>Check that your Twitch app’s redirect URI exactly matches:<br>"
-            f"<code>{TWITCH_REDIRECT_URI}</code></p>",
+            f"<p>No access_token found in response. Check your Twitch app redirect URI:</p>"
+            f"<pre>{TWITCH_REDIRECT_URI}</pre>"
+            f"<p>Raw response:</p><pre>{token}</pre>",
             400,
         )
 
@@ -44,7 +65,7 @@ def twitch_oauth_callback():
     refresh_token = token.get("refresh_token")
     expires_in = token.get("expires_in")
 
-    # Step 2: Get Twitch user info
+    # Step 2 — Get Twitch user info
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Client-Id": TWITCH_CLIENT_ID,
@@ -57,10 +78,11 @@ def twitch_oauth_callback():
 
     twitch_user = user_data["data"][0]
 
-    # Step 3: Save or update tokens in database
+    # Step 3 — Save or update in database
     with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO twitch_tokens (guild_id, twitch_user_id, access_token, refresh_token, expires_in)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (guild_id)
@@ -69,13 +91,15 @@ def twitch_oauth_callback():
                     access_token = EXCLUDED.access_token,
                     refresh_token = EXCLUDED.refresh_token,
                     expires_in = EXCLUDED.expires_in
-            """, (
-                guild_id,
-                str(twitch_user["id"]),
-                access_token,
-                refresh_token,
-                expires_in,
-            ))
+                """,
+                (
+                    guild_id,
+                    str(twitch_user["id"]),
+                    access_token,
+                    refresh_token,
+                    expires_in,
+                ),
+            )
         conn.commit()
 
     session["twitch_user"] = twitch_user
@@ -83,5 +107,5 @@ def twitch_oauth_callback():
     return f"""
         ✅ Connected Twitch account: {twitch_user['display_name']}<br>
         Linked to Discord guild: {guild_id or '(none)'}<br><br>
-        <a href='/dashboard'>Return to Dashboard</a>
+        <a href='/form'>Return to Dashboard</a>
     """
