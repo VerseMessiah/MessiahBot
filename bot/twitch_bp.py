@@ -10,24 +10,10 @@ TWITCH_REDIRECT_URI = os.getenv("TWITCH_REDIRECT_URI")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
-@twitch_bp.route("/api/twitch/oauth/start/<guild_id>")
-def twitch_oauth_start(guild_id):
-    # Twitch has deprecated channel:read:schedule and channel:read:stream_schedule
-    # Keep only user:read:email for now (identity + linking)
-    scope = "user:read:email"
-    url = (
-        f"https://id.twitch.tv/oauth2/authorize"
-        f"?client_id={TWITCH_CLIENT_ID}"
-        f"&redirect_uri={TWITCH_REDIRECT_URI}"
-        f"&response_type=code"
-        f"&scope={scope}"
-        f"&state={guild_id}"
-    )
-    return redirect(url)
-
-
 @twitch_bp.route("/api/twitch/oauth/callback")
 def twitch_oauth_callback():
+    import requests  # make sure requests is imported
+
     code = request.args.get("code")
     guild_id = request.args.get("state")
 
@@ -39,15 +25,39 @@ def twitch_oauth_callback():
         "redirect_uri": TWITCH_REDIRECT_URI,
     }
 
-    token = requests.post("https://id.twitch.tv/oauth2/token", data=token_data).json()
+    # Step 1: Exchange authorization code for access token
+    token_resp = requests.post("https://id.twitch.tv/oauth2/token", data=token_data)
+    token = token_resp.json()
 
+    # --- Safety check ---
+    if "access_token" not in token:
+        return (
+            f"<h3>❌ Twitch OAuth failed</h3>"
+            f"<p>No access_token found in response. This means the authorization failed.</p>"
+            f"<pre>{token}</pre>"
+            f"<p>Check that your Twitch app’s redirect URI exactly matches:<br>"
+            f"<code>{TWITCH_REDIRECT_URI}</code></p>",
+            400,
+        )
+
+    access_token = token["access_token"]
+    refresh_token = token.get("refresh_token")
+    expires_in = token.get("expires_in")
+
+    # Step 2: Get Twitch user info
     headers = {
-        "Authorization": f"Bearer {token['access_token']}",
+        "Authorization": f"Bearer {access_token}",
         "Client-Id": TWITCH_CLIENT_ID,
     }
-    user_data = requests.get("https://api.twitch.tv/helix/users", headers=headers).json()
+    user_resp = requests.get("https://api.twitch.tv/helix/users", headers=headers)
+    user_data = user_resp.json()
+
+    if "data" not in user_data or not user_data["data"]:
+        return f"<h3>❌ Failed to fetch Twitch user info</h3><pre>{user_data}</pre>", 400
+
     twitch_user = user_data["data"][0]
 
+    # Step 3: Save or update tokens in database
     with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -62,9 +72,9 @@ def twitch_oauth_callback():
             """, (
                 guild_id,
                 str(twitch_user["id"]),
-                token["access_token"],
-                token.get("refresh_token"),
-                token.get("expires_in"),
+                access_token,
+                refresh_token,
+                expires_in,
             ))
         conn.commit()
 
