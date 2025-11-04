@@ -2,7 +2,7 @@ import os
 from flask import Blueprint, redirect, request, session
 import requests, psycopg
 
-twitch_bp = Blueprint("twitch_bp", __name__)
+twitch_bp = Blueprint("twitch_bp", __name__, url_prefix="/api/twitch")
 
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
