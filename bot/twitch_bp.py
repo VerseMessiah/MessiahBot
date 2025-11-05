@@ -27,18 +27,13 @@ def twitch_oauth_start(guild_id):
     return redirect(url)
 
 
-@twitch_bp.route("/oauth/callback")
+@twitch_bp.route("/api/twitch/oauth/callback")
 def twitch_oauth_callback():
-    """Handle the OAuth redirect and store the access token"""
     code = request.args.get("code")
     guild_id = request.args.get("state")
 
     if not code:
-        return (
-            "<h3>❌ Missing authorization code</h3>"
-            "<p>Try starting the OAuth flow again.</p>",
-            400,
-        )
+        return "❌ Missing OAuth code from Twitch", 400
 
     token_data = {
         "client_id": TWITCH_CLIENT_ID,
@@ -48,64 +43,59 @@ def twitch_oauth_callback():
         "redirect_uri": TWITCH_REDIRECT_URI,
     }
 
-    # Step 1 — Exchange authorization code for access token
-    token_resp = requests.post("https://id.twitch.tv/oauth2/token", data=token_data)
-    token = token_resp.json()
+    # --- Exchange code for token ---
+    import requests
+    token_res = requests.post("https://id.twitch.tv/oauth2/token", data=token_data)
+    token = token_res.json()
 
+    # Check for valid token
     if "access_token" not in token:
-        return (
-            f"<h3>❌ Twitch OAuth failed</h3>"
-            f"<p>No access_token found in response. Check your Twitch app redirect URI:</p>"
-            f"<pre>{TWITCH_REDIRECT_URI}</pre>"
-            f"<p>Raw response:</p><pre>{token}</pre>",
-            400,
-        )
+        return f"""❌ Twitch OAuth failed<br><br>
+        No access_token found in response. Check your Twitch app redirect URI:<br>
+        <code>{TWITCH_REDIRECT_URI}</code><br><br>
+        Raw response:<br><pre>{token}</pre>""", 400
 
-    access_token = token["access_token"]
-    refresh_token = token.get("refresh_token")
-    expires_in = token.get("expires_in")
-
-    # Step 2 — Get Twitch user info
+    # --- Fetch Twitch user info ---
     headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Client-Id": TWITCH_CLIENT_ID,
+        "Authorization": f"Bearer {token['access_token']}",
+        "Client-Id": TWITCH_CLIENT_ID
     }
-    user_resp = requests.get("https://api.twitch.tv/helix/users", headers=headers)
-    user_data = user_resp.json()
-
-    if "data" not in user_data or not user_data["data"]:
-        return f"<h3>❌ Failed to fetch Twitch user info</h3><pre>{user_data}</pre>", 400
-
+    user_res = requests.get("https://api.twitch.tv/helix/users", headers=headers)
+    user_data = user_res.json()
+    if not user_data.get("data"):
+        return f"❌ Failed to fetch Twitch user info:<br><pre>{user_data}</pre>", 400
     twitch_user = user_data["data"][0]
 
-    # Step 3 — Save or update in database
-    with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO twitch_tokens (guild_id, twitch_user_id, access_token, refresh_token, expires_in)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    twitch_user_id = EXCLUDED.twitch_user_id,
-                    access_token = EXCLUDED.access_token,
-                    refresh_token = EXCLUDED.refresh_token,
-                    expires_in = EXCLUDED.expires_in
-                """,
-                (
-                    guild_id,
+    # --- Save to DB (sync psycopg) ---
+    import psycopg
+    from psycopg.rows import dict_row
+    try:
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                print(f"💾 Saving token for guild {guild_id}, user {twitch_user['id']}")
+                cur.execute("""
+                    INSERT INTO twitch_tokens (guild_id, twitch_user_id, access_token, refresh_token, expires_at, scope)
+                    VALUES (%s, %s, %s, %s, NOW() + interval '60 minutes', %s)
+                    ON CONFLICT (guild_id, twitch_user_id)
+                    DO UPDATE SET
+                        access_token = EXCLUDED.access_token,
+                        refresh_token = EXCLUDED.refresh_token,
+                        expires_at = EXCLUDED.expires_at,
+                        updated_at = NOW();
+                """, (
+                    str(guild_id),
                     str(twitch_user["id"]),
-                    access_token,
-                    refresh_token,
-                    expires_in,
-                ),
-            )
-        conn.commit()
-
-    session["twitch_user"] = twitch_user
-
-    return f"""
-        ✅ Connected Twitch account: {twitch_user['display_name']}<br>
-        Linked to Discord guild: {guild_id or '(none)'}<br><br>
-        <a href='/form'>Return to Dashboard</a>
-    """
+                    token["access_token"],
+                    token.get("refresh_token", ""),
+                    "user:read:email"
+                ))
+        msg = f"""
+            ✅ Connected Twitch account: <b>{twitch_user['display_name']}</b><br>
+            Linked to Discord guild: {guild_id}<br><br>
+            <a href='/dashboard'>Return to Dashboard</a>
+        """
+        return msg
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"❌ Database error while saving Twitch token:<br><pre>{e}</pre>", 500
