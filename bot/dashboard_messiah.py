@@ -58,9 +58,9 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_USE_SIGNER"] = True
 Session(app)
 
-app.register_blueprint(discord_bp)
-app.register_blueprint(twitch_bp)
-Talisman(app, force_https=True)
+app.register_blueprint(discord_bp, url_prefix="/api/discord")
+app.register_blueprint(twitch_bp, url_prefix="/api/twitch")
+Talisman(app, force_https=True, content_security_policy=None)
 
 
 # ---------- DB helpers ----------
@@ -1242,6 +1242,14 @@ def index():
 @app.get("/form")
 def form():
     return render_template_string(_FORM_HTML)
+
+
+# --- Global error handler ---
+@app.errorhandler(Exception)
+def handle_ex(e):
+    import traceback
+    traceback.print_exc()
+    return {"ok": False, "error": str(e)}, 500
 
 if __name__ == "__main__":
     # Local dev runner. On Render, prefer:
