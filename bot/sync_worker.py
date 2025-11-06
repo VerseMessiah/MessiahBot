@@ -39,7 +39,7 @@ def create_discord_event(guild_id, event):
         "scheduled_start_time": event["start_time"],
         "scheduled_end_time": event.get("end_time"),
         "privacy_level": 2,  # GUILD_ONLY
-        "entity_type": 1,  # external event
+        "entity_type": 3,  # external event
         "entity_metadata": {"location": f"https://twitch.tv/{event.get('broadcaster_name', 'unknown')}"},
         "description": event.get("description", ""),
     }
@@ -47,7 +47,7 @@ def create_discord_event(guild_id, event):
         r = requests.post(f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events", headers=headers, json=payload)
         if r.status_code in (200, 201):
             print(f"✅ Discord event created: {event['title']}")
-            time.sleep(1.5)
+            time.sleep(2.0)
         else:
             print(f"❌ Discord event create failed ({r.status_code}): {r.text}")
     except Exception as e:
