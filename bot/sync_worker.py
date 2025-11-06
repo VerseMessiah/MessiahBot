@@ -29,25 +29,72 @@ def get_twitch_schedule(user_id, access_token):
     return segments
 
 def create_discord_event(guild_id, event):
-    """Create or update Discord scheduled event."""
+    """Create Discord scheduled event if it doesn't already exist."""
     headers = {
         "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
         "Content-Type": "application/json"
     }
+
+    # Fetch existing scheduled events to prevent duplicates
+    existing = []
+    try:
+        existing_resp = requests.get(
+            f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events",
+            headers=headers
+        )
+        if existing_resp.status_code == 200:
+            existing = existing_resp.json()
+        else:
+            print(f"⚠️ Could not fetch existing events: {existing_resp.text}")
+    except Exception as e:
+        print(f"⚠️ Error fetching existing events: {e}")
+
+    # Determine Twitch event times
+    start_time = event.get("start_time")
+    end_time = event.get("end_time")
+    if not end_time and start_time:
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            end_time = (start_dt + timedelta(hours=4)).isoformat()  # ⏰ Default 4 hours
+        except Exception:
+            end_time = start_time  # fallback
+
+    event_name = event.get("title", "Twitch Stream")
+    existing_match = next(
+        (e for e in existing if e["name"] == event_name and e["scheduled_start_time"] == start_time),
+        None
+    )
+
+    if existing_match:
+        print(f"⏭️ Skipping duplicate event: {event_name}")
+        return
+
+    # Build event payload
     payload = {
-        "name": event["title"],
-        "scheduled_start_time": event["start_time"],
-        "scheduled_end_time": event.get("end_time"),
+        "name": event_name,
+        "scheduled_start_time": start_time,
+        "scheduled_end_time": end_time,
         "privacy_level": 2,  # GUILD_ONLY
-        "entity_type": 3,  # external event
-        "entity_metadata": {"location": f"https://twitch.tv/{event.get('broadcaster_name', 'unknown')}"},
+        "entity_type": 3,  # External event
+        "entity_metadata": {
+            "location": f"https://twitch.tv/{event.get('broadcaster_name', 'unknown')}"
+        },
         "description": event.get("description", ""),
     }
+
+    # Send event to Discord
     try:
-        r = requests.post(f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events", headers=headers, json=payload)
+        r = requests.post(
+            f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events",
+            headers=headers, json=payload
+        )
         if r.status_code in (200, 201):
-            print(f"✅ Discord event created: {event['title']}")
-            time.sleep(2.0)
+            print(f"✅ Discord event created: {event_name}")
+            time.sleep(1.5)
+        elif r.status_code == 429:
+            retry_after = r.json().get("retry_after", 5)
+            print(f"⚠️ Rate limited — sleeping {retry_after:.2f}s")
+            time.sleep(float(retry_after) + 1)
         else:
             print(f"❌ Discord event create failed ({r.status_code}): {r.text}")
     except Exception as e:
