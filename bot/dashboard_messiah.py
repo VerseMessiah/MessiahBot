@@ -1114,6 +1114,16 @@ _FORM_HTML = r"""
           };
           // prefill the first
           $("#guild_id").value = picker.value;
+
+          // --- Twitch connect button logic ---
+          const twitchBtn = $("#twitchBtn");
+          twitchBtn.style.display = "inline-flex";
+          twitchBtn.href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
+
+          picker.addEventListener("change", () => {
+            twitchBtn.href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
+          });
+          // -----------------------------------
         } else {
           picker.style.display = "none";
         }
@@ -1126,19 +1136,6 @@ _FORM_HTML = r"""
       }
     }catch(e){
       console.warn("whoami failed", e);
-    }
-
-    // Twitch connect button setup
-    if (picker && info.logged_in) {
-      picker.onchange = function() {
-        $("#guild_id").value = picker.value;
-        $("#twitchBtn").href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
-        $("#twitchBtn").style.display = "inline-flex";
-      };
-      if (picker.value) {
-        $("#twitchBtn").href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
-        $("#twitchBtn").style.display = "inline-flex";
-      }
     }
   })();
 
