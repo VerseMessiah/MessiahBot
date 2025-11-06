@@ -20,7 +20,13 @@ def get_twitch_schedule(user_id, access_token):
     r = requests.get(f"https://api.twitch.tv/helix/schedule?broadcaster_id={user_id}", headers=headers)
     if r.status_code != 200:
         raise RuntimeError(f"Twitch API error {r.status_code}: {r.text}")
-    return r.json().get("data", {}).get("segments", [])
+    data = r.json().get("data", {})
+    segments = data.get("segments", [])
+    broadcaster_name = data.get("broadcaster_name", "unknown")
+    for event in segments:
+        if "broadcaster_name" not in event:
+            event["broadcaster_name"] = broadcaster_name
+    return segments
 
 def create_discord_event(guild_id, event):
     """Create or update Discord scheduled event."""
@@ -32,13 +38,20 @@ def create_discord_event(guild_id, event):
         "name": event["title"],
         "scheduled_start_time": event["start_time"],
         "scheduled_end_time": event.get("end_time"),
-        "privacy_level": 2,
-        "entity_type": 3,
+        "privacy_level": 2,  # GUILD_ONLY
+        "entity_type": 1,  # external event
+        "entity_metadata": {"location": f"https://twitch.tv/{event.get('broadcaster_name', 'unknown')}"},
         "description": event.get("description", ""),
     }
-    r = requests.post(f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events", headers=headers, json=payload)
-    if r.status_code not in (200, 201):
-        print(f"❌ Discord event create failed ({r.status_code}): {r.text}")
+    try:
+        r = requests.post(f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events", headers=headers, json=payload)
+        if r.status_code in (200, 201):
+            print(f"✅ Discord event created: {event['title']}")
+            time.sleep(1.5)
+        else:
+            print(f"❌ Discord event create failed ({r.status_code}): {r.text}")
+    except Exception as e:
+        print(f"❌ Exception during Discord event creation: {e}")
 
 def main():
     print("⏰ Running Twitch→Discord schedule sync...")
@@ -67,7 +80,6 @@ def main():
                     start = event.get("start_time")
                     if start:
                         create_discord_event(guild_id, event)
-                        time.sleep(0.5)
                 print(f"🔄 Synced {len(schedule)} events for guild {guild_id}")
             except Exception as e:
                 print(f"❌ Failed to sync guild {guild_id}: {e}")
