@@ -670,6 +670,7 @@ _FORM_HTML = r"""
     </div>
     <div class="right">
       <select id="guildPicker" class="select" style="display:none;"></select>
+      <a id="twitchBtn" class="pill" href="#" target="_blank" rel="noopener" style="display:none;">Connect Twitch</a>
       <a id="inviteBtn" class="pill" href="#" target="_blank" rel="noopener">Invite Bot</a>
       <a id="loginBtn" class="pill" href="/login">Login with Discord</a>
       <a id="logoutBtn" class="pill" href="/logout" style="display:none;">Logout</a>
@@ -1125,6 +1126,19 @@ _FORM_HTML = r"""
       }
     }catch(e){
       console.warn("whoami failed", e);
+    }
+
+    // Twitch connect button setup
+    if (picker && info.logged_in) {
+      picker.onchange = function() {
+        $("#guild_id").value = picker.value;
+        $("#twitchBtn").href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
+        $("#twitchBtn").style.display = "inline-flex";
+      };
+      if (picker.value) {
+        $("#twitchBtn").href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
+        $("#twitchBtn").style.display = "inline-flex";
+      }
     }
   })();
 

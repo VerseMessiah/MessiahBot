@@ -3,6 +3,7 @@ import os
 import time
 import requests
 import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime, timezone, timedelta
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -10,100 +11,73 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 
-TWITCH_API = "https://api.twitch.tv/helix"
-TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
-
-def refresh_twitch_token(refresh_token):
-    """Exchange a refresh token for a new access token."""
-    data = {
-        "client_id": TWITCH_CLIENT_ID,
-        "client_secret": TWITCH_CLIENT_SECRET,
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-    }
-    r = requests.post(TWITCH_TOKEN_URL, data=data, timeout=20)
-    if r.status_code != 200:
-        print(f"❌ Twitch refresh failed: {r.status_code} {r.text}")
-        return None
-    j = r.json()
-    return {
-        "access_token": j["access_token"],
-        "refresh_token": j.get("refresh_token", refresh_token),
-        "expires_in": j.get("expires_in", 0)
-    }
-
-def update_token_in_db(conn, twitch_user_id, access_token, refresh_token, expires_in):
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-    with conn.cursor() as cur:
-        cur.execute("""
-            UPDATE twitch_tokens
-            SET access_token=%s,
-                refresh_token=%s,
-                expires_at=%s,
-                updated_at=NOW()
-            WHERE twitch_user_id=%s
-        """, (access_token, refresh_token, expires_at, twitch_user_id))
-        conn.commit()
-
-def fetch_twitch_schedule(access_token, user_id):
+def get_twitch_schedule(user_id, access_token):
+    """Fetch Twitch schedule for a user_id."""
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Client-Id": TWITCH_CLIENT_ID,
+        "Client-Id": TWITCH_CLIENT_ID
     }
-    r = requests.get(f"{TWITCH_API}/schedule?broadcaster_id={user_id}", headers=headers, timeout=20)
-    return r
+    r = requests.get(f"https://api.twitch.tv/helix/schedule?broadcaster_id={user_id}", headers=headers)
+    if r.status_code != 200:
+        raise RuntimeError(f"Twitch API error {r.status_code}: {r.text}")
+    return r.json().get("data", {}).get("segments", [])
 
-def run_sync():
-    """Main sync loop body."""
-    with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM twitch_tokens")
-            tokens = cur.fetchall()
-            if not tokens:
-                print("⚠️ No Twitch tokens found in DB.")
-                return
+def create_discord_event(guild_id, event):
+    """Create or update Discord scheduled event."""
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "name": event["title"],
+        "scheduled_start_time": event["start_time"],
+        "scheduled_end_time": event.get("end_time"),
+        "privacy_level": 2,
+        "entity_type": 3,
+        "description": event.get("description", ""),
+    }
+    r = requests.post(f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events", headers=headers, json=payload)
+    if r.status_code not in (200, 201):
+        print(f"❌ Discord event create failed ({r.status_code}): {r.text}")
 
-            for row in tokens:
-                twitch_user_id = row[1] if "twitch_user_id" in row else row["twitch_user_id"]
-                guild_id = row[0] if "guild_id" in row else row["guild_id"]
-                access_token = row["access_token"]
-                refresh_token = row["refresh_token"]
+def main():
+    print("⏰ Running Twitch→Discord schedule sync...")
 
-                print(f"🔄 Syncing Twitch schedule for guild {guild_id} (user {twitch_user_id})")
+    try:
+        with psycopg.connect(DATABASE_URL, sslmode="require", row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT guild_id, twitch_user_id, access_token FROM twitch_tokens")
+                tokens = cur.fetchall()
 
-                r = fetch_twitch_schedule(access_token, twitch_user_id)
+        if not tokens:
+            print("⚠️ No Twitch tokens found.")
+            return
 
-                # Handle expired/invalid token
-                if r.status_code == 401:
-                    print("🔁 Access token expired — refreshing...")
-                    new_tok = refresh_twitch_token(refresh_token)
-                    if new_tok:
-                        update_token_in_db(conn, twitch_user_id, new_tok["access_token"], new_tok["refresh_token"], new_tok["expires_in"])
-                        access_token = new_tok["access_token"]
-                        r = fetch_twitch_schedule(access_token, twitch_user_id)
-                    else:
-                        print(f"❌ Could not refresh token for {twitch_user_id}")
-                        continue
+        print(f"✅ Found {len(tokens)} linked Twitch accounts.")
 
-                if r.status_code != 200:
-                    print(f"❌ Twitch API error {r.status_code}: {r.text}")
-                    continue
+        for row in tokens:
+            guild_id = row["guild_id"]
+            twitch_id = row["twitch_user_id"]
+            access_token = row["access_token"]
 
-                data = r.json()
-                segments = data.get("data", {}).get("segments", [])
-                print(f"✅ Synced {len(segments)} Twitch events for guild {guild_id}")
+            try:
+                schedule = get_twitch_schedule(twitch_id, access_token)
+                print(f"📅 {len(schedule)} event(s) found for Twitch user {twitch_id}")
+                for event in schedule:
+                    start = event.get("start_time")
+                    if start:
+                        create_discord_event(guild_id, event)
+                        time.sleep(0.5)
+                print(f"🔄 Synced {len(schedule)} events for guild {guild_id}")
+            except Exception as e:
+                print(f"❌ Failed to sync guild {guild_id}: {e}")
 
-                # (optional) You could now push these to Discord scheduled events
+    except Exception as e:
+        print(f"❌ Sync run failed: {e}")
 
-def main_loop():
-    while True:
-        print("⏰ Running Twitch→Discord schedule sync...")
-        try:
-            run_sync()
-        except Exception as e:
-            print(f"❌ Sync run failed: {e}")
-        print("😴 Sleeping 1 hour...")
-        time.sleep(3600)
+    print("😴 Sleeping 1 hour...")
+    time.sleep(3600)
 
 if __name__ == "__main__":
-    main_loop()
+    while True:
+        main()
