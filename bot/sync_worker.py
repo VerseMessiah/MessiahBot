@@ -29,76 +29,126 @@ def get_twitch_schedule(user_id, access_token):
     return segments
 
 def create_discord_event(guild_id, event):
-    """Create Discord scheduled event if it doesn't already exist."""
+    """Create or update Discord scheduled event and record mapping."""
     headers = {
         "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
         "Content-Type": "application/json"
     }
 
-    # Fetch existing scheduled events to prevent duplicates
-    existing = []
+    # Fetch existing Discord events
     try:
-        existing_resp = requests.get(
-            f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events",
-            headers=headers
-        )
-        if existing_resp.status_code == 200:
-            existing = existing_resp.json()
-        else:
-            print(f"⚠️ Could not fetch existing events: {existing_resp.text}")
+        resp = requests.get(f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events", headers=headers)
+        existing_events = resp.json() if resp.status_code == 200 else []
     except Exception as e:
         print(f"⚠️ Error fetching existing events: {e}")
+        existing_events = []
 
-    # Determine Twitch event times
+    # Determine times
     start_time = event.get("start_time")
     end_time = event.get("end_time")
     if not end_time and start_time:
         try:
             start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-            end_time = (start_dt + timedelta(hours=4)).isoformat()  # ⏰ Default 4 hours
+            end_time = (start_dt + timedelta(hours=4)).isoformat()
         except Exception:
-            end_time = start_time  # fallback
+            end_time = start_time
 
+    twitch_url = f"https://twitch.tv/{event.get('broadcaster_name', 'unknown')}"
     event_name = event.get("title", "Twitch Stream")
-    existing_match = next(
-        (e for e in existing if e["name"] == event_name and e["scheduled_start_time"] == start_time),
-        None
-    )
+    description = event.get("description", "")
+    twitch_event_id = event.get("id")
 
-    if existing_match:
-        print(f"⏭️ Skipping duplicate event: {event_name}")
-        return
-
-    # Build event payload
     payload = {
         "name": event_name,
         "scheduled_start_time": start_time,
         "scheduled_end_time": end_time,
-        "privacy_level": 2,  # GUILD_ONLY
-        "entity_type": 3,  # External event
-        "entity_metadata": {
-            "location": f"https://twitch.tv/{event.get('broadcaster_name', 'unknown')}"
-        },
-        "description": event.get("description", ""),
+        "privacy_level": 2,
+        "entity_type": 3,
+        "entity_metadata": {"location": twitch_url},
+        "description": description,
     }
 
-    # Send event to Discord
-    try:
+    # Check for existing Discord event match
+    existing_match = next(
+        (
+            e for e in existing_events
+            if e["name"] == event_name
+            and e["scheduled_start_time"] == start_time
+        ),
+        None
+    )
+
+    discord_event_id = None
+
+    # --- Update existing ---
+    if existing_match:
+        discord_event_id = existing_match["id"]
+        changed = (
+            existing_match.get("scheduled_end_time") != end_time
+            or existing_match.get("description") != description
+        )
+        if changed:
+            print(f"🔄 Updating existing event: {event_name}")
+            r = requests.patch(
+                f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events/{discord_event_id}",
+                headers=headers, json=payload
+            )
+            if r.status_code in (200, 201):
+                print(f"✅ Updated: {event_name}")
+            elif r.status_code == 429:
+                retry = r.json().get("retry_after", 5)
+                print(f"⚠️ Rate limited — retrying in {retry:.1f}s")
+                time.sleep(float(retry) + 1)
+                create_discord_event(guild_id, event)
+        else:
+            print(f"⏭️ No changes — skipping: {event_name}")
+    else:
+        # --- Create new ---
+        print(f"➕ Creating new event: {event_name}")
         r = requests.post(
             f"https://discord.com/api/v10/guilds/{guild_id}/scheduled-events",
             headers=headers, json=payload
         )
         if r.status_code in (200, 201):
-            print(f"✅ Discord event created: {event_name}")
-            time.sleep(1.5)
+            print(f"✅ Created: {event_name}")
+            discord_event_id = r.json().get("id")
         elif r.status_code == 429:
             retry_after = r.json().get("retry_after", 5)
             print(f"⚠️ Rate limited — sleeping {retry_after:.2f}s")
             time.sleep(float(retry_after) + 1)
+            create_discord_event(guild_id, event)
         else:
-            print(f"❌ Discord event create failed ({r.status_code}): {r.text}")
-    except Exception as e:
-        print(f"❌ Exception during Discord event creation: {e}")
+            print(f"❌ Create failed ({r.status_code}): {r.text}")
+
+    # --- Record in synced_events ---
+    if discord_event_id:
+        try:
+            with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO synced_events (external_id, origin, guild_id, title, start_time, end_time, last_sync_source, deleted)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'twitch', false)
+                        ON CONFLICT (external_id, guild_id)
+                        DO UPDATE SET
+                            title = EXCLUDED.title,
+                            start_time = EXCLUDED.start_time,
+                            end_time = EXCLUDED.end_time,
+                            last_sync_source = 'twitch',
+                            deleted = false
+                    """, (
+                        twitch_event_id,
+                        "twitch",
+                        guild_id,
+                        event_name,
+                        start_time,
+                        end_time,
+                    ))
+                    conn.commit()
+            print(f"🗂️ Recorded sync for Twitch event {twitch_event_id}")
+        except Exception as e:
+            print(f"⚠️ Failed to record sync mapping: {e}")
+
+    time.sleep(1.5)
 
 def main():
     print("⏰ Running Twitch→Discord schedule sync...")
