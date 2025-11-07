@@ -1,7 +1,7 @@
 import requests
 
 client_id = '24c3r6ncbg6ihrnug1m5sa18jit564'
-client_secret = 'd44o5pw354kjb1xyh24078lbd9kyxf'
+client_secret = 'anvysyswcqnetkdpzbm8vmerdbecaz'
 url = 'https://id.twitch.tv/oauth2/token'
 
 params = {

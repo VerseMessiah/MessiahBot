@@ -8,7 +8,7 @@ import urllib.parse
 from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from bot.discord_oauth import discord_bp
 from bot.twitch_bp import twitch_bp
-
+from flask_talisman import Talisman
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -42,14 +42,25 @@ except Exception:
 
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", secrets.token_hex(32))
-app.config.update(
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=True,
-    SESSION_COOKIE_HTTPONLY=True,
-)
 
-app.register_blueprint(discord_bp)
-app.register_blueprint(twitch_bp)
+@app.after_request
+def allow_inline(resp):
+    resp.headers.pop("Content-Security-Policy", None)
+    return resp
+
+from flask_session import Session
+
+app.config["SESSION_TYPE"] = "filesystem"  # Safe for Render’s ephemeral FS
+app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"  # Exists across requests in same instance
+app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "None"
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_USE_SIGNER"] = True
+Session(app)
+
+app.register_blueprint(discord_bp, url_prefix="/api/discord")
+app.register_blueprint(twitch_bp, url_prefix="/api/twitch")
+Talisman(app, force_https=True, content_security_policy=None)
 
 
 # ---------- DB helpers ----------
@@ -659,6 +670,7 @@ _FORM_HTML = r"""
     </div>
     <div class="right">
       <select id="guildPicker" class="select" style="display:none;"></select>
+      <a id="twitchBtn" class="pill" href="#" target="_blank" rel="noopener" style="display:none;">Connect Twitch</a>
       <a id="inviteBtn" class="pill" href="#" target="_blank" rel="noopener">Invite Bot</a>
       <a id="loginBtn" class="pill" href="/login">Login with Discord</a>
       <a id="logoutBtn" class="pill" href="/logout" style="display:none;">Logout</a>
@@ -1102,6 +1114,16 @@ _FORM_HTML = r"""
           };
           // prefill the first
           $("#guild_id").value = picker.value;
+
+          // --- Twitch connect button logic ---
+          const twitchBtn = $("#twitchBtn");
+          twitchBtn.style.display = "inline-flex";
+          twitchBtn.href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
+
+          picker.addEventListener("change", () => {
+            twitchBtn.href = "/api/twitch/oauth/start/" + encodeURIComponent(picker.value);
+          });
+          // -----------------------------------
         } else {
           picker.style.display = "none";
         }
@@ -1231,6 +1253,14 @@ def index():
 @app.get("/form")
 def form():
     return render_template_string(_FORM_HTML)
+
+
+# --- Global error handler ---
+@app.errorhandler(Exception)
+def handle_ex(e):
+    import traceback
+    traceback.print_exc()
+    return {"ok": False, "error": str(e)}, 500
 
 if __name__ == "__main__":
     # Local dev runner. On Render, prefer:
