@@ -29,7 +29,8 @@ services:
     autoDeploy: true
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.messiahbot_dc
+    startCommand: python -c "import os, sys; print('Current dir:', os.getcwd()); print('Contents:', os.listdir('.')); import bot.messiahbot_dc"
+    ## startCommand: python -m bot.messiahbot_dc
     envVars:
       - fromGroup: messiahbot-core
 
