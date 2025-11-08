@@ -9,6 +9,7 @@ from flask import Flask, request, jsonify, render_template_string, session, redi
 from bot.discord_oauth import discord_bp
 from bot.twitch_bp import twitch_bp
 from flask_talisman import Talisman
+from plexapi.server import PlexServer
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -206,6 +207,34 @@ def envcheck():
         "redirect_uri": redirect,
         "has_bot_token": bool(DISCORD_BOT_TOKEN),
     }
+
+# ---------- Plex status route ----------
+@app.get("/plex/status")
+def plex_status():
+    # Check Plex server connection and return libraries
+    plex_url = os.getenv("PLEX_URL")
+    plex_token = os.getenv("PLEX_TOKEN")
+
+    if not plex_url or not plex_token:
+        return {
+            "ok": False,
+            "error": "Missing PLEX_URL or PLEX_TOKEN environment variables."
+        }, 500
+    
+    try:
+        plex = PlexServer(plex_url, plex_token)
+        libs = [lib.title for lib in plex.library.sections()]
+        return {
+            "ok": True,
+            "server": plex.friendlyName,
+            "libraries": libs,
+            "url": plex_url
+        }
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": str(e)}, 500
 
 @app.get("/oauth/debug")
 def oauth_debug():
@@ -692,6 +721,13 @@ _FORM_HTML = r"""
       <button type="button" id="loadLiveBtn">Load From Live</button>
       <span id="status" class="pill">idle</span>
     </div>
+
+    <fieldset id="plexStatusBox">
+      <legend>Plex Connection</legend>
+      <p id="plexStatusText" class="subtle">Checking Plex connection…</p>
+      <ul id="plexLibraries" class="list" style="display:none;"></ul>
+      <button type="button" id="refreshPlexBtn">🔄 Refresh Plex Status</button>
+    </fieldset>
 
     <fieldset>
       <legend>Mode</legend>
@@ -1231,6 +1267,37 @@ _FORM_HTML = r"""
       alert("Failed to save");
     }
   };
+
+    // ---------- Plex Status Panel ----------
+    async function loadPlexStatus(){
+      const textEl = document.getElementById("plexStatusText");
+      const listEl = document.getElementById("plexLibraries");
+      textEl.textContent = "Checking Plex connection…";
+      listEl.style.display = "none";
+      listEl.innerHTML = "";
+
+      try {
+        const res = await fetch("/plex/status");
+        const data = await res.json();
+        if (!data.ok) {
+          textEl.textContent = "❌ " + (data.error || "Failed to connect to Plex");
+          return;
+        }
+        textEl.textContent = `✅ Connected to ${data.server}`;
+        if (data.libraries && data.libraries.length) {
+          listEl.innerHTML = data.libraries.map(lib => `<li>${lib}</li>`).join("");
+          listEl.style.display = "block";
+        }
+      } catch (err) {
+        console.error("Plex status fetch failed:", err);
+        textEl.textContent = "❌ Error fetching Plex status.";
+      }
+    }
+
+    document.getElementById("refreshPlexBtn").addEventListener("click", loadPlexStatus);
+    // auto-load when the dashboard opens
+    loadPlexStatus();
+
 
   // ---------- initial blank rows + DnD ----------
   addRoleRow("", "#000000");
