@@ -9,7 +9,9 @@ print("🧠 MessiahBot module loaded")
 
 load_dotenv()
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")  # make sure this is set in env group
 
+# ---- Intents ----
 INTENTS = discord.Intents.all()
 INTENTS.guilds = True
 INTENTS.members = True
@@ -27,12 +29,13 @@ class MessiahBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        print("🚀 setup_hook triggered (from inside MessiahBot)")
+        print("🚀 setup_hook triggered (inside MessiahBot)")
         extensions = [
             "bot.commands_messiah_dc.server_builder",
             "bot.commands_messiah_dc.schedule_sync",
             "bot.commands_messiah_dc.plex_commands",
         ]
+
         for ext in extensions:
             try:
                 await self.load_extension(ext)
@@ -40,11 +43,17 @@ class MessiahBot(commands.Bot):
             except Exception as e:
                 print(f"❌ Failed to load {ext}: {type(e).__name__}: {e}")
 
+        # Slash command sync — global + guild fallback
         try:
-            await self.tree.sync()
-            print("✅ Slash commands synced")
+            if DISCORD_GUILD_ID:
+                guild_obj = discord.Object(id=int(DISCORD_GUILD_ID))
+                synced = await self.tree.sync(guild=guild_obj)
+                print(f"✅ Synced {len(synced)} guild slash command(s) to GUILD {DISCORD_GUILD_ID}")
+            else:
+                synced = await self.tree.sync()
+                print(f"✅ Synced {len(synced)} global slash command(s)")
         except Exception as e:
-            print(f"❌ Slash sync error: {e}")
+            print(f"❌ Slash sync error: {type(e).__name__}: {e}")
 
 
 bot = MessiahBot()
@@ -65,16 +74,6 @@ async def on_app_command_error(interaction: discord.Interaction, error: Exceptio
 @bot.event
 async def on_ready():
     print(f"✨ MessiahBot is online as {bot.user} (ID: {bot.user.id})")
-
-
-# ---- Manual fallback if setup_hook() never fires ----
-async def manual_start():
-    print("🔑 Starting MessiahBot worker (manual start fallback)...")
-    try:
-        await bot.setup_hook()  # manual safety trigger
-    except Exception as e:
-        print(f"⚠️ manual setup_hook() error: {e}")
-    await bot.start(DISCORD_BOT_TOKEN)
 
 
 if __name__ == "__main__":
