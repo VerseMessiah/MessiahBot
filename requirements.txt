@@ -43,6 +43,7 @@ requests==2.32.3            # Sync HTTP client for REST APIs
 
 ## Redis / Caching
 redis==5.0.1
+aioredis==2.0.1
 
 ## 🧰 MISC (OPTIONAL / NON-CRITICAL)
 audioop-lts==0.2.1          # Only needed for Python builds missing audioop (safe to remove unless using voice)
