@@ -5,15 +5,17 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+print("🧠 MessiahBot module loaded")
+
 load_dotenv()
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-# Intents
 INTENTS = discord.Intents.all()
 INTENTS.guilds = True
 INTENTS.members = True
 INTENTS.guild_scheduled_events = True
 INTENTS.message_content = True
+
 
 class MessiahBot(commands.Bot):
     def __init__(self):
@@ -25,14 +27,12 @@ class MessiahBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        print("🚀 setup_hook triggered")
-
+        print("🚀 setup_hook triggered (from inside MessiahBot)")
         extensions = [
             "bot.commands_messiah_dc.server_builder",
             "bot.commands_messiah_dc.schedule_sync",
             "bot.commands_messiah_dc.plex_commands",
         ]
-
         for ext in extensions:
             try:
                 await self.load_extension(ext)
@@ -46,7 +46,9 @@ class MessiahBot(commands.Bot):
         except Exception as e:
             print(f"❌ Slash sync error: {e}")
 
+
 bot = MessiahBot()
+
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: Exception):
@@ -59,12 +61,23 @@ async def on_app_command_error(interaction: discord.Interaction, error: Exceptio
     except Exception:
         pass
 
+
 @bot.event
 async def on_ready():
     print(f"✨ MessiahBot is online as {bot.user} (ID: {bot.user.id})")
 
+
+# ---- Manual fallback if setup_hook() never fires ----
+async def manual_start():
+    print("🔑 Starting MessiahBot worker (manual start fallback)...")
+    try:
+        await bot.setup_hook()  # manual safety trigger
+    except Exception as e:
+        print(f"⚠️ manual setup_hook() error: {e}")
+    await bot.start(DISCORD_BOT_TOKEN)
+
+
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
         raise SystemExit("❌ Missing DISCORD_BOT_TOKEN")
-    print("🔑 Starting MessiahBot worker...")
-    bot.run(DISCORD_BOT_TOKEN)
+    asyncio.run(manual_start())
