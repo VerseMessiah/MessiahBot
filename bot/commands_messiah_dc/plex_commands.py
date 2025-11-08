@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, Button
+from bot.plex_utils import get_library_names
 
 class PlexAccess(commands.Cog):
     def __init__(self, bot):
@@ -85,6 +86,20 @@ class PlexAccess(commands.Cog):
             "📩 Your request has been sent to the moderators for approval!",
             ephemeral=True
         )
+
+class PlexAccess(commands.Cog):
+    async def plex_status(self, interaction: discord.Interaction):
+        try:
+            libs = get_library_names()
+            await interaction.response.send_message(
+                f"✅ Connected to VerseMessiah's Plex Server! Libraries: {', '.join(libs)}",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Failed to connect to Plex Server: {str(e)}",
+                ephemeral=True
+            )
 
 async def setup(bot):
     await bot.add_cog(PlexAccess(bot))

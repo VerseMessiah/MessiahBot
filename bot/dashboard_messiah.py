@@ -4,6 +4,7 @@ import json
 import time
 import secrets
 import urllib.parse
+import redis
 
 from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from bot.discord_oauth import discord_bp
@@ -234,6 +235,20 @@ def plex_status():
     except Exception as e:
         import traceback
         traceback.print_exc()
+        return {"ok": False, "error": str(e)}, 500
+
+# ---------- Get Redis status ----------
+@app.get("/redis/status")
+def redis_status():
+    url = os.getenv("REDIS_URL")
+    if not url:
+        return {"ok": False, "error": "REDIS_URL not configured"}, 500
+    try:
+        r = redis.from_url(url)
+        r.set("test", "ok", ex=5)
+        val = r.get("test")
+        return {"ok": True, "value": val.decode("utf-8")}
+    except Exception as e:
         return {"ok": False, "error": str(e)}, 500
 
 @app.get("/oauth/debug")
