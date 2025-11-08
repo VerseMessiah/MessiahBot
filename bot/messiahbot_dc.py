@@ -78,6 +78,7 @@ async def manual_start():
 
 
 if __name__ == "__main__":
+    print("🔑 Starting MessiahBot worker...")
     if not DISCORD_BOT_TOKEN:
         raise SystemExit("❌ Missing DISCORD_BOT_TOKEN")
-    asyncio.run(manual_start())
+    bot.run(DISCORD_BOT_TOKEN)
