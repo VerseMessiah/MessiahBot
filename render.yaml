@@ -1,9 +1,5 @@
 version: "1"
 
-builds:
-  # Enables caching of pip packages so all services reuse the same build layer
-  sharedCache: true
-
 services:
   # 🌐 Flask Dashboard (web)
   - type: web
@@ -15,7 +11,6 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn "bot.dashboard_messiah:app" --bind 0.0.0.0:$PORT
     healthCheckPath: /ping
-    healthCheckTimeout: 20
     envVars:
       - fromGroup: messiahbot-core
       - key: PORT
