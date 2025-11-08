@@ -28,7 +28,8 @@ class MessiahBot(commands.Bot):
         # Load cogs (server builder + schedule sync)
         extensions = [
             "bot.commands_messiah_dc.server_builder",
-            "bot.commands_messiah_dc.schedule_sync",   # <-- make sure this file exists
+            "bot.commands_messiah_dc.schedule_sync",
+            "bot.commands_messiah_dc.plex_commands"
         ]
         for ext in extensions:
             try:
