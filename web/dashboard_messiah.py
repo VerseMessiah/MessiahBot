@@ -125,6 +125,31 @@ def debug_templates():
         "found_templates": files,
     }
 
+# ----------------------------------------------------------
+# 🎨 Static asset visibility debug route (auto-disabled in PRD)
+# ----------------------------------------------------------
+@app.route("/debug/static")
+def debug_static():
+    """Lists what Flask can actually see in its static folder."""
+    import os
+
+    # Disable in production for safety
+    if ENVIRONMENT in ("PRD", "PRODUCTION"):
+        return {"error": "This endpoint is disabled in production."}, 403
+
+    abs_path = os.path.abspath(app.static_folder)
+    files = []
+    for root, _, f in os.walk(abs_path):
+        for name in f:
+            files.append(os.path.relpath(os.path.join(root, name), abs_path))
+
+    return {
+        "environment": ENVIRONMENT,
+        "cwd": os.getcwd(),
+        "static_folder": abs_path,
+        "found_static_files": files,
+    }
+
 
 # ----------------------------------------------------------
 # Main entrypoint
