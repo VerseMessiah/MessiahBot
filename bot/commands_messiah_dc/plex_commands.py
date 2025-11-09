@@ -1,105 +1,130 @@
+import os
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Button
-from bot.plex_utils import get_library_names
+import xml.etree.ElementTree as ET
 
-class PlexAccess(commands.Cog):
+PLEX_TOKEN = os.getenv("PLEX_TOKEN")
+
+class PlexCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Roles that can auto-approve themselves
-        self.auto_approve_roles = ["Messiah", "Priest", "Disciple", "Analog Apostle"]
-        # Channel where mod requests go
-        self.mod_channel_name = "📜mod-actions"
-        # Role that Membarr watches
-        self.plex_role_name = "Plex Access"
 
-    @app_commands.command(name="requestaccess", description="Request access to the VerseMessiah Plex server")
-    async def requestaccess(self, interaction: discord.Interaction):
-        guild = interaction.guild
-        member = interaction.user
+    #
+    # Utility: perform authenticated call through Plex Cloud
+    #
+    async def plex_get(self, session, url):
+        headers = {"X-Plex-Token": PLEX_TOKEN}
+        async with session.get(url, headers=headers) as resp:
+            if resp.status != 200:
+                raise Exception(f"HTTP {resp.status} from Plex: {url}")
+            return await resp.text()
 
-        plex_role = discord.utils.get(guild.roles, name=self.plex_role_name)
-        if not plex_role:
-            await interaction.response.send_message(
-                f"⚠️ The `{self.plex_role_name}` role doesn’t exist — please ask an admin to configure Membarr first.",
-                ephemeral=True
-            )
+    #
+    # /plexlist — list available Plex servers (via Plex Cloud)
+    #
+    @app_commands.command(name="plexlist", description="List available Plex servers on your Plex account")
+    async def plexlist(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        if not PLEX_TOKEN:
+            await interaction.followup.send("⚠️ Plex token not configured.", ephemeral=True)
             return
 
-        # already has access
-        if plex_role in member.roles:
-            await interaction.response.send_message(
-                "✅ You already have Plex Access! Check your Plex invites or library.",
-                ephemeral=True
-            )
+        async with aiohttp.ClientSession() as session:
+            xml_data = await self.plex_get(session, "https://plex.tv/pms/resources?includeHttps=1")
+            root = ET.fromstring(xml_data)
+            servers = [
+                f"**{srv.get('name')}** ({srv.get('product')}) — {srv.get('address')}"
+                for srv in root.findall(".//Device[@product='Plex Media Server']")
+            ]
+
+        embed = discord.Embed(title="🎬 Plex Servers", color=0xFFD700)
+        embed.description = "\n".join(servers) if servers else "No Plex servers found."
+        await interaction.followup.send(embed=embed, ephemeral=False)
+
+    #
+    # /plexrecent — show recently added media (movies/shows)
+    #
+    @app_commands.command(name="plexrecent", description="Show recently added media from your Plex server")
+    async def plexrecent(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        if not PLEX_TOKEN:
+            await interaction.followup.send("⚠️ Plex token not configured.", ephemeral=True)
             return
 
-        # if member has any auto-approve role
-        if any(r.name in self.auto_approve_roles for r in member.roles):
-            await member.add_roles(plex_role, reason="Auto-approved Plex access")
-            await interaction.response.send_message(
-                "🎬 Auto-approved! You now have Plex Access — check your Plex invites shortly.",
-                ephemeral=True
-            )
+        async with aiohttp.ClientSession() as session:
+            # Step 1: Get your primary server connection
+            xml_data = await self.plex_get(session, "https://plex.tv/pms/resources?includeHttps=1")
+            root = ET.fromstring(xml_data)
+            server = root.find(".//Device[@product='Plex Media Server']")
+            if not server:
+                await interaction.followup.send("❌ No Plex Media Server found.")
+                return
+            conn = server.find(".//Connection[@protocol='https']")
+            base_url = conn.get("uri")
+
+            # Step 2: Fetch recent items
+            xml_recent = await self.plex_get(session, f"{base_url}/library/recentlyAdded")
+            tree = ET.fromstring(xml_recent)
+
+            items = []
+            for video in tree.findall(".//Video")[:10]:
+                title = video.get("title")
+                media_type = video.get("type")
+                thumb = video.get("thumb")
+                items.append((title, media_type, f"{base_url}{thumb}?X-Plex-Token={PLEX_TOKEN}" if thumb else None))
+
+        embed = discord.Embed(title="🆕 Recently Added", color=0x00BFFF)
+        for title, media_type, thumb in items:
+            embed.add_field(name=title, value=media_type.title(), inline=False)
+        if items and items[0][2]:
+            embed.set_thumbnail(url=items[0][2])
+        await interaction.followup.send(embed=embed, ephemeral=False)
+
+    #
+    # /plexsearch — search titles in your Plex library
+    #
+    @app_commands.command(name="plexsearch", description="Search your Plex library for a movie or show title")
+    async def plexsearch(self, interaction: discord.Interaction, query: str):
+        await interaction.response.defer(ephemeral=True)
+        if not PLEX_TOKEN:
+            await interaction.followup.send("⚠️ Plex token not configured.", ephemeral=True)
             return
 
-        # otherwise require moderator approval
-        mod_channel = discord.utils.get(guild.text_channels, name=self.mod_channel_name)
-        if not mod_channel:
-            await interaction.response.send_message(
-                f"🪄 Request received! (No `{self.mod_channel_name}` channel found, please ping a mod.)",
-                ephemeral=True
-            )
-            return
+        async with aiohttp.ClientSession() as session:
+            # Find the server
+            xml_data = await self.plex_get(session, "https://plex.tv/pms/resources?includeHttps=1")
+            root = ET.fromstring(xml_data)
+            server = root.find(".//Device[@product='Plex Media Server']")
+            if not server:
+                await interaction.followup.send("❌ No Plex Media Server found.")
+                return
+            conn = server.find(".//Connection[@protocol='https']")
+            base_url = conn.get("uri")
 
-        # Create approval buttons
-        class ApproveView(View):
-            def __init__(self):
-                super().__init__(timeout=None)
-                self.value = None
+            # Perform search
+            xml_search = await self.plex_get(session, f"{base_url}/search?query={query}")
+            tree = ET.fromstring(xml_search)
 
-            @discord.ui.button(label="Approve ✅", style=discord.ButtonStyle.success)
-            async def approve(self, interaction_button: discord.Interaction, button: Button):
-                await member.add_roles(plex_role, reason="Approved Plex access")
-                await interaction_button.response.send_message(
-                    f"✅ Approved and granted Plex Access to {member.mention}.", ephemeral=False)
-                await mod_channel.send(f"🎟️ {member.mention} has been **approved** for Plex Access by {interaction_button.user.mention}.")
-                self.value = True
-                self.stop()
+            results = []
+            for video in tree.findall(".//Video")[:10]:
+                title = video.get("title")
+                media_type = video.get("type")
+                thumb = video.get("thumb")
+                results.append((title, media_type, f"{base_url}{thumb}?X-Plex-Token={PLEX_TOKEN}" if thumb else None))
 
-            @discord.ui.button(label="Deny ❌", style=discord.ButtonStyle.danger)
-            async def deny(self, interaction_button: discord.Interaction, button: Button):
-                await interaction_button.response.send_message(
-                    f"❌ Denied Plex Access for {member.mention}.", ephemeral=False)
-                await mod_channel.send(f"🚫 {member.mention}'s Plex Access request was **denied** by {interaction_button.user.mention}.")
-                self.value = False
-                self.stop()
+        embed = discord.Embed(title=f"🔍 Plex Search: {query}", color=0x9B59B6)
+        if not results:
+            embed.description = "No matches found."
+        else:
+            for title, media_type, thumb in results:
+                embed.add_field(name=title, value=media_type.title(), inline=False)
+            if results[0][2]:
+                embed.set_thumbnail(url=results[0][2])
 
-        view = ApproveView()
-        await mod_channel.send(
-            f"🎟️ **Plex Access Request:** {member.mention} wants access.\n"
-            f"Approve or Deny below ⬇️",
-            view=view
-        )
-        await interaction.response.send_message(
-            "📩 Your request has been sent to the moderators for approval!",
-            ephemeral=True
-        )
+        await interaction.followup.send(embed=embed, ephemeral=False)
 
-class PlexAccess(commands.Cog):
-    async def plex_status(self, interaction: discord.Interaction):
-        try:
-            libs = get_library_names()
-            await interaction.response.send_message(
-                f"✅ Connected to VerseMessiah's Plex Server! Libraries: {', '.join(libs)}",
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Failed to connect to Plex Server: {str(e)}",
-                ephemeral=True
-            )
 
 async def setup(bot):
-    await bot.add_cog(PlexAccess(bot))
+    await bot.add_cog(PlexCommands(bot))
