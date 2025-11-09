@@ -8,6 +8,7 @@ from dateutil import parser as dateparse, tz
 import discord
 
 from bot.integrations import twitch_api_messiah as twmod
+from bot.commands import schedule_sync
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
