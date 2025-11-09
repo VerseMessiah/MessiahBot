@@ -42,6 +42,14 @@ def ping():
     """Health check endpoint for Render."""
     return jsonify({"ok": True, "env": ENVIRONMENT})
 
+@app.route("/api/envcheck")
+def envcheck():
+    return jsonify({
+        "status": "ok",
+        "plex": bool(os.getenv("PLEX_URL")),
+        "twitch": bool(os.getenv("TWITCH_CLIENT_ID"))
+    })
+
 @app.route("/whoami")
 def whoami():
     """Diagnostic endpoint showing current environment & Plex config."""
@@ -89,6 +97,33 @@ def plex_status():
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+ 
+# ----------------------------------------------------------
+# 🔍 Template visibility debug route (auto-disabled in PRD)
+# ----------------------------------------------------------
+@app.route("/debug/templates")
+def debug_templates():
+    """Lists what Flask can actually see in its templates folder."""
+    from jinja2 import Environment, FileSystemLoader
+    import os
+
+    # Only allow access outside production
+    if ENVIRONMENT in ("PRD", "PRODUCTION"):
+        return {"error": "This endpoint is disabled in production."}, 403
+
+    searchpath = app.jinja_loader.searchpath[0]
+    abs_path = os.path.abspath(searchpath)
+    files = []
+    for root, _, f in os.walk(abs_path):
+        for name in f:
+            files.append(os.path.relpath(os.path.join(root, name), abs_path))
+
+    return {
+        "environment": ENVIRONMENT,
+        "cwd": os.getcwd(),
+        "template_folder": abs_path,
+        "found_templates": files,
+    }
 
 
 # ----------------------------------------------------------
