@@ -45,8 +45,7 @@ class MessiahBot(commands.Bot):
         extensions = [
             "bot.commands.server_builder",
             "bot.commands.plex_commands",
-            "bot.commands.schedule_sync"  # <-- new split Cog for Twitch↔Discord sync
-        ]
+            "bot.commands.schedule_sync",        ]
 
         for ext in extensions:
             try:
