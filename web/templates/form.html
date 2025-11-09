@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>MessiahBot — Form</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>🧱 MessiahBot — Server Builder & Plex</h1>
+      <p class="muted">Environment: <span id="env">loading…</span></p>
+
+      <section class="card">
+        <h2>🎬 Plex Libraries</h2>
+        <button id="refreshPlex">Refresh</button>
+        <ul id="plexList"></ul>
+        <p id="plexError" class="error"></p>
+      </section>
+
+      <p><a href="/">Home</a></p>
+    </div>
+
+    <script>
+      async function loadEnv() {
+        const r = await fetch('/envcheck');
+        const j = await r.json();
+        document.getElementById('env').textContent = j.environment + (j.has_plex ? " (Plex OK)" : " (Plex missing)");
+      }
+      loadEnv();
+
+      async function refreshPlex() {
+        document.getElementById('plexError').textContent = '';
+        document.getElementById('plexList').innerHTML = '<li>Loading…</li>';
+        try {
+          const r = await fetch('/plex/libraries');
+          const j = await r.json();
+          if (!j.ok) throw new Error(j.error || 'Unknown error');
+          const ul = document.getElementById('plexList');
+          ul.innerHTML = '';
+          if (!j.libraries || j.libraries.length === 0) {
+            ul.innerHTML = '<li>No libraries found.</li>';
+            return;
+          }
+          for (const lib of j.libraries) {
+            const li = document.createElement('li');
+            li.textContent = `${lib.title} — ${lib.count ?? "?"} items`;
+            ul.appendChild(li);
+          }
+        } catch (e) {
+          document.getElementById('plexList').innerHTML = '';
+          document.getElementById('plexError').textContent = String(e);
+        }
+      }
+
+      document.getElementById('refreshPlex').addEventListener('click', refreshPlex);
+      // auto load once
+      refreshPlex();
+    </script>
+  </body>
+</html>

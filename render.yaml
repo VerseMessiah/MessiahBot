@@ -1,7 +1,7 @@
 version: "1"
 
 services:
-  # 🌐 Flask Dashboard (web)
+  # 🌐 Dashboard (web): PRD
   - type: web
     name: messiahbot-dashboard
     env: python
@@ -9,14 +9,16 @@ services:
     autoDeploy: true
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn "bot.dashboard_messiah:app" --bind 0.0.0.0:$PORT
+    startCommand: gunicorn "web.dashboard_messiah:app" --bind 0.0.0.0:$PORT
     healthCheckPath: /ping
     envVars:
       - fromGroup: messiahbot-core
       - key: PORT
         value: 10000
+      - key: ENVIRONMENT
+        value: PRD
 
-  # 🤖 Main Discord/Twitch bot logic
+  # 🤖 Bot worker: PRD
   - type: worker
     name: messiahbot-worker
     env: python
@@ -27,8 +29,10 @@ services:
     startCommand: python -m bot.messiahbot_dc
     envVars:
       - fromGroup: messiahbot-core
+      - key: ENVIRONMENT
+        value: PRD
 
-  # 📅 Twitch/Discord schedule sync worker
+  # 📅 Twitch/Discord schedule sync worker: PRD
   - type: worker
     name: messiahbot-twitch-sync
     env: python
@@ -36,6 +40,53 @@ services:
     autoDeploy: true
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.sync_worker
+    startCommand: python -m bot.workers.twitch_sync_worker
     envVars:
       - fromGroup: messiahbot-core
+      - key: ENVIRONMENT
+        value: PRD
+
+  # 🌐 Dashboard (web): TST
+  - type: web
+    name: messiahbot-dashboard-tst
+    env: python
+    plan: starter
+    autoDeploy: true
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn "web.dashboard_messiah:app" --bind 0.0.0.0:$PORT
+    healthCheckPath: /ping
+    envVars:
+      - fromGroup: messiahbot-core
+      - key: PORT
+        value: 10000
+      - key: ENVIRONMENT
+        value: TST
+
+  # 🤖 Bot worker: TST
+  - type: worker
+    name: messiahbot-worker-tst
+    env: python
+    plan: starter
+    autoDeploy: true
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot.messiahbot_dc
+    envVars:
+      - fromGroup: messiahbot-core
+      - key: ENVIRONMENT
+        value: TST
+
+  # 📅 Twitch/Discord schedule sync worker: TST
+  - type: worker
+    name: messiahbot-twitch-sync-tst
+    env: python
+    plan: starter
+    autoDeploy: true
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot.workers.twitch_sync_worker
+    envVars:
+      - fromGroup: messiahbot-core
+      - key: ENVIRONMENT
+        value: TST
