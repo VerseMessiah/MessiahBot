@@ -78,15 +78,15 @@ services:
         value: TST
 
   # 📅 Twitch/Discord schedule sync worker: TST
-  - type: worker
-    name: messiahbot-twitch-sync-tst
-    env: python
-    plan: starter
-    autoDeploy: true
-    branch: main
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.workers.twitch_sync_worker
-    envVars:
-      - fromGroup: messiahbot-core
-      - key: ENVIRONMENT
-        value: TST
+  # - type: worker
+    # name: messiahbot-twitch-sync-tst
+    # env: python
+    # plan: starter
+    # autoDeploy: true
+    # branch: main
+    # buildCommand: pip install -r requirements.txt
+    # startCommand: python -m bot.workers.twitch_sync_worker
+    # envVars:
+      # - fromGroup: messiahbot-core
+      # - key: ENVIRONMENT
+        # value: TST 
