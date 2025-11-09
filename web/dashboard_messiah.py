@@ -20,8 +20,8 @@ PLEX_PLATFORM = os.getenv("PLEX_PLATFORM", None)
 # ----------------------------------------------------------
 app = Flask(
     __name__,
-    template_folder="templates",   # web/templates/
-    static_folder="static"         # web/static/
+    template_folder=os.path.join(os.path.dirname(__file__), "templates"),
+    static_folder=os.path.join(os.path.dirname(__file__), "static")
 )
 
 # ----------------------------------------------------------
