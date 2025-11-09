@@ -36,6 +36,6 @@ services:
     autoDeploy: true
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.schedule_sync
+    startCommand: python -m bot.sync_worker
     envVars:
       - fromGroup: messiahbot-core
