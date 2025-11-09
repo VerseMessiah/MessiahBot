@@ -1,73 +1,103 @@
-import os, time, json
-from flask import Flask, jsonify, render_template, request
-from flask_talisman import Talisman
-from flask_session import Session
+import os
+from flask import Flask, render_template, jsonify, request
 from dotenv import load_dotenv
 
+# ----------------------------------------------------------
+# Load environment (Render + local dev)
+# ----------------------------------------------------------
 load_dotenv()
 
-app = Flask(__name__, template_folder="templates", static_folder="static")
-app.secret_key = os.getenv("DASHBOARD_SESSION_SECRET", "local_dev_secret")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "TST").upper()
+PORT = int(os.getenv("PORT", 5000))
+REDIS_URL = os.getenv("REDIS_URL", None)
+PLEX_URL = os.getenv("PLEX_URL", None)
+PLEX_TOKEN = os.getenv("PLEX_TOKEN", None)
+PLEX_OWNER = os.getenv("PLEX_OWNER", None)
+PLEX_PLATFORM = os.getenv("PLEX_PLATFORM", None)
 
-# Relax CSP for inline templates (you already opted to remove strict CSP earlier)
-Talisman(app, force_https=True, content_security_policy=None)
+# ----------------------------------------------------------
+# Flask app setup
+# ----------------------------------------------------------
+app = Flask(
+    __name__,
+    template_folder="templates",   # web/templates/
+    static_folder="static"         # web/static/
+)
 
-app.config["SESSION_TYPE"] = "filesystem"
-app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"
-app.config["SESSION_COOKIE_SECURE"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "None"
-app.config["SESSION_PERMANENT"] = False
-app.config["SESSION_USE_SIGNER"] = True
-Session(app)
-
-@app.after_request
-def allow_inline(resp):
-    resp.headers.pop("Content-Security-Policy", None)
-    return resp
-
-# --- Health ---
-@app.get("/ping")
-def ping():
-    return "pong", 200, {"Content-Type": "text/plain"}
-
-@app.get("/envcheck")
-def envcheck():
-    return {
-        "environment": os.getenv("ENVIRONMENT", "PRD"),
-        "has_plex": bool(os.getenv("PLEX_URL") and os.getenv("PLEX_TOKEN"))
-    }
-
-# --- Index & Form ---
-@app.get("/")
+# ----------------------------------------------------------
+# Routes
+# ----------------------------------------------------------
+@app.route("/")
 def index():
-    return render_template("index.html")
+    """Basic landing page."""
+    return render_template("index.html", env=ENVIRONMENT)
 
-@app.get("/form")
+@app.route("/form")
 def form():
-    return render_template("form.html")
+    """Main dashboard form."""
+    return render_template("form.html", env=ENVIRONMENT)
 
-# --- Plex: list libraries (dashboard view) ---
-@app.get("/plex/libraries")
-def plex_libraries():
+@app.route("/ping")
+def ping():
+    """Health check endpoint for Render."""
+    return jsonify({"ok": True, "env": ENVIRONMENT})
+
+@app.route("/whoami")
+def whoami():
+    """Diagnostic endpoint showing current environment & Plex config."""
+    return jsonify({
+        "environment": ENVIRONMENT,
+        "plex_url": PLEX_URL,
+        "plex_owner": PLEX_OWNER,
+        "plex_platform": PLEX_PLATFORM,
+        "redis_url": REDIS_URL,
+    })
+
+@app.route("/redis/status")
+def redis_status():
+    """Quick check to confirm Redis connection."""
+    if not REDIS_URL:
+        return jsonify({"ok": False, "error": "REDIS_URL not configured"}), 500
     try:
-        from bot.utils.plex_utils import get_plex_client
-        plex = get_plex_client()
+        import redis
+        r = redis.from_url(REDIS_URL)
+        r.set("test", "ok", ex=5)
+        val = r.get("test")
+        return jsonify({"ok": True, "value": val.decode("utf-8")})
     except Exception as e:
-        return {"ok": False, "error": f"Plex not configured: {e}"}, 500
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ----------------------------------------------------------
+# Optional Plex endpoint (safe to leave in)
+# ----------------------------------------------------------
+@app.route("/plex/status")
+def plex_status():
+    """Simple check to see if Plex variables are configured."""
+    if not PLEX_URL or not PLEX_TOKEN:
+        return jsonify({"ok": False, "error": "Missing PLEX_URL or PLEX_TOKEN"}), 500
 
     try:
-        sections = plex.library.sections()
-        libs = []
-        for sec in sections:
-            try:
-                count = sec.totalSize
-            except Exception:
-                count = None
-            libs.append({"title": sec.title, "type": getattr(sec, 'type', None), "count": count})
-        return {"ok": True, "libraries": libs}
+        import requests
+        headers = {"X-Plex-Token": PLEX_TOKEN}
+        resp = requests.get(f"{PLEX_URL}/", headers=headers, timeout=10)
+        ok = resp.status_code == 200
+        return jsonify({
+            "ok": ok,
+            "status_code": resp.status_code,
+            "plex_owner": PLEX_OWNER,
+            "plex_platform": PLEX_PLATFORM
+        })
     except Exception as e:
-        return {"ok": False, "error": str(e)}, 500
+        return jsonify({"ok": False, "error": str(e)}), 500
 
+
+# ----------------------------------------------------------
+# Main entrypoint
+# ----------------------------------------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5050"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    print("🚀 MessiahBot Dashboard starting...")
+    print(f"🌎 Environment: {ENVIRONMENT}")
+    print(f"🧠 Flask templates: {app.template_folder}")
+    print(f"🎨 Flask static: {app.static_folder}")
+    print(f"🎬 Plex URL: {PLEX_URL or 'not set'}")
+    app.run(host="0.0.0.0", port=PORT)
