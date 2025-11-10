@@ -1,8 +1,7 @@
 import os
 from flask import Flask, render_template, jsonify, request
 from dotenv import load_dotenv
-from bot.integrations.discord_oauth import discord_bp
-from bot.integrations.twitch_bp import twitch_bp
+
 
 load_dotenv()
 
@@ -14,13 +13,21 @@ PLEX_TOKEN = os.getenv("PLEX_TOKEN", None)
 PLEX_OWNER = os.getenv("PLEX_OWNER", None)
 PLEX_PLATFORM = os.getenv("PLEX_PLATFORM", None)
 
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
 app = Flask(
     __name__,
-    template_folder="templates",
-    static_folder="static"
+    template_folder=TEMPLATE_DIR,
+    static_folder=STATIC_DIR
 )
 
 app.secret_key
+
+from bot.integrations.discord_oauth import discord_bp
+from bot.integrations.twitch_bp import twitch_bp
 
 app.register_blueprint(discord_bp)
 app.register_blueprint(twitch_bp)

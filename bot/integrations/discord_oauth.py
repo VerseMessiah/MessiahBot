@@ -32,7 +32,7 @@ def discord_oauth_start():
 # ------------------------------------------------------
 # 2️⃣ Discord OAuth Callback
 # ------------------------------------------------------
-@discord_bp.route("/discord/oauth/callback")
+@discord_bp.route("/oauth/discord/callback")
 async def discord_oauth_callback():
     """Handle OAuth callback from Discord"""
     code = request.args.get("code")
