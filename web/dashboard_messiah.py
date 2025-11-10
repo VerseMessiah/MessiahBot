@@ -25,14 +25,19 @@ app = Flask(
     static_folder=STATIC_DIR
 )
 
-app.config["SECRET_KEY"] = os.getenv("DISCORD_SESSION_SECRET", "fallback_secret")
-app.config["SESSION_TYPE"] = "redis"
-app.config["SESSION_REDIS"] = redis.from_url(REDIS_URL)
-app.config["PERMANENT_SESSION_LIFETIME"] = 86400  * 7  # 7 days
-app.config["SESSION_PERMANENT"] = True
-app.config["SESSION_USE_SIGNER"] = True
-app.config["SESSION_COOKIE_SECURE"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "None"
+app.config.update(
+    SECRET_KEY=os.getenv("DISCORD_SESSION_SECRET", "fallback_secret"),
+    SESSION_TYPE="redis",
+    SESSION_REDIS=redis.from_url(REDIS_URL),
+    PERMANENT_SESSION_LIFETIME=86400 * 7,  # 7 days
+    SESSION_PERMANENT=True,
+    SESSION_USE_SIGNER=True,
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="None",
+    SESSION_COOKIE_DOMAIN=".onrender.com",  # ensures persistence across subdomains
+)
+
 Session(app)
 
 from bot.integrations.discord_oauth import discord_bp
