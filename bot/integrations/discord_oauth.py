@@ -1,6 +1,6 @@
 # bot/integrations/discord_oauth.py
 import os
-from flask import Blueprint, redirect, request, session
+from flask import Blueprint, redirect, request, session, url_for
 import requests
 import psycopg
 from psycopg.rows import dict_row
@@ -36,7 +36,7 @@ def discord_oauth_start():
 @discord_bp.route("/oauth/discord/callback")
 def discord_oauth_callback():
     """Handle OAuth callback from Discord"""
-    code = requests.args.get("code")
+    code = request.args.get("code")
     if not code:
         return "Missing authorization code", 400
 
