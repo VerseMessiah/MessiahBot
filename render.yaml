@@ -57,7 +57,7 @@ services:
     startCommand: gunicorn "web.dashboard_messiah:app" --bind 0.0.0.0:$PORT
     healthCheckPath: /ping
     envVars:
-      - fromGroup: messiahbot-core
+      - fromGroup: messiahbot-tst
       - key: PORT
         value: 10000
       - key: ENVIRONMENT
@@ -73,7 +73,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python -m bot.messiahbot_dc
     envVars:
-      - fromGroup: messiahbot-core
+      - fromGroup: messiahbot-tst
       - key: ENVIRONMENT
         value: TST
 
@@ -87,6 +87,6 @@ services:
     # buildCommand: pip install -r requirements.txt
     # startCommand: python -m bot.workers.twitch_sync_worker
     # envVars:
-      # - fromGroup: messiahbot-core
+      # - fromGroup: messiahbot-tst
       # - key: ENVIRONMENT
         # value: TST 
