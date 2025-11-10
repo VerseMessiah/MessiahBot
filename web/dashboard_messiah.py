@@ -35,7 +35,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="None",
-    SESSION_COOKIE_DOMAIN=".onrender.com",  # ensures persistence across subdomains
+    SESSION_COOKIE_DOMAIN="messiahbot-dashboard.onrender.com",  # ensures persistence across subdomains
 )
 
 Session(app)
@@ -94,6 +94,11 @@ def envcheck():
         "twitch": bool(os.getenv("TWITCH_CLIENT_ID")),
         "discord": bool(os.getenv("DISCORD_APP_CLIENT_ID"))
     })
+@app.route("/sessioncheck")
+def sessioncheck():
+    print("[DEBUG] Current Redis URL:", REDIS_URL)
+    print("[DEBUG] Session ID:", session.sid if hasattr(session, "sid") else "none")
+    return jsonify({"discord_user": session.get("discord_user")})
 
 @app.route("/redis/status")
 def redis_status():
