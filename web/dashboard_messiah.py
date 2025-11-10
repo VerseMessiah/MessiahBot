@@ -110,6 +110,10 @@ def plex_status():
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    
+print("✅ Registered routes:")
+for rule in app.url_map.iter_rules():
+    print(" ", rule)
 
 if __name__ == "__main__":
     print("🚀 MessiahBot Dashboard starting...")
