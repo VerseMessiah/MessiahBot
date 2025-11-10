@@ -106,4 +106,4 @@ def discord_oauth_callback():
     }
     session["guilds"] = guilds
 
-    return redirect("/")
+    return redirect("/forms")  # Redirect to a logged-in page
