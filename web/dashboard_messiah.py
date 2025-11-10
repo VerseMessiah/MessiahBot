@@ -32,6 +32,8 @@ from bot.integrations.twitch_bp import twitch_bp
 app.register_blueprint(discord_bp)
 app.register_blueprint(twitch_bp)
 
+print(app.url_map)
+
 @app.route("/")
 def index():
     return render_template("index.html", env=ENVIRONMENT)
