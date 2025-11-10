@@ -38,7 +38,6 @@ app.config.update(
     SESSION_COOKIE_DOMAIN=None,   # let Flask infer the exact request domain
     SESSION_COOKIE_PATH="/",      # cookie valid for all routes
 )
-Session(app)
 
 @app.after_request
 def debug_cookies(resp):
@@ -50,6 +49,8 @@ from bot.integrations.twitch_bp import twitch_bp
 
 app.register_blueprint(discord_bp)
 app.register_blueprint(twitch_bp)
+
+Session(app)
 
 print(app.url_map)
 
