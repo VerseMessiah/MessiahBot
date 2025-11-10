@@ -1,5 +1,6 @@
 import os
-from flask import Flask, render_template, jsonify, request
+import redis
+from flask import Flask, render_template, jsonify, request, session
 from dotenv import load_dotenv
 from flask_session import Session
 
@@ -25,7 +26,9 @@ app = Flask(
 )
 
 app.config["SECRET_KEY"] = os.getenv("DISCORD_SESSION_SECRET", "fallback_secret")
-app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_TYPE"] = "redis"
+app.config["SESSION_REDIS"] = redis.from_url(REDIS_URL)
+app.config["PERMANENT_SESSION_LIFETIME"] = 86400  * 7  # 7 days
 app.config["SESSION_PERMANENT"] = True
 app.config["SESSION_USE_SIGNER"] = True
 app.config["SESSION_COOKIE_SECURE"] = True
@@ -46,7 +49,8 @@ def index():
 
 @app.route("/form")
 def form():
-    return render_template("form.html", env=ENVIRONMENT)
+    print("[DEBUG] Current session user:", session.get("discord_user"))
+    return render_template("form.html", env=ENVIRONMENT, session=session)
 
 @app.route("/ping")
 def ping():

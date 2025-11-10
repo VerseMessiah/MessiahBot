@@ -53,17 +53,17 @@
 
       <div class="formRow">
         <label for="guildId">Guild ID</label>
-        <input id="guildId" type="text" placeholder="1408900348671824024">
+        <input id="guildId" type="text" placeholder="1234567891011121314">
       </div>
 
-      <div class="grid grid--2">
-        <div>
-          <label>Categories/Channels (JSON)</label>
-          <textarea id="layoutJson" rows="18" placeholder="{ /* structure will appear here after Load from Live */ }"></textarea>
-        </div>
+      <div class="flex-column" style="display: flex; flex-direction: column; gap: 1.5rem;">
         <div>
           <label>Roles (JSON)</label>
           <textarea id="rolesJson" rows="18" placeholder="[ /* roles appear here after Load from Live */ ]"></textarea>
+        </div>
+        <div>
+          <label>Categories/Channels (JSON)</label>
+          <textarea id="layoutJson" rows="18" placeholder="{ /* structure will appear here after Load from Live */ }"></textarea>
         </div>
       </div>
     </section>
