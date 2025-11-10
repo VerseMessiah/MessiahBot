@@ -24,7 +24,6 @@ app = Flask(
     static_folder=STATIC_DIR
 )
 
-app.secret_key
 app.config["SECRET_KEY"] = os.getenv("DISCORD_SESSION_SECRET", "fallback_secret")
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
