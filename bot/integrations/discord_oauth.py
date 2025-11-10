@@ -22,7 +22,7 @@ def discord_oauth_start():
     """Redirect user to Discord OAuth consent screen"""
     scope = "identify email guilds"
     url = (
-        f"https://discord.com/api/oauth2/authorize"
+        f"https://discord.com/oauth2/authorize"
         f"?client_id={DISCORD_CLIENT_ID}"
         f"&redirect_uri={DISCORD_REDIRECT_URI}"
         f"&response_type=code&scope={scope}"
@@ -32,7 +32,7 @@ def discord_oauth_start():
 # ------------------------------------------------------
 # 2️⃣ Discord OAuth Callback
 # ------------------------------------------------------
-@discord_bp.route("/api/discord/oauth/callback")
+@discord_bp.route("/discord/oauth/callback")
 async def discord_oauth_callback():
     """Handle OAuth callback from Discord"""
     code = request.args.get("code")
@@ -48,7 +48,7 @@ async def discord_oauth_callback():
     }
 
     async with aiohttp.ClientSession() as http:
-        async with http.post("https://discord.com/api/oauth2/token", data=token_data) as r:
+        async with http.post("https://discord.com/oauth2/token", data=token_data) as r:
             token = await r.json()
 
         if "access_token" not in token:
