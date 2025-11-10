@@ -29,16 +29,21 @@ app.config.update(
     SECRET_KEY=os.getenv("DISCORD_SESSION_SECRET", "fallback_secret"),
     SESSION_TYPE="redis",
     SESSION_REDIS=redis.from_url(REDIS_URL),
-    PERMANENT_SESSION_LIFETIME=86400 * 7,  # 7 days
     SESSION_PERMANENT=True,
+    PERMANENT_SESSION_LIFETIME=86400 * 7,  # 7 days
     SESSION_USE_SIGNER=True,
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="None",
-    SESSION_COOKIE_DOMAIN="messiahbot-dashboard.onrender.com",  # ensures persistence across subdomains
+    SESSION_COOKIE_DOMAIN=None,   # let Flask infer the exact request domain
+    SESSION_COOKIE_PATH="/",      # cookie valid for all routes
 )
-
 Session(app)
+
+@app.after_request
+def debug_cookies(resp):
+    print("[DEBUG] Set-Cookie headers:", resp.headers.getlist("Set-Cookie"))
+    return resp
 
 from bot.integrations.discord_oauth import discord_bp
 from bot.integrations.twitch_bp import twitch_bp
