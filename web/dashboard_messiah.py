@@ -47,6 +47,21 @@ def whoami():
         "redis": bool(REDIS_URL)
     })
 
+@app.route("/whoami/guild")
+def whoami_guild():
+    """Return the current user's first guild (for Twitch connect links)."""
+    from flask import session
+    discord_user = session.get("discord_user")
+    guilds = session.get("guilds", [])
+
+    if not discord_user or not guilds:
+        return {"ok": False, "error": "Not logged in via Discord"}, 401
+
+    # pick the first guild as default (or extend later for multi-guild)
+    guild_id = guilds[0].get("id") if guilds else None
+    return {"ok": True, "guild_id": guild_id}
+
+
 @app.route("/envcheck")
 def envcheck():
     return jsonify({

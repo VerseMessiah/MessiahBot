@@ -25,11 +25,42 @@
 
       <div class="card">
         <h2>Twitch</h2>
-        <p id="twitchStatus" class="muted">Loading…</p>
+
+        <!-- Status message -->
+        <p id="twitch-status" class="muted">Loading...</p>
+
+        <!-- Connect button -->
         <div class="actions">
-          <a class="btn" href="/connect_twitch">Connect Twitch</a>
+          <button id="connect-twitch" class="twitch-btn">🎮 Connect Twitch</button>
         </div>
       </div>
+
+      <script>
+      document.addEventListener("DOMContentLoaded", async () => {
+        const btn = document.getElementById("connect-twitch");
+        const status = document.getElementById("twitch-status");
+
+        try {
+          const resp = await fetch("/whoami/guild");
+          const data = await resp.json();
+
+          if (data.ok && data.guild_id) {
+            btn.onclick = () => {
+              window.location.href = `/connect/twitch/${data.guild_id}`;
+          };
+          status.textContent = "Ready to connect your Twitch account.";
+        } else {
+          btn.disabled = true;
+          status.textContent = "Please log in with Discord first.";
+        }
+      } catch (e) {
+        btn.disabled = true;
+        status.textContent = "⚠️ Could not verify login state.";
+        console.error("Guild lookup failed:", e);
+      }
+    });
+    </script>
+
 
       <div class="card">
         <h2>Plex</h2>
