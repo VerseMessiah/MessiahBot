@@ -1,7 +1,7 @@
 # bot/integrations/discord_oauth.py
 import os
 from flask import Blueprint, redirect, request, session
-import aiohttp
+import requests
 import psycopg
 from psycopg.rows import dict_row
 
@@ -36,7 +36,7 @@ def discord_oauth_start():
 @discord_bp.route("/oauth/discord/callback")
 def discord_oauth_callback():
     """Handle OAuth callback from Discord"""
-    code = request.args.get("code")
+    code = requests.args.get("code")
     if not code:
         return "Missing authorization code", 400
 
@@ -48,14 +48,14 @@ def discord_oauth_callback():
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
 
-    t = request.post("https://discord.com/oauth2/token", data=token_data, timeout=20)
+    t = requests.post("https://discord.com/oauth2/token", data=token_data, timeout=20)
     if t.status_code != 200:
         return f"Token exchange failed {t.status_code} {t.text}", 400
     token = t.json()
     headers = {"Authorization": f"Bearer {token['access_token']}"}
 
-    u = request.get("https://discord.com/api/users/@me", headers=headers, timeout=20)
-    g = request.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=20)
+    u = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=20)
+    g = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=20)
     if u.status_code != 200:
         return f"Fetch user failed: {u.status_code} {u.text}", 400
     if g.status_code != 200:
