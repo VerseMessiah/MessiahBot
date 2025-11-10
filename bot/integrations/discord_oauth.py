@@ -48,14 +48,14 @@ def discord_oauth_callback():
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
 
-    t = requests.post("https://discord.com/oauth2/token", data=token_data, timeout=20)
+    t = request.post("https://discord.com/oauth2/token", data=token_data, timeout=20)
     if t.status_code != 200:
         return f"Token exchange failed {t.status_code} {t.text}", 400
     token = t.json()
     headers = {"Authorization": f"Bearer {token['access_token']}"}
 
-    u = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=20)
-    g = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=20)
+    u = request.get("https://discord.com/api/users/@me", headers=headers, timeout=20)
+    g = request.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=20)
     if u.status_code != 200:
         return f"Fetch user failed: {u.status_code} {u.text}", 400
     if g.status_code != 200:
