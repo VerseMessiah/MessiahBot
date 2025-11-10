@@ -58,7 +58,7 @@ def discord_oauth_callback():
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     print(" [DEBUG] Sending token exchange request to Discord")
-    t = requests.post("https://discord.com/oauth2/token", data=token_data, headers=headers, timeout=20)
+    t = requests.post("https://discord.com/api/oauth2/token", data=token_data, headers=headers, timeout=20)
     print(f" [DEBUG] Token exchange response status: {t.status_code}")
     print(f" [DEBUG] Token exchange response body: {t.text}")
     if t.status_code != 200:
