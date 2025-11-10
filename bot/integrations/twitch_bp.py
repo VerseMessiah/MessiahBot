@@ -7,6 +7,9 @@ import requests
 
 twitch_bp = Blueprint("twitch_bp", __name__)
 
+# -----------------------------
+# Environment
+# -----------------------------
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 TWITCH_REDIRECT_URI = os.getenv("TWITCH_REDIRECT_URI")
@@ -14,10 +17,12 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 TWITCH_SCOPE = "user:read:email"
 
-
-@twitch_bp.route("/oauth/start/<guild_id>")
+# -----------------------------
+# OAuth Start
+# -----------------------------
+@twitch_bp.route("/connect/twitch/<guild_id>")
 def twitch_oauth_start(guild_id):
-    """Start the Twitch OAuth flow"""
+    """Start the Twitch OAuth flow (linked to a Discord guild)."""
     scope = TWITCH_SCOPE
     url = (
         f"https://id.twitch.tv/oauth2/authorize"
@@ -27,11 +32,15 @@ def twitch_oauth_start(guild_id):
         f"&scope={scope}"
         f"&state={guild_id}"
     )
+    print(f"[Twitch OAuth] Redirecting user to Twitch consent screen for guild {guild_id}")
     return redirect(url)
 
-
-@twitch_bp.route("/oauth/callback")
+# -----------------------------
+# OAuth Callback
+# -----------------------------
+@twitch_bp.route("/api/twitch/callback")
 def twitch_oauth_callback():
+    """Handle the OAuth callback from Twitch."""
     code = request.args.get("code")
     guild_id = request.args.get("state")
 
@@ -78,9 +87,10 @@ def twitch_oauth_callback():
             f"({user_res.status_code}):<br><pre>{user_data}</pre>",
             400,
         )
+
     twitch_user = user_data["data"][0]
 
-    # --- Save to DB (sync psycopg) ---
+    # --- Save to DB ---
     try:
         with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -107,12 +117,17 @@ def twitch_oauth_callback():
                         TWITCH_SCOPE,
                     ),
                 )
+        # ✅ Store basic Twitch info in session
+        session["twitch_user"] = twitch_user
+        session["twitch_guild"] = guild_id
+
         msg = (
             f"✅ Connected Twitch account: <b>{twitch_user['display_name']}</b><br>"
             f"Linked to Discord guild: {guild_id or '(missing)'}<br><br>"
-            f"<a href='/dashboard'>Return to Dashboard</a>"
+            f"<a href='/form'>Return to Dashboard</a>"
         )
         return msg
+
     except Exception as e:
         import traceback
         traceback.print_exc()

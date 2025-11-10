@@ -1,6 +1,8 @@
 import os
 from flask import Flask, render_template, jsonify, request
 from dotenv import load_dotenv
+from bot.integrations.discord_oauth import discord_bp
+from bot.integrations.twitch_bp import twitch_bp
 
 load_dotenv()
 
@@ -17,6 +19,11 @@ app = Flask(
     template_folder="templates",
     static_folder="static"
 )
+
+app.secret_key
+
+app.register_blueprint(discord_bp)
+app.register_blueprint(twitch_bp)
 
 @app.route("/")
 def index():
