@@ -14,6 +14,11 @@ DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+print(f"[DEBUG] DISCORD_CLIENT_ID: {DISCORD_CLIENT_ID}")
+print(f"[DEBUG] DISCORD_CLIENT_SECRET: {'set' if DISCORD_CLIENT_SECRET else 'not set'}")
+print(f"[DEBUG] DISCORD_REDIRECT_URI: {DISCORD_REDIRECT_URI}")
+print(f"[DEBUG] DATABASE_URL: {'set' if DATABASE_URL else 'not set'}")
+
 # ------------------------------------------------------
 # 1️⃣ Discord OAuth Start (renamed from /api/... to /login)
 # ------------------------------------------------------
@@ -51,16 +56,27 @@ def discord_oauth_callback():
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
 
-    t = requests.post("https://discord.com/oauth2/token", data=token_data, timeout=20)
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    print(" [DEBUG] Sending token exchange request to Discord")
+    t = requests.post("https://discord.com/oauth2/token", data=token_data, headers=headers, timeout=20)
+    print(f" [DEBUG] Token exchange response status: {t.status_code}")
+    print(f" [DEBUG] Token exchange response body: {t.text}")
     if t.status_code != 200:
         return f"Token exchange failed {t.status_code} {t.text}", 400
     token = t.json()
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    auth_headers = {"Authorization": f"Bearer {token['access_token']}"}
 
-    u = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=20)
-    g = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=20)
+    print(" [DEBUG] Fetching user info from Discord")
+    u = requests.get("https://discord.com/api/users/@me", headers=auth_headers, timeout=20)
+    print(f" [DEBUG] User info response status: {u.status_code}")
+    print(f" [DEBUG] User info response body: {u.text}")
     if u.status_code != 200:
         return f"Fetch user failed: {u.status_code} {u.text}", 400
+
+    print(" [DEBUG] Fetching user guilds from Discord")
+    g = requests.get("https://discord.com/api/users/@me/guilds", headers=auth_headers, timeout=20)
+    print(f" [DEBUG] Guilds response status: {g.status_code}")
+    print(f" [DEBUG] Guilds response body: {g.text}")
     if g.status_code != 200:
         return f"Fetch guilds failed: {g.status_code} {g.text}", 400
     
