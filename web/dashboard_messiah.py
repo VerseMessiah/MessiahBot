@@ -26,6 +26,10 @@ app = Flask(
 
 app.config["SECRET_KEY"] = os.getenv("DISCORD_SESSION_SECRET", "fallback_secret")
 app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_PERMANENT"] = True
+app.config["SESSION_USE_SIGNER"] = True
+app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "None"
 Session(app)
 
 from bot.integrations.discord_oauth import discord_bp
