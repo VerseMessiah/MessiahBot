@@ -1,7 +1,10 @@
 import os
 from flask import Flask, render_template, jsonify, request
 from dotenv import load_dotenv
-
+from flask_session import Session
+app.config["SECRET_KEY"] = os.getenv("DISCORD_SESSION_SECRET", "fallback_secret")
+app.config["SESSION_TYPE"] = "filesystem"
+Session(app)
 
 load_dotenv()
 

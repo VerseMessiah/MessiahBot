@@ -35,6 +35,9 @@ def discord_oauth_start():
 # ------------------------------------------------------
 @discord_bp.route("/oauth/discord/callback")
 def discord_oauth_callback():
+    print(" [DEBUG] Discord OAuth callback received")
+    print(" [DEBUG] Request args:", request.args)
+
     """Handle OAuth callback from Discord"""
     code = request.args.get("code")
     if not code:
@@ -66,7 +69,7 @@ def discord_oauth_callback():
 
     try:
         with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
-            with conn.curson(row_factory=dict_row) as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
                     INSERT INTO bot_users (discord_id, premium)
@@ -74,7 +77,7 @@ def discord_oauth_callback():
                        ON CONFLICT (discord_id) DO NOTHING
                     """,
                     (user["id"],),
-                    )           
+                )          
     
     except Exception as e:
         return f"DB error: {e}", 500
@@ -87,4 +90,4 @@ def discord_oauth_callback():
     }
     session["guilds"] = guilds
 
-    return redirect(url_for("index"))
+    return redirect("/")
