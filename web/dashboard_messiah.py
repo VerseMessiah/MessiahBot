@@ -39,7 +39,17 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax", # 👈 less strict than None
     SESSION_COOKIE_PATH="/",
+
+    # Prevent overwriting valid sessions with empty cookies
+    SESSION_REFRESH_EACH_REQUEST=False,
+    SESSION_SAVE_EACH_REQUEST=False,
 )
+
+@app.before_request
+def ensure_session_not_empty():
+    # Prevent overwriting valid sessions with empty cookies by skipping session save if empty
+    if session.modified and not session:
+        session.modified = False
 
 from bot.integrations.discord_oauth import discord_bp
 from bot.integrations.twitch_bp import twitch_bp
