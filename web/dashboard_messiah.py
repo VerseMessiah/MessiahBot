@@ -2,7 +2,7 @@ import os
 import redis
 from flask import Flask, render_template, jsonify, request, session
 from dotenv import load_dotenv
-from flask_session import Sessionj
+from flask_session import Session
 from datetime import timedelta
 
 load_dotenv()
