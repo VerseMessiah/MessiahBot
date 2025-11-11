@@ -58,6 +58,12 @@ def make_session_permanent():
         session.modified = True
         print("[DEBUG] Session is permanent for user:", session.get("discord_user"))
 
+def ignore_bad_icon_paths():
+    """Ignore requests for common missing favicon paths."""
+    path = request.path.lower()
+    if 'icon' in path and not path.endswith(('.ico', '.png')):
+        return "", 204
+
 @app.after_request
 def handle_session_cookie(response):
     """Force session save and debug cookie headers."""
@@ -162,6 +168,12 @@ def plex_status():
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    
+@app.route('/favicon.ico')
+@app.route('/apple-touch-icon.png')
+@app.route('/apple-touch-icon-precomposed.png')
+def serve_univfied_icon():
+    return app.send_static_file('verseicon.png')
     
 print("✅ Registered routes:")
 for rule in app.url_map.iter_rules():
