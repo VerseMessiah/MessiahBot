@@ -28,22 +28,17 @@ app = Flask(
 
 app.config.update(
     SECRET_KEY=os.getenv("DISCORD_SESSION_SECRET", "fallback_secret"),
-
-    # Session storage
     SESSION_TYPE="redis",
     SESSION_REDIS=redis.from_url(REDIS_URL),
     SESSION_USE_SIGNER=True,
     SESSION_PERMANENT=True,
-
-    # Lifetime (7 days)
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
 
-    # Cookie properties
-    SESSION_COOKIE_SECURE=False,
+    # Cookie settings
+    SESSION_COOKIE_SECURE=False,   # 👈 temporarily disable this
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SAMESITE="Lax", # 👈 less strict than None
     SESSION_COOKIE_PATH="/",
-    SESSION_COOKIE_DOMAIN=None,  # Let Flask auto-detect
 )
 
 @app.after_request
