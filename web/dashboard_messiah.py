@@ -1,5 +1,4 @@
 import os
-import redis
 from flask import Flask, Blueprint, current_app, redirect, request, session, url_for, jsonify, render_template
 from dotenv import load_dotenv
 from flask_session import Session
@@ -26,25 +25,17 @@ app = Flask(
     static_folder=STATIC_DIR
 )
 
-app.config.update(
-    SECRET_KEY=os.getenv("DISCORD_SESSION_SECRET", "fallback_secret"),
-    SESSION_TYPE="redis",
-    SESSION_REDIS=redis.from_url(REDIS_URL),
-    SESSION_USE_SIGNER=True,
-    SESSION_PERMANENT=True,
-    PERMANENT_SESSION_LIFETIME=timedelta(days=7),
-
-    # Cookie settings
-    SESSION_COOKIE_SECURE=True,   # 👈 temporarily disable this
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="None", # 👈 less strict than None
-    SESSION_COOKIE_PATH="/",
-    SESSION_COOKIE_DOMAIN="messiahbot-dashboard.onrender.com",
-
-    # Prevent overwriting valid sessions with empty cookies
-    SESSION_REFRESH_EACH_REQUEST=False,
-    SESSION_SAVE_EACH_REQUEST=False,
-)
+# --- Cookie-based session config (no Redis) ---
+app.config.update({
+    "SESSION_TYPE": "filesystem",      # use server-side file storage for temp session data
+    "SESSION_FILE_DIR": "./flask_session",
+    "SESSION_COOKIE_SECURE": True,     # required for HTTPS
+    "SESSION_COOKIE_HTTPONLY": True,
+    "SESSION_COOKIE_SAMESITE": "None", # allow Discord OAuth redirects
+    "SESSION_COOKIE_DOMAIN": "messiahbot-dashboard.onrender.com",
+    "SESSION_PERMANENT": True,
+    "SESSION_REFRESH_EACH_REQUEST": True,
+})
 
 @app.before_request
 def ensure_session_not_empty():
@@ -131,7 +122,6 @@ def whoami():
         "plex_url": bool(PLEX_URL),
         "plex_owner": PLEX_OWNER or "",
         "plex_platform": PLEX_PLATFORM or "",
-        "redis": bool(REDIS_URL)
     })
 
 @app.route("/whoami/guild")
@@ -162,19 +152,6 @@ def sessioncheck():
     print("[DEBUG] Current Redis URL:", REDIS_URL)
     print("[DEBUG] Session ID:", session.sid if hasattr(session, "sid") else "none")
     return jsonify({"discord_user": session.get("discord_user")})
-
-@app.route("/redis/status")
-def redis_status():
-    if not REDIS_URL:
-        return jsonify({"ok": False, "error": "REDIS_URL not configured"}), 500
-    try:
-        import redis
-        r = redis.from_url(REDIS_URL)
-        r.set("test", "ok", ex=5)
-        val = r.get("test")
-        return jsonify({"ok": True, "value": val.decode("utf-8")})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/plex/status")
 def plex_status():
