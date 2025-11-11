@@ -41,21 +41,6 @@ app.config.update(
     SESSION_COOKIE_PATH="/",
 )
 
-@app.after_request
-def debug_cookies(resp):
-    print("[DEBUG] Set-Cookie headers:", resp.headers.getlist("Set-Cookie"))
-    return resp
-@app.after_request
-def force_session_cookie(response):
-    # Force Flask to write the session cookie every time
-    try:
-        session.modified = True
-        app.session_interface.save_session(app, session, response)
-        print("[DEBUG] Forced session cookie write.")
-    except Exception as e:
-        print("[DEBUG] Failed to force session cookie write:", e)
-    return response
-
 from bot.integrations.discord_oauth import discord_bp
 from bot.integrations.twitch_bp import twitch_bp
 
@@ -69,6 +54,25 @@ print(app.url_map)
 @app.before_request
 def make_session_permanent():
     session.permanent = True
+    if "discord_user" in session:
+        session.modified = True
+        print("[DEBUG] Session is permanent for user:", session.get("discord_user"))
+
+@app.after_request
+def debug_cookies(resp):
+    print("[DEBUG] Set-Cookie headers:", resp.headers.getlist("Set-Cookie"))
+    return resp
+
+@app.after_request
+def force_session_cookie(response):
+    # Force Flask to write the session cookie every time
+    try:
+        session.modified = True
+        app.session_interface.save_session(app, session, response)
+        print("[DEBUG] Forced session cookie write.")
+    except Exception as e:
+        print("[DEBUG] Failed to force session cookie write:", e)
+    return response
 
 @app.route("/")
 def index():
