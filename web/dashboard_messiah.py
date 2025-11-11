@@ -39,9 +39,9 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
 
     # Cookie properties
-    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="None",
+    SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_PATH="/",
     SESSION_COOKIE_DOMAIN=None,  # Let Flask auto-detect
 )
