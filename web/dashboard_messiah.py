@@ -59,17 +59,23 @@ def make_session_permanent():
         print("[DEBUG] Session is permanent for user:", session.get("discord_user"))
 
 @app.after_request
-def debug_cookies(resp):
-    print("[DEBUG] Set-Cookie headers:", resp.headers.getlist("Set-Cookie"))
-    return resp
-
-@app.after_request
-def force_session_cookie(response):
-    # Force Flask to write the session cookie every time
+def handle_session_cookie(response):
+    """Force session save and debug cookie headers."""
     try:
+        # Always mark session as modified so Flask re-saves it
         session.modified = True
         app.session_interface.save_session(app, session, response)
         print("[DEBUG] Forced session cookie write.")
+
+        # Debug cookie headers
+        cookies = response.headers.getlist("Set-Cookie")
+        if cookies:
+            print("[DEBUG] Set-Cookie headers:", cookies)
+            for cookie in cookies:
+                if "Expires=Thu, 01 Jan 1970" in cookie:
+                    print("⚠️ Flask deleted the session cookie during this request!")
+        else:
+            print("[DEBUG] No Set-Cookie headers.")
     except Exception as e:
         print("[DEBUG] Failed to force session cookie write:", e)
     return response

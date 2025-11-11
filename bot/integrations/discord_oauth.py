@@ -1,6 +1,6 @@
 # bot/integrations/discord_oauth.py
 import os
-from flask import Blueprint, redirect, request, session, url_for
+from flask import Blueprint, redirect, request, session, url_for, current_session
 import requests
 import psycopg
 from psycopg.rows import dict_row

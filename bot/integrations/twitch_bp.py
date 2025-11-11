@@ -2,7 +2,7 @@
 import os
 import psycopg
 from psycopg.rows import dict_row
-from flask import Blueprint, redirect, request, session
+from flask import Blueprint, redirect, request, session , current_app
 import requests
 
 twitch_bp = Blueprint("twitch_bp", __name__)
