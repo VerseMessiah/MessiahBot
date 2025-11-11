@@ -74,10 +74,24 @@ def ignore_bad_icon_paths():
     if 'icon' in path and not path.endswith(('.ico', '.png')):
         return "", 204
 
+def is_session_exempt_route():
+    """Check if the current request path is an exempt route that should skip session saving."""
+    exempt_paths = [
+        "/ping",
+        "/favicon.ico",
+        "/apple-touch-icon.png",
+        "/apple-touch-icon-precomposed.png"
+    ]
+    return request.path.lower() in exempt_paths
+
 @app.after_request
 def handle_session_cookie(response):
     """Force session save and debug cookie headers."""
     try:
+        if is_session_exempt_route():
+            print(f"[DEBUG] Skipping session save for exempt route: {request.path}")
+            return response
+
         # Always mark session as modified so Flask re-saves it
         session.modified = True
         app.session_interface.save_session(app, session, response)
