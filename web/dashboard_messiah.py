@@ -2,7 +2,8 @@ import os
 import redis
 from flask import Flask, render_template, jsonify, request, session
 from dotenv import load_dotenv
-from flask_session import Session
+from flask_session import Sessionj
+from datetime import timedelta
 
 load_dotenv()
 
@@ -27,16 +28,22 @@ app = Flask(
 
 app.config.update(
     SECRET_KEY=os.getenv("DISCORD_SESSION_SECRET", "fallback_secret"),
+
+    # Session storage
     SESSION_TYPE="redis",
     SESSION_REDIS=redis.from_url(REDIS_URL),
-    SESSION_PERMANENT=True,
-    PERMANENT_SESSION_LIFETIME=86400 * 7,  # 7 days
     SESSION_USE_SIGNER=True,
+    SESSION_PERMANENT=True,
+
+    # Lifetime (7 days)
+    PERMANENT_SESSION_LIFETIME=timedelta(days=7),
+
+    # Cookie properties
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="None",
-    SESSION_COOKIE_DOMAIN=None,   # let Flask infer the exact request domain
-    SESSION_COOKIE_PATH="/",      # cookie valid for all routes
+    SESSION_COOKIE_PATH="/",
+    SESSION_COOKIE_DOMAIN=None,  # Let Flask auto-detect
 )
 
 @app.after_request
@@ -63,6 +70,10 @@ app.register_blueprint(twitch_bp)
 Session(app)
 
 print(app.url_map)
+
+@app.before_request
+def make_session_permanent():
+    session.permanent = True
 
 @app.route("/")
 def index():
