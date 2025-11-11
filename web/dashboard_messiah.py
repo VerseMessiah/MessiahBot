@@ -35,9 +35,9 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
 
     # Cookie settings
-    SESSION_COOKIE_SECURE=False,   # 👈 temporarily disable this
+    SESSION_COOKIE_SECURE=True,   # 👈 temporarily disable this
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax", # 👈 less strict than None
+    SESSION_COOKIE_SAMESITE="None", # 👈 less strict than None
     SESSION_COOKIE_PATH="/",
 
     # Prevent overwriting valid sessions with empty cookies
