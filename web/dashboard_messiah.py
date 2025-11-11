@@ -39,7 +39,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="None", # 👈 less strict than None
     SESSION_COOKIE_PATH="/",
-    SESSION_COOKIE_DOMAIN=".onrender.com",
+    SESSION_COOKIE_DOMAIN="messiahbot-dashboard.onrender.com",
 
     # Prevent overwriting valid sessions with empty cookies
     SESSION_REFRESH_EACH_REQUEST=False,
