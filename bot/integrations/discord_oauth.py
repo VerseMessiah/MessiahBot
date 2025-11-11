@@ -106,10 +106,7 @@ def discord_oauth_callback():
     }
     session["guilds"] = guilds
 
-    session.modified = True
-
     print(" [DEBUG] Session marked as modified:", session.modified)
     print(" [DEBUG] Session contents before redirect:", dict(session))
-    print(" [DEBUG] Saved Discord session to Redis:", session.get("discord_user"))
 
     return redirect("/form")  # Redirect to a logged-in page
