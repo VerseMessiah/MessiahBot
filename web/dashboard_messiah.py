@@ -30,13 +30,15 @@ app.config.update({
     "SECRET_KEY": os.getenv("SECRET_KEY", "supersecretkey"),
     "SESSION_TYPE": "filesystem",      # use server-side file storage for temp session data
     "SESSION_FILE_DIR": "./flask_session",
+    "SESSION_FILE_THRESHOLD": 100,
     "SESSION_COOKIE_SECURE": True,     # required for HTTPS
     "SESSION_COOKIE_HTTPONLY": True,
     "SESSION_COOKIE_SAMESITE": "None", # allow Discord OAuth redirects
     "SESSION_COOKIE_DOMAIN": None,
     "SESSION_PERMANENT": True,
-    "PERMANENT_SESSION_LIFETIME": timedelta(days=30),
+    "PERMANENT_SESSION_LIFETIME": timedelta(days=7),
     "SESSION_REFRESH_EACH_REQUEST": True,
+    "SESSION_COOKIE_NAME": "messiah_session",
 })
 
 Session(app)
@@ -86,20 +88,23 @@ def handle_session_cookie(response):
             print(f"[DEBUG] Skipping session save for exempt route: {request.path}")
             return response
 
-        # Always mark session as modified so Flask re-saves it
-        session.modified = True
-        app.session_interface.save_session(app, session, response)
-        print("[DEBUG] Forced session cookie write.")
+        # Extra debug print before session save
+        print("[DEBUG] Before session save, discord_user:", session.get("discord_user"))
+        if session:
+            # Always mark session as modified so Flask re-saves it
+            session.modified = True
+            app.session_interface.save_session(app, session, response)
+            print("[DEBUG] Forced session cookie write.")
 
-        # Debug cookie headers
-        cookies = response.headers.getlist("Set-Cookie")
-        if cookies:
-            print("[DEBUG] Set-Cookie headers:", cookies)
-            for cookie in cookies:
-                if "Expires=Thu, 01 Jan 1970" in cookie:
-                    print("⚠️ Flask deleted the session cookie during this request!")
-        else:
-            print("[DEBUG] No Set-Cookie headers.")
+            # Debug cookie headers
+            cookies = response.headers.getlist("Set-Cookie")
+            if cookies:
+                print("[DEBUG] Set-Cookie headers:", cookies)
+                for cookie in cookies:
+                    if "Expires=Thu, 01 Jan 1970" in cookie:
+                        print("⚠️ Flask deleted the session cookie during this request!")
+            else:
+                print("[DEBUG] No Set-Cookie headers.")
     except Exception as e:
         print("[DEBUG] Failed to force session cookie write:", e)
     return response
