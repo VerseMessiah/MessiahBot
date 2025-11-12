@@ -1,7 +1,6 @@
 import os
 from flask import Flask, Blueprint, current_app, redirect, request, session, url_for, jsonify, render_template
 from dotenv import load_dotenv
-from flask_session import Session
 from datetime import timedelta
 
 load_dotenv()
@@ -28,7 +27,6 @@ app = Flask(
 # --- Cookie-based session config (no Redis) ---
 app.config.update({
     "SECRET_KEY": os.getenv("SECRET_KEY", "supersecretkey"),
-    "SESSION_TYPE": "null",      # use cookie-based sessions only
     "SESSION_COOKIE_SECURE": True,     # required for HTTPS
     "SESSION_COOKIE_HTTPONLY": True,
     "SESSION_COOKIE_SAMESITE": "None", # allow Discord OAuth redirects
@@ -43,9 +41,9 @@ app.config.update({
 # Session(app)
 
 @app.before_request
-def ensure_session_not_empty():
-    # Prevent overwriting valid sessions with empty cookies by skipping session save if empty
-    if session.modified and not session:
+def avoid_empty_session_writes():
+    # If the session has not been touched, don't force a save later.
+    if not session:
         session.modified = False
 
 from bot.integrations.discord_oauth import discord_bp
@@ -59,9 +57,9 @@ print(app.url_map)
 @app.before_request
 def make_session_permanent():
     session.permanent = True
-    if "discord_user" in session:
+    if session.get("discord_user") or session.get("guilds"):
         session.modified = True
-        print("[DEBUG] Session is permanent for user:", session.get("discord_user"))
+        print("[DEBUG] Session is permanent; user in session:", bool(session.get("discord_user")))
 
 def ignore_bad_icon_paths():
     """Ignore requests for common missing favicon paths."""
@@ -80,32 +78,23 @@ def is_session_exempt_route():
     return request.path.lower() in exempt_paths
 
 @app.after_request
-def handle_session_cookie(response):
-    """Force session save and debug cookie headers."""
+def debug_cookie_headers(response):
+    """Only debug cookie headers; let Flask manage saving."""
     try:
         if is_session_exempt_route():
             print(f"[DEBUG] Skipping session save for exempt route: {request.path}")
             return response
-
-        # Extra debug print before session save
-        print("[DEBUG] Before session save, discord_user:", session.get("discord_user"))
-        if session:
-            # Always mark session as modified so Flask re-saves it
-            session.modified = True
-            app.session_interface.save_session(app, session, response)
-            print("[DEBUG] Forced session cookie write.")
-
-            # Debug cookie headers
-            cookies = response.headers.getlist("Set-Cookie")
-            if cookies:
-                print("[DEBUG] Set-Cookie headers:", cookies)
-                for cookie in cookies:
-                    if "Expires=Thu, 01 Jan 1970" in cookie:
-                        print("⚠️ Flask deleted the session cookie during this request!")
-            else:
-                print("[DEBUG] No Set-Cookie headers.")
+        print("[DEBUG] After request, discord_user in session:", bool(session.get("discord_user")))
+        cookies = response.headers.getlist("Set-Cookie")
+        if cookies:
+            print("[DEBUG] Set-Cookie headers:", cookies)
+            for cookie in cookies:
+                if "Expires=Thu, 01 Jan 1970" in cookie:
+                    print("⚠️ Flask deleted the session cookie during this request!")
+        else:
+            print("[DEBUG] No Set-Cookie headers.")
     except Exception as e:
-        print("[DEBUG] Failed to force session cookie write:", e)
+        print("[DEBUG] Cookie debug error:", e)
     return response
 
 @app.route("/")
@@ -123,9 +112,18 @@ def ping():
 
 @app.route("/whoami")
 def whoami():
+    du = session.get("discord_user")
+    guilds = session.get("guilds") or []
     return jsonify({
         "environment": ENVIRONMENT,
-        "plex_url": bool(PLEX_URL),
+        "logged_in": bool(du),
+        "user": {
+            "id": du.get("id") if du else None,
+            "username": du.get("username") if du else None,
+            "avatar": du.get("avatar") if du else None,
+        } if du else None,
+        "guild_count": len(guilds),
+        "has_plex": bool(PLEX_URL),
         "plex_owner": PLEX_OWNER or "",
         "plex_platform": PLEX_PLATFORM or "",
     })
@@ -155,9 +153,14 @@ def envcheck():
     })
 @app.route("/sessioncheck")
 def sessioncheck():
-    print("[DEBUG] Current Redis URL:", REDIS_URL)
-    print("[DEBUG] Session ID:", session.sid if hasattr(session, "sid") else "none")
-    return jsonify({"discord_user": session.get("discord_user")})
+    keys = list(session.keys())
+    return jsonify({
+        "keys": keys,
+        "has_discord_user": "discord_user" in session,
+        "has_guilds": "guilds" in session,
+        "permanent": getattr(session, "permanent", None),
+        "cookie_name": app.config.get("SESSION_COOKIE_NAME"),
+    })
 
 @app.route("/plex/status")
 def plex_status():
