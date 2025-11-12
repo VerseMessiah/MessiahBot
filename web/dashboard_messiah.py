@@ -28,9 +28,7 @@ app = Flask(
 # --- Cookie-based session config (no Redis) ---
 app.config.update({
     "SECRET_KEY": os.getenv("SECRET_KEY", "supersecretkey"),
-    "SESSION_TYPE": "filesystem",      # use server-side file storage for temp session data
-    "SESSION_FILE_DIR": "./flask_session",
-    "SESSION_FILE_THRESHOLD": 100,
+    "SESSION_TYPE": "null",      # use cookie-based sessions only
     "SESSION_COOKIE_SECURE": True,     # required for HTTPS
     "SESSION_COOKIE_HTTPONLY": True,
     "SESSION_COOKIE_SAMESITE": "None", # allow Discord OAuth redirects
@@ -41,7 +39,8 @@ app.config.update({
     "SESSION_COOKIE_NAME": "messiah_session",
 })
 
-Session(app)
+# app.session_interface = None  # Reset session interface to avoid conflicts
+# Session(app)
 
 @app.before_request
 def ensure_session_not_empty():
