@@ -27,15 +27,19 @@ app = Flask(
 
 # --- Cookie-based session config (no Redis) ---
 app.config.update({
+    "SECRET_KEY": os.getenv("SECRET_KEY", "supersecretkey"),
     "SESSION_TYPE": "filesystem",      # use server-side file storage for temp session data
     "SESSION_FILE_DIR": "./flask_session",
     "SESSION_COOKIE_SECURE": True,     # required for HTTPS
     "SESSION_COOKIE_HTTPONLY": True,
     "SESSION_COOKIE_SAMESITE": "None", # allow Discord OAuth redirects
-    "SESSION_COOKIE_DOMAIN": "messiahbot-dashboard.onrender.com",
+    "SESSION_COOKIE_DOMAIN": None,
     "SESSION_PERMANENT": True,
+    "PERMANENT_SESSION_LIFETIME": timedelta(days=30),
     "SESSION_REFRESH_EACH_REQUEST": True,
 })
+
+Session(app)
 
 @app.before_request
 def ensure_session_not_empty():
@@ -48,8 +52,6 @@ from bot.integrations.twitch_bp import twitch_bp
 
 app.register_blueprint(discord_bp)
 app.register_blueprint(twitch_bp)
-
-Session(app)
 
 print(app.url_map)
 
@@ -186,4 +188,5 @@ if __name__ == "__main__":
     print(f"🌎 Environment: {ENVIRONMENT}")
     print(f"🧠 Flask templates: {app.template_folder}")
     print(f"🎨 Flask static: {app.static_folder}")
+    print("🔐 Session configuration loaded successfully with cookie-based sessions.")
     app.run(host="0.0.0.0", port=PORT)
