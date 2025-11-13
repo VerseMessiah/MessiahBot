@@ -45,6 +45,7 @@
         <h2>Server Builder</h2>
         <div class="card__hdrActions">
           <button class="btn" id="btnLoadLive">Load from Live</button>
+          <button class="btn" id="btnLoadSnapshot">Load Snapshot</button>
           <button class="btn btn--primary" id="btnSave">Save Layout</button>
         </div>
       </div>
@@ -52,8 +53,10 @@
       <div id="builderNote" class="muted">Choose a server and load its current layout, or edit and save.</div>
 
       <div class="formRow">
-        <label for="guildId">Guild ID</label>
-        <input id="guildId" type="text" placeholder="1234567891011121314">
+        <label for="guildSelect">Select Server</label>
+        <select id="guildSelect">
+          <option value="">— Select a server —</option>
+        </select>
       </div>
 
       <div class="flex-column" style="display: flex; flex-direction: column; gap: 1.5rem;">
@@ -79,6 +82,8 @@
 <script>
 function el(id){ return document.getElementById(id); }
 
+const guildSelect = document.getElementById("guildSelect");
+
 function setStatus(id, text, ok=true){
   const node = el(id);
   node.textContent = text;
@@ -93,9 +98,14 @@ async function loadStatuses(){
       setStatus("discordStatus", `Logged in as ${who.user.username}`, true);
       const loginBtn = document.querySelector('a[href="/login"]');
       if (loginBtn) loginBtn.style.display = "none";
-      if (who.guild_count > 0 && who.guilds){
-        const owned = who.guilds.filter(g => g.owner);
-        if (owned.length > 0) el("guildId").value = owned[0].id;
+      if (who.guilds){
+        guildSelect.innerHTML = '<option value="">— Select a server —</option>';
+        for (const g of who.guilds){
+          const opt = document.createElement("option");
+          opt.value = g.id;
+          opt.textContent = g.name + (g.owner ? " (owner)" : "");
+          guildSelect.appendChild(opt);
+        }
       }
     } else {
       setStatus("discordStatus", "Not logged in", false);
@@ -129,8 +139,8 @@ el("btnPlexCheck").addEventListener("click", async () => {
 });
 
 el("btnLoadLive").addEventListener("click", async () => {
-  const gid = el("guildId").value.trim();
-  if (!gid){ alert("Enter a Guild ID first"); return; }
+  const gid = guildSelect.value.trim();
+  if (!gid){ alert("Select a server first"); return; }
 
   try {
     await fetch("/layout-config?guild_id=" + encodeURIComponent(gid));
@@ -152,9 +162,26 @@ el("btnLoadLive").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("btnLoadSnapshot").addEventListener("click", async () => {
+  const gid = guildSelect.value.trim();
+  if (!gid){ alert("Select a server first"); return; }
+  try {
+    const snap = await fetch("/api/snapshot/" + encodeURIComponent(gid)).then(r=>r.json());
+    if (!snap || !snap.layout){ 
+      el("builderNote").textContent = "No snapshot found."; 
+      return;
+    }
+    el("layoutJson").value = JSON.stringify(snap.layout, null, 2);
+    el("rolesJson").value = JSON.stringify(snap.roles || [], null, 2);
+    el("builderNote").textContent = "Loaded snapshot for guild " + gid;
+  } catch(e){
+    el("builderNote").textContent = "Snapshot load failed: " + e.message;
+  }
+});
+
 el("btnSave").addEventListener("click", async () => {
-  const gid = el("guildId").value.trim();
-  if (!gid){ alert("Enter a Guild ID first"); return; }
+  const gid = guildSelect.value.trim();
+  if (!gid){ alert("Select a server first"); return; }
 
   let layout = {}, roles = [];
   try { layout = JSON.parse(el("layoutJson").value || "{}"); } 
