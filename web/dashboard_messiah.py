@@ -2,6 +2,10 @@ import os
 from flask import Flask, Blueprint, current_app, redirect, request, session, url_for, jsonify, render_template
 from dotenv import load_dotenv
 from datetime import timedelta
+from flask import abort
+import discord
+from bot.messiah_dc import bot
+from bot.commands.server_builder import _snapshot_guild_best, _load_layout_for_guild
 
 load_dotenv()
 
@@ -95,6 +99,24 @@ def debug_cookie_headers(response):
     except Exception as e:
         print("[DEBUG] Cookie debug error:", e)
     return response
+
+def get_owned_guilds_or_403(gid: str):
+    """Return discord guild only if logged in user is owner."""
+    discord_user = session.get("discord_user")
+    guilds = session.get("guilds",[])
+
+    if not discord_user:
+        abort(401, "Not logged in via Discord")
+    
+    owned = [g for g in guilds if g.get("id") == gid and g.get("owner") ]
+    if not owned:
+        abort (403, f"You do not own guild ID {gid}")
+
+    g_obj = bot.get_guild(int(gid))
+    if g_obj is None:
+        abort(404, f"Bot cannot see guild {gid} (not cached)")
+    
+    return g_obj
 
 @app.route("/")
 def index():
@@ -195,6 +217,27 @@ def plex_status():
 @app.route('/apple-touch-icon-precomposed.png')
 def serve_univfied_icon():
     return app.send_static_file('verseicon.png')
+
+@app.get("/api/live_layout/<gid>")
+def api_live_layout(gid):
+    # Ensure ownership + get discord.Guild
+    guild_obj = get_owned_guild_or_403(gid)
+
+    try:
+        layout = _snapshot_guild_best(guild_obj)   # discord.py → fallback → JSON structure
+        return jsonify(layout)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@app.get("/api/snapshot/latest/<gid>")
+def api_latest_snapshot(gid):
+    guild_obj = get_owned_guild_or_403(gid)
+
+    layout = _load_layout_for_guild(guild_obj.id)
+    if not layout:
+        return jsonify({"error": "No saved layout for this guild"}), 404
+
+    return jsonify(layout)
     
 print("✅ Registered routes:")
 for rule in app.url_map.iter_rules():
