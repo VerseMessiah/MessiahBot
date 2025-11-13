@@ -44,9 +44,9 @@
       <div class="card__hdr">
         <h2>Server Builder</h2>
         <div class="card__hdrActions">
-          <button class="btn" id="btnLoadLive">Load from Live</button>
-          <button class="btn" id="btnLoadSnapshot">Load Snapshot</button>
-          <button class="btn btn--primary" id="btnSave">Save Layout</button>
+          <button class="btn" id="btnLoadLive" disabled>Load from Live</button>
+          <button class="btn" id="btnLoadSnapshot" disabled>Load Snapshot</button>
+          <button class="btn btn--primary" id="btnSave" disabled>Save Layout</button>
         </div>
       </div>
 
@@ -83,6 +83,16 @@
 function el(id){ return document.getElementById(id); }
 
 const guildSelect = document.getElementById("guildSelect");
+const btnLoadLive = document.getElementById("btnLoadLive");
+const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
+const btnSave = document.getElementById("btnSave");
+
+guildSelect.addEventListener("change", () => {
+  const has = !!guildSelect.value.trim();
+  btnLoadLive.disabled = !has;
+  btnLoadSnapshot.disabled = !has;
+  btnSave.disabled = !has;
+});
 
 function setStatus(id, text, ok=true){
   const node = el(id);
