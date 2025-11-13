@@ -91,15 +91,28 @@ async function initStatuses(){
     setStatus("twitchStatus", env.twitch ? "Connected" : "Not connected", !!env.twitch);
 
     const who = await fetch("/whoami").then(r=>r.json());
-    if (who && who.plex_url){
-      setStatus("plexStatus", "Configured", true);
+    setStatus("discordStatus", who.logged_in ? 'Logged in as ${who.user.uersname}' : "Not logged in" , who.logged_in);
+    
+    if (who.logged_in) {
+      if (who.guild_count > 0) {
+        const defaultGuild = await fetch("/whoami/guild").then(r => r.json());
+        if (defaultGuild.ok) el("guildIDd").value = defaultGuild.guild.id;
+      }
+    }
+
+    if (who.logged_in) {
+      document.querySelector('a[href="/login"]').syle.display = "none";
+    }
+       
+    if (who.has_plex) {
+      setStatus(
+          "plexStatus",
+          `Configured (${who.plex_owner || "unknown owner"})`,
+          true
+      );
     } else {
       setStatus("plexStatus", "Not configured", false);
     }
-  } catch (e){
-    console.error(e);
-  }
-}
 
 el("btnPlexCheck").addEventListener("click", async () => {
   try{
