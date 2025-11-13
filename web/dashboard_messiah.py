@@ -59,7 +59,6 @@ def make_session_permanent():
     session.permanent = True
     if session.get("discord_user") or session.get("guilds"):
         session.modified = True
-        print("[DEBUG] Session is permanent; user in session:", bool(session.get("discord_user")))
 
 def ignore_bad_icon_paths():
     """Ignore requests for common missing favicon paths."""
@@ -84,7 +83,7 @@ def debug_cookie_headers(response):
         if is_session_exempt_route():
             print(f"[DEBUG] Skipping session save for exempt route: {request.path}")
             return response
-        print("[DEBUG] After request, discord_user in session:", bool(session.get("discord_user")))
+        print("[DEBUG] Session state, discord_user present:", bool(session.get("discord_user")))
         cookies = response.headers.getlist("Set-Cookie")
         if cookies:
             print("[DEBUG] Set-Cookie headers:", cookies)
@@ -99,8 +98,8 @@ def debug_cookie_headers(response):
 
 @app.route("/")
 def index():
-    return render_template("index.html", env=ENVIRONMENT)
-
+    return render_template("/form")
+                           
 @app.route("/form")
 def form():
     print("[DEBUG] Current session user:", session.get("discord_user"))
