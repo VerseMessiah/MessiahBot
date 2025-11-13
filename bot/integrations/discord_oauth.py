@@ -108,7 +108,13 @@ def discord_oauth_callback():
         "discriminator": user.get("discriminator"),
         "avatar": user.get("avatar"),
     }
-    session["guilds"] = guilds
+    
+    filtered_guilds = [
+        g for g in guilds
+        if g.get("owner")
+        or (int(g.get("permissions", 0)) & 0x20)  # MANAGE_GUILD
+    ]
+    session["guilds"] = filtered_guilds
 
     print(" [DEBUG] Session marked as modified:", session.modified)
     print(" [DEBUG] Session contents before redirect:", dict(session))
