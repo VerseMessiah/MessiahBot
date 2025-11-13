@@ -113,6 +113,7 @@ def ping():
 def whoami():
     du = session.get("discord_user")
     guilds = session.get("guilds") or []
+
     return jsonify({
         "environment": ENVIRONMENT,
         "logged_in": bool(du),
@@ -122,6 +123,15 @@ def whoami():
             "avatar": du.get("avatar") if du else None,
         } if du else None,
         "guild_count": len(guilds),
+        "guilds": [
+            {
+                "id": g.get("id"),
+                "name": g.get("name"),
+                "icon": g.get("icon"),
+                "owner": g.get("owner", False),
+            }
+            for g in guilds
+        ],
         "has_plex": bool(PLEX_URL),
         "plex_owner": PLEX_OWNER or "",
         "plex_platform": PLEX_PLATFORM or "",
@@ -150,6 +160,7 @@ def envcheck():
         "twitch": bool(os.getenv("TWITCH_CLIENT_ID")),
         "discord": bool(os.getenv("DISCORD_APP_CLIENT_ID"))
     })
+
 @app.route("/sessioncheck")
 def sessioncheck():
     keys = list(session.keys())
