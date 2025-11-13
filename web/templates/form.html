@@ -1,3 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MessiahBot — Dashboard</title>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/XLOELX.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+  <nav class="topnav">
+    <div class="topnav__brand">MessiahBot</div>
+    <div class="topnav__env">ENV: <strong>{{ env }}</strong></div>
+  </nav>
+
+  <main class="container">
+    <section class="grid grid--3">
+      <div class="card">
+        <h2>Discord</h2>
+        <p id="discordStatus" class="muted">Loading…</p>
+        <div class="actions">
+          <a class="btn btn--primary" href="/login">Login with Discord</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Twitch</h2>
+        <p id="twitchStatus" class="muted">Loading…</p>
+        <div class="actions">
+          <a class="btn" href="/connect_twitch">Connect Twitch</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Plex</h2>
+        <p id="plexStatus" class="muted">Checking…</p>
+        <div class="actions">
+          <button class="btn" id="btnPlexCheck">Refresh Plex Status</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card__hdr">
+        <h2>Server Builder</h2>
+        <div class="card__hdrActions">
+          <button class="btn" id="btnLoadLive">Load from Live</button>
+          <button class="btn btn--primary" id="btnSave">Save Layout</button>
+        </div>
+      </div>
+
+      <div id="builderNote" class="muted">Choose a server and load its current layout, or edit and save.</div>
+
+      <div class="formRow">
+        <label for="guildId">Guild ID</label>
+        <input id="guildId" type="text" placeholder="1234567891011121314">
+      </div>
+
+      <div class="flex-column" style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <div>
+          <label>Roles (JSON)</label>
+          <textarea id="rolesJson" rows="18" placeholder="[ /* roles appear here after Load from Live */ ]"></textarea>
+        </div>
+        <div>
+          <label>Categories/Channels (JSON)</label>
+          <textarea id="layoutJson" rows="18" placeholder="{ /* structure will appear here after Load from Live */ }"></textarea>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer__inner">
+      <span>Environment:</span>
+      <code>{{ env }}</code>
+    </div>
+  </footer>
+
 <script>
 function el(id){ return document.getElementById(id); }
 
@@ -9,71 +87,47 @@ function setStatus(id, text, ok=true){
 
 async function loadStatuses(){
   try {
-    //
-    // 1️⃣ Check who is logged in (Discord session)
-    //
     const who = await fetch("/whoami").then(r=>r.json());
 
     if (who.logged_in) {
       setStatus("discordStatus", `Logged in as ${who.user.username}`, true);
-
-      // Hide Login button
       const loginBtn = document.querySelector('a[href="/login"]');
       if (loginBtn) loginBtn.style.display = "none";
-
-      // Auto-fill Guild ID with the first guild you OWN
-      const owned = (who.guild_count > 0 && who.guilds) 
-        ? who.guilds.filter(g => g.owner)
-        : [];
-      
-      if (owned.length > 0) {
-        el("guildId").value = owned[0].id;
+      if (who.guild_count > 0 && who.guilds){
+        const owned = who.guilds.filter(g => g.owner);
+        if (owned.length > 0) el("guildId").value = owned[0].id;
       }
-
     } else {
       setStatus("discordStatus", "Not logged in", false);
     }
 
-    //
-    // 2️⃣ Twitch Connection Status
-    //
     const env = await fetch("/envcheck").then(r=>r.json());
     setStatus("twitchStatus", env.twitch ? "Connected" : "Not connected", !!env.twitch);
 
-    //
-    // 3️⃣ Plex Status
-    //
     const plexResp = await fetch("/plex/status").then(r => r.json());
     if (plexResp.ok) {
       setStatus("plexStatus", "Plex reachable", true);
     } else {
       setStatus("plexStatus", "Not configured or unreachable", false);
     }
-
-  } catch (e) {
+  } catch (e){
     console.error("Status init error:", e);
   }
 }
 
-// --------------------------
-// Plex Refresh Button
-// --------------------------
 el("btnPlexCheck").addEventListener("click", async () => {
   try {
     const r = await fetch("/plex/status").then(r=>r.json());
     if (r.ok){
-      setStatus("plexStatus", "Plex reachable (code " + (r.status_code||200) + ")", true);
+      setStatus("plexStatus", "Plex reachable (code " + (r.status_code || 200) + ")", true);
     } else {
       setStatus("plexStatus", "Plex error: " + (r.error || r.status_code), false);
     }
-  } catch (e){
+  }catch(e){
     setStatus("plexStatus", "Plex error: " + e.message, false);
   }
 });
 
-// --------------------------
-// Load From Live Button
-// --------------------------
 el("btnLoadLive").addEventListener("click", async () => {
   const gid = el("guildId").value.trim();
   if (!gid){ alert("Enter a Guild ID first"); return; }
@@ -98,9 +152,6 @@ el("btnLoadLive").addEventListener("click", async () => {
   }
 });
 
-// --------------------------
-// Save Layout Button
-// --------------------------
 el("btnSave").addEventListener("click", async () => {
   const gid = el("guildId").value.trim();
   if (!gid){ alert("Enter a Guild ID first"); return; }
@@ -108,7 +159,7 @@ el("btnSave").addEventListener("click", async () => {
   let layout = {}, roles = [];
   try { layout = JSON.parse(el("layoutJson").value || "{}"); } 
   catch(e){ return alert("Layout JSON is invalid"); }
-  
+
   try { roles = JSON.parse(el("rolesJson").value || "[]"); } 
   catch(e){ return alert("Roles JSON is invalid"); }
 
@@ -128,6 +179,8 @@ el("btnSave").addEventListener("click", async () => {
   }
 });
 
-// Start on load
 loadStatuses();
 </script>
+
+</body>
+</html>
