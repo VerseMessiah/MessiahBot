@@ -98,7 +98,7 @@ def debug_cookie_headers(response):
 
 @app.route("/")
 def index():
-    return render_template("/form")
+    return redirect("/form")
                            
 @app.route("/form")
 def form():
