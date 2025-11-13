@@ -38,4 +38,96 @@ async function loadStatuses(){
     // 2️⃣ Twitch Connection Status
     //
     const env = await fetch("/envcheck").then(r=>r.json());
-    setStatus("twitchStatus
+    setStatus("twitchStatus", env.twitch ? "Connected" : "Not connected", !!env.twitch);
+
+    //
+    // 3️⃣ Plex Status
+    //
+    const plexResp = await fetch("/plex/status").then(r => r.json());
+    if (plexResp.ok) {
+      setStatus("plexStatus", "Plex reachable", true);
+    } else {
+      setStatus("plexStatus", "Not configured or unreachable", false);
+    }
+
+  } catch (e) {
+    console.error("Status init error:", e);
+  }
+}
+
+// --------------------------
+// Plex Refresh Button
+// --------------------------
+el("btnPlexCheck").addEventListener("click", async () => {
+  try {
+    const r = await fetch("/plex/status").then(r=>r.json());
+    if (r.ok){
+      setStatus("plexStatus", "Plex reachable (code " + (r.status_code||200) + ")", true);
+    } else {
+      setStatus("plexStatus", "Plex error: " + (r.error || r.status_code), false);
+    }
+  } catch (e){
+    setStatus("plexStatus", "Plex error: " + e.message, false);
+  }
+});
+
+// --------------------------
+// Load From Live Button
+// --------------------------
+el("btnLoadLive").addEventListener("click", async () => {
+  const gid = el("guildId").value.trim();
+  if (!gid){ alert("Enter a Guild ID first"); return; }
+
+  try {
+    await fetch("/layout-config?guild_id=" + encodeURIComponent(gid));
+
+    const data = await fetch("/api/live_layout/" + encodeURIComponent(gid))
+      .then(r=>r.json());
+
+    el("layoutJson").value = JSON.stringify(
+      data.categories_channels || data,
+      null,
+      2
+    );
+    el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
+    el("builderNote").textContent = "Loaded live layout for guild " + gid;
+
+  } catch (e){
+    console.error(e);
+    el("builderNote").textContent = "Failed to load from live: " + e.message;
+  }
+});
+
+// --------------------------
+// Save Layout Button
+// --------------------------
+el("btnSave").addEventListener("click", async () => {
+  const gid = el("guildId").value.trim();
+  if (!gid){ alert("Enter a Guild ID first"); return; }
+
+  let layout = {}, roles = [];
+  try { layout = JSON.parse(el("layoutJson").value || "{}"); } 
+  catch(e){ return alert("Layout JSON is invalid"); }
+  
+  try { roles = JSON.parse(el("rolesJson").value || "[]"); } 
+  catch(e){ return alert("Roles JSON is invalid"); }
+
+  const payload = { guild_id: gid, layout, roles };
+
+  const resp = await fetch("/submit-server-layout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  if (resp.ok){
+    el("builderNote").textContent = "Saved layout for guild " + gid;
+  } else {
+    const t = await resp.text();
+    el("builderNote").textContent = "Save failed: " + t;
+  }
+});
+
+// Start on load
+loadStatuses();
+</script>
