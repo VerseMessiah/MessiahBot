@@ -43,6 +43,7 @@ def discord_oauth_callback():
     print(" [DEBUG] Discord OAuth callback received")
     print(" [DEBUG] Request args:", request.args)
     print(" [DEBUG] Before redireect - discord_user keys:", list(session.keys()))
+    print(" [DEBUG] Before redirect - session contents:", {k: session.get(k) for k in session.keys()})
     print(" [DEBUG] falsk request.host_url:", request.host_url)
     print(" [DEBUG] redirecting to:", url_for("form", _external=True))
 
