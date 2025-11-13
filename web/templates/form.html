@@ -43,7 +43,7 @@
     <section class="card">
       <div class="card__hdr">
         <h2>Server Builder</h2>
-        <div class="card__hdrActions">
+        <div class="card__hdrActions" id="builderActions" style="display: none;">
           <button class="btn" id="btnLoadLive" disabled>Load from Live</button>
           <button class="btn" id="btnLoadSnapshot" disabled>Load Snapshot</button>
           <button class="btn btn--primary" id="btnSave" disabled>Save Layout</button>
@@ -86,12 +86,16 @@ const guildSelect = document.getElementById("guildSelect");
 const btnLoadLive = document.getElementById("btnLoadLive");
 const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
 const btnSave = document.getElementById("btnSave");
+const builderActions = document.getElementById("builderActions");
 
 guildSelect.addEventListener("change", () => {
   const has = !!guildSelect.value.trim();
   btnLoadLive.disabled = !has;
   btnLoadSnapshot.disabled = !has;
   btnSave.disabled = !has;
+  if (builderActions) {
+    builderActions.style.display = has ? "flex" : "none";
+  }
 });
 
 function setStatus(id, text, ok=true){
@@ -116,6 +120,9 @@ async function loadStatuses(){
           opt.textContent = g.name + (g.owner ? " (owner)" : "");
           guildSelect.appendChild(opt);
         }
+      }
+      if (builderActions) {
+        builderActions.style.display = "none";
       }
     } else {
       setStatus("discordStatus", "Not logged in", false);
@@ -155,8 +162,17 @@ el("btnLoadLive").addEventListener("click", async () => {
   try {
     await fetch("/layout-config?guild_id=" + encodeURIComponent(gid));
 
-    const data = await fetch("/api/live_layout/" + encodeURIComponent(gid))
-      .then(r=>r.json());
+    const res = await fetch("/api/live_layout/" + encodeURIComponent(gid));
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
+    }
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      const text = await res.text();
+      throw new Error("Non-JSON response: " + text.slice(0, 200));
+    }
+    const data = await res.json();
 
     el("layoutJson").value = JSON.stringify(
       data.categories_channels || data,
@@ -176,7 +192,17 @@ document.getElementById("btnLoadSnapshot").addEventListener("click", async () =>
   const gid = guildSelect.value.trim();
   if (!gid){ alert("Select a server first"); return; }
   try {
-    const snap = await fetch("/api/snapshot/" + encodeURIComponent(gid)).then(r=>r.json());
+    const res = await fetch("/api/snapshot/" + encodeURIComponent(gid));
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
+    }
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      const text = await res.text();
+      throw new Error("Non-JSON response: " + text.slice(0, 200));
+    }
+    const snap = await res.json();
     if (!snap || !snap.layout){ 
       el("builderNote").textContent = "No snapshot found."; 
       return;
@@ -185,6 +211,7 @@ document.getElementById("btnLoadSnapshot").addEventListener("click", async () =>
     el("rolesJson").value = JSON.stringify(snap.roles || [], null, 2);
     el("builderNote").textContent = "Loaded snapshot for guild " + gid;
   } catch(e){
+    console.error(e);
     el("builderNote").textContent = "Snapshot load failed: " + e.message;
   }
 });
