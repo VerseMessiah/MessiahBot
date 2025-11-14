@@ -80,6 +80,7 @@
   </footer>
 
 <script>
+const WORKER_URL = "{{ worker_url }}"
 function el(id){ return document.getElementById(id); }
 
 const guildSelect = document.getElementById("guildSelect");
@@ -177,6 +178,22 @@ async function loadStatuses(){
   }
 }
 
+// Hide controls until selection
+el("btnLoadLive").style.display = "none";
+el("btnLoadSnapshot").style.display = "none";
+
+el("guildSelect").addEventListener("change", () => {
+    const gid = el("guildSelect").value;
+    if (gid) {
+        el("btnLoadLive").style.display = "inline-block";
+        el("btnLoadSnapshot").style.display = "inline-block";
+        el("guildId").value = gid;
+    } else {
+        el("btnLoadLive").style.display = "none";
+        el("btnLoadSnapshot").style.display = "none";
+    }
+});
+
 el("btnPlexCheck").addEventListener("click", async () => {
   try {
     const r = await fetch("/plex/status").then(r=>r.json());
@@ -195,7 +212,7 @@ el("btnLoadLive").addEventListener("click", async () => {
   if (!gid){ alert("Select a server first"); return; }
 
   try {
-    const res = await fetch("/api/live_layout/" + encodeURIComponent(gid));
+    const res = await fetch('${WORKER_URL}/api/live_layout/${gid}');
     if (!res.ok) {
       const text = await res.text();
       throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
@@ -225,7 +242,7 @@ document.getElementById("btnLoadSnapshot").addEventListener("click", async () =>
   const gid = guildSelect.value.trim();
   if (!gid){ alert("Select a server first"); return; }
   try {
-    const res = await fetch("/api/snapshot/" + encodeURIComponent(gid));
+    const res = await fetch('${WORKER_URL}/api/snapshot/${gid}');
     if (!res.ok) {
       const text = await res.text();
       throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));

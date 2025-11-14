@@ -125,7 +125,13 @@ def index():
 @app.route("/form")
 def form():
     print("[DEBUG] Current session user:", session.get("discord_user"))
-    return render_template("form.html", env=ENVIRONMENT, session=session)
+    worker_url = os.getenv("WORKER_URL", "").rstrip("/")
+    return render_template(
+        "form.html",
+        env=ENVIRONMENT,
+        session=session,
+        worker_url=worker_url
+    )
 
 @app.route("/ping")
 def ping():
