@@ -218,16 +218,42 @@ def plex_status():
 def serve_univfied_icon():
     return app.send_static_file('verseicon.png')
 
-@app.get("/api/live_layout/<gid>")
+@app.route("/api/live_layout/<gid>")
 def api_live_layout(gid):
-    # Ensure ownership + get discord.Guild
-    guild_obj = get_owned_guild_or_403(gid)
-
     try:
-        layout = _snapshot_guild_best(guild_obj)   # discord.py → fallback → JSON structure
-        return jsonify(layout)
+        import requests
+        WORKER_URL = os.getenv("WORKER_URL")
+        if not WORKER_URL:
+            return {"error": "WORKER_URL missing"}, 500
+
+        r = requests.get(f"{WORKER_URL}/api/live_layout/{gid}", timeout=15)
+
+        if r.status_code != 200:
+            return (r.text, r.status_code)
+
+        return r.json()
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}, 500
+
+
+@app.route("/api/snapshot/<gid>")
+def api_snapshot(gid):
+    try:
+        import requests
+        WORKER_URL = os.getenv("WORKER_URL")
+        if not WORKER_URL:
+            return {"error": "WORKER_URL missing"}, 500
+
+        r = requests.get(f"{WORKER_URL}/api/snapshot/{gid}", timeout=15)
+
+        if r.status_code != 200:
+            return (r.text, r.status_code)
+
+        return r.json()
+
+    except Exception as e:
+        return {"error": str(e)}, 500
     
 @app.get("/api/snapshot/latest/<gid>")
 def api_latest_snapshot(gid):
@@ -236,9 +262,18 @@ def api_latest_snapshot(gid):
     layout = _load_layout_for_guild(guild_obj.id)
     if not layout:
         return jsonify({"error": "No saved layout for this guild"}), 404
-
     return jsonify(layout)
+
+@app.route("/layout-config")
+def layout_config():
+    gid = request.args.get("guild_id", "").strip()
+    if not gid:
+        return {"ok": False, "error": "Missing guild_id"}, 400
     
+    session["guild_id"] = gid
+    session.modified = True
+    return {"ok": True, "guild_id": gid}
+
 print("✅ Registered routes:")
 for rule in app.url_map.iter_rules():
     print(" ", rule)

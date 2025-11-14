@@ -115,24 +115,21 @@ async function loadStatuses(){
       const loginBtn = document.querySelector('a[href="/login"]');
       if (loginBtn) loginBtn.style.display = "none";
 
-      // Build the dropdown: OWNED servers only
-      guildSelect.innerHTML = '— Select a server —'
-        ? '<option value="">— Select a server —</option>'
-        : guildSelect.innerHTML;
+      // --- Build OWNED-ONLY dropdown (Option B) ---
+      // Always start with a clean placeholder option
+      guildSelect.innerHTML = '<option value="">— Select a server —</option>';
 
       const ownedGuilds = (who.guilds || []).filter(g => g.owner);
-
-      guildSelect.innerHTML = '<option value="">— Select a server —</option>';
 
       if (ownedGuilds.length) {
         for (const g of ownedGuilds) {
           const opt = document.createElement("option");
           opt.value = g.id;
-          opt.textContent = g.name;   // already owner, no need to append (owner)
+          opt.textContent = g.name;
           guildSelect.appendChild(opt);
         }
       } else {
-        // No owned servers: show a disabled option
+        // No owned servers: show a disabled message option
         const opt = document.createElement("option");
         opt.value = "";
         opt.textContent = "No owned servers found";
@@ -141,15 +138,27 @@ async function loadStatuses(){
         guildSelect.appendChild(opt);
       }
 
-      // Ensure builder actions are hidden until user picks one
+      // Option B: keep all actions hidden/disabled until the user actually selects a server
       if (builderActions) {
         builderActions.style.display = "none";
       }
+      btnLoadLive.disabled = true;
+      btnLoadSnapshot.disabled = true;
+      btnSave.disabled = true;
 
       // Force the change handler to run once to sync button disabled state
       guildSelect.dispatchEvent(new Event("change"));
     } else {
       setStatus("discordStatus", "Not logged in", false);
+
+      // Not logged in: make sure actions are hidden/disabled and dropdown reset
+      guildSelect.innerHTML = '<option value="">— Select a server —</option>';
+      if (builderActions) {
+        builderActions.style.display = "none";
+      }
+      btnLoadLive.disabled = true;
+      btnLoadSnapshot.disabled = true;
+      btnSave.disabled = true;
     }
 
     // Twitch status
@@ -186,8 +195,6 @@ el("btnLoadLive").addEventListener("click", async () => {
   if (!gid){ alert("Select a server first"); return; }
 
   try {
-    await fetch("/layout-config?guild_id=" + encodeURIComponent(gid));
-
     const res = await fetch("/api/live_layout/" + encodeURIComponent(gid));
     if (!res.ok) {
       const text = await res.text();
