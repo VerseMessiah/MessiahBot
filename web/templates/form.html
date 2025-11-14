@@ -221,7 +221,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!gid){ alert("Select a server first"); return; }
 
     try {
-      const res = await fetch('${WORKER_URL}/api/live_layout/${gid}');
+      const res = await fetch(`${WORKER_URL}/api/live_layout/${gid}`);
       if (!res.ok) {
         const text = await res.text();
         throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
@@ -251,7 +251,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const gid = guildSelect.value.trim();
     if (!gid){ alert("Select a server first"); return; }
     try {
-      const res = await fetch('${WORKER_URL}/api/snapshot/${gid}');
+      const res = await fetch(`${WORKER_URL}/api/snapshot/${gid}`);
       if (!res.ok) {
         const text = await res.text();
         throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
