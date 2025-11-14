@@ -55,8 +55,16 @@
       <div class="formRow">
         <label for="guildSelect">Select Server</label>
         <select id="guildSelect">
-          <option value="">— Select a server —</option>
+          <option value="">— Choose a Server —</option>
+          {% for g in session.guilds %}
+            <option value="{{ g.id }}">
+              {{ g.name }}
+            </option>
+          {% endfor %}
         </select>
+
+        <!-- hidden field used by JS -->
+        <input type="hidden" id="guildId">
       </div>
 
       <div class="flex-column" style="display: flex; flex-direction: column; gap: 1.5rem;">
@@ -80,220 +88,222 @@
   </footer>
 
 <script>
-const WORKER_URL = "{{ worker_url }}"
-function el(id){ return document.getElementById(id); }
+documetn.addEventListener("DOMContentLoaded", () => {
+  const WORKER_URL = "{{ worker_url }}"
+  function el(id){ return document.getElementById(id); }
 
-const guildSelect = document.getElementById("guildSelect");
-const btnLoadLive = document.getElementById("btnLoadLive");
-const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
-const btnSave = document.getElementById("btnSave");
-const builderActions = document.getElementById("builderActions");
+  const guildSelect = document.getElementById("guildSelect");
+  const btnLoadLive = document.getElementById("btnLoadLive");
+  const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
+  const btnSave = document.getElementById("btnSave");
+  const builderActions = document.getElementById("builderActions");
 
-guildSelect.addEventListener("change", () => {
-  const has = !!guildSelect.value.trim();
-  btnLoadLive.disabled = !has;
-  btnLoadSnapshot.disabled = !has;
-  btnSave.disabled = !has;
-  if (builderActions) {
-    builderActions.style.display = has ? "flex" : "none";
-  }
-});
-
-function setStatus(id, text, ok=true){
-  const node = el(id);
-  node.textContent = text;
-  node.className = ok ? "ok" : "err";
-}
-
-async function loadStatuses(){
-  try {
-    const who = await fetch("/whoami").then(r => r.json());
-
-    if (who.logged_in) {
-      setStatus("discordStatus", `Logged in as ${who.user.username}`, true);
-
-      // Hide the "Login with Discord" button once logged in
-      const loginBtn = document.querySelector('a[href="/login"]');
-      if (loginBtn) loginBtn.style.display = "none";
-
-      // --- Build OWNED-ONLY dropdown (Option B) ---
-      // Always start with a clean placeholder option
-      guildSelect.innerHTML = '<option value="">— Select a server —</option>';
-
-      const ownedGuilds = (who.guilds || []).filter(g => g.owner);
-
-      if (ownedGuilds.length) {
-        for (const g of ownedGuilds) {
-          const opt = document.createElement("option");
-          opt.value = g.id;
-          opt.textContent = g.name;
-          guildSelect.appendChild(opt);
-        }
-      } else {
-        // No owned servers: show a disabled message option
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = "No owned servers found";
-        opt.disabled = true;
-        opt.selected = true;
-        guildSelect.appendChild(opt);
-      }
-
-      // Option B: keep all actions hidden/disabled until the user actually selects a server
-      if (builderActions) {
-        builderActions.style.display = "none";
-      }
-      btnLoadLive.disabled = true;
-      btnLoadSnapshot.disabled = true;
-      btnSave.disabled = true;
-
-      // Force the change handler to run once to sync button disabled state
-      guildSelect.dispatchEvent(new Event("change"));
-    } else {
-      setStatus("discordStatus", "Not logged in", false);
-
-      // Not logged in: make sure actions are hidden/disabled and dropdown reset
-      guildSelect.innerHTML = '<option value="">— Select a server —</option>';
-      if (builderActions) {
-        builderActions.style.display = "none";
-      }
-      btnLoadLive.disabled = true;
-      btnLoadSnapshot.disabled = true;
-      btnSave.disabled = true;
+  guildSelect.addEventListener("change", () => {
+    const has = !!guildSelect.value.trim();
+    btnLoadLive.disabled = !has;
+    btnLoadSnapshot.disabled = !has;
+    btnSave.disabled = !has;
+    if (builderActions) {
+      builderActions.style.display = has ? "flex" : "none";
     }
-
-    // Twitch status
-    const env = await fetch("/envcheck").then(r => r.json());
-    setStatus("twitchStatus", env.twitch ? "Connected" : "Not connected", !!env.twitch);
-
-    // Plex status
-    const plexResp = await fetch("/plex/status").then(r => r.json());
-    if (plexResp.ok) {
-      setStatus("plexStatus", "Plex reachable", true);
-    } else {
-      setStatus("plexStatus", "Not configured or unreachable", false);
-    }
-  } catch (e) {
-    console.error("Status init error:", e);
-  }
-}
-
-// Hide controls until selection
-el("btnLoadLive").style.display = "none";
-el("btnLoadSnapshot").style.display = "none";
-
-el("guildSelect").addEventListener("change", () => {
-    const gid = el("guildSelect").value;
-    if (gid) {
-        el("btnLoadLive").style.display = "inline-block";
-        el("btnLoadSnapshot").style.display = "inline-block";
-        el("guildId").value = gid;
-    } else {
-        el("btnLoadLive").style.display = "none";
-        el("btnLoadSnapshot").style.display = "none";
-    }
-});
-
-el("btnPlexCheck").addEventListener("click", async () => {
-  try {
-    const r = await fetch("/plex/status").then(r=>r.json());
-    if (r.ok){
-      setStatus("plexStatus", "Plex reachable (code " + (r.status_code || 200) + ")", true);
-    } else {
-      setStatus("plexStatus", "Plex error: " + (r.error || r.status_code), false);
-    }
-  }catch(e){
-    setStatus("plexStatus", "Plex error: " + e.message, false);
-  }
-});
-
-el("btnLoadLive").addEventListener("click", async () => {
-  const gid = guildSelect.value.trim();
-  if (!gid){ alert("Select a server first"); return; }
-
-  try {
-    const res = await fetch('${WORKER_URL}/api/live_layout/${gid}');
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
-    }
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      const text = await res.text();
-      throw new Error("Non-JSON response: " + text.slice(0, 200));
-    }
-    const data = await res.json();
-
-    el("layoutJson").value = JSON.stringify(
-      data.categories_channels || data,
-      null,
-      2
-    );
-    el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
-    el("builderNote").textContent = "Loaded live layout for guild " + gid;
-
-  } catch (e){
-    console.error(e);
-    el("builderNote").textContent = "Failed to load from live: " + e.message;
-  }
-});
-
-document.getElementById("btnLoadSnapshot").addEventListener("click", async () => {
-  const gid = guildSelect.value.trim();
-  if (!gid){ alert("Select a server first"); return; }
-  try {
-    const res = await fetch('${WORKER_URL}/api/snapshot/${gid}');
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
-    }
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      const text = await res.text();
-      throw new Error("Non-JSON response: " + text.slice(0, 200));
-    }
-    const snap = await res.json();
-    if (!snap || !snap.layout){ 
-      el("builderNote").textContent = "No snapshot found."; 
-      return;
-    }
-    el("layoutJson").value = JSON.stringify(snap.layout, null, 2);
-    el("rolesJson").value = JSON.stringify(snap.roles || [], null, 2);
-    el("builderNote").textContent = "Loaded snapshot for guild " + gid;
-  } catch(e){
-    console.error(e);
-    el("builderNote").textContent = "Snapshot load failed: " + e.message;
-  }
-});
-
-el("btnSave").addEventListener("click", async () => {
-  const gid = guildSelect.value.trim();
-  if (!gid){ alert("Select a server first"); return; }
-
-  let layout = {}, roles = [];
-  try { layout = JSON.parse(el("layoutJson").value || "{}"); } 
-  catch(e){ return alert("Layout JSON is invalid"); }
-
-  try { roles = JSON.parse(el("rolesJson").value || "[]"); } 
-  catch(e){ return alert("Roles JSON is invalid"); }
-
-  const payload = { guild_id: gid, layout, roles };
-
-  const resp = await fetch("/submit-server-layout", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
   });
 
-  if (resp.ok){
-    el("builderNote").textContent = "Saved layout for guild " + gid;
-  } else {
-    const t = await resp.text();
-    el("builderNote").textContent = "Save failed: " + t;
+  function setStatus(id, text, ok=true){
+    const node = el(id);
+    node.textContent = text;
+    node.className = ok ? "ok" : "err";
   }
-});
 
-loadStatuses();
+  async function loadStatuses(){
+    try {
+      const who = await fetch("/whoami").then(r => r.json());
+
+      if (who.logged_in) {
+        setStatus("discordStatus", `Logged in as ${who.user.username}`, true);
+
+        // Hide the "Login with Discord" button once logged in
+        const loginBtn = document.querySelector('a[href="/login"]');
+        if (loginBtn) loginBtn.style.display = "none";
+
+        // --- Build OWNED-ONLY dropdown (Option B) ---
+        // Always start with a clean placeholder option
+        guildSelect.innerHTML = '<option value="">— Select a server —</option>';
+
+        const ownedGuilds = (who.guilds || []).filter(g => g.owner);
+
+        if (ownedGuilds.length) {
+          for (const g of ownedGuilds) {
+            const opt = document.createElement("option");
+            opt.value = g.id;
+            opt.textContent = g.name;
+            guildSelect.appendChild(opt);
+          }
+        } else {
+          // No owned servers: show a disabled message option
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "No owned servers found";
+          opt.disabled = true;
+          opt.selected = true;
+          guildSelect.appendChild(opt);
+        }
+
+        // Option B: keep all actions hidden/disabled until the user actually selects a server
+        if (builderActions) {
+          builderActions.style.display = "none";
+        }
+        btnLoadLive.disabled = true;
+        btnLoadSnapshot.disabled = true;
+        btnSave.disabled = true;
+
+        // Force the change handler to run once to sync button disabled state
+        guildSelect.dispatchEvent(new Event("change"));
+      } else {
+        setStatus("discordStatus", "Not logged in", false);
+
+        // Not logged in: make sure actions are hidden/disabled and dropdown reset
+        guildSelect.innerHTML = '<option value="">— Select a server —</option>';
+        if (builderActions) {
+          builderActions.style.display = "none";
+        }
+        btnLoadLive.disabled = true;
+        btnLoadSnapshot.disabled = true;
+        btnSave.disabled = true;
+      }
+
+      // Twitch status
+      const env = await fetch("/envcheck").then(r => r.json());
+      setStatus("twitchStatus", env.twitch ? "Connected" : "Not connected", !!env.twitch);
+
+      // Plex status
+      const plexResp = await fetch("/plex/status").then(r => r.json());
+      if (plexResp.ok) {
+        setStatus("plexStatus", "Plex reachable", true);
+      } else {
+        setStatus("plexStatus", "Not configured or unreachable", false);
+      }
+    } catch (e) {
+      console.error("Status init error:", e);
+    }
+  }
+
+  // Hide controls until selection
+  el("btnLoadLive").style.display = "none";
+  el("btnLoadSnapshot").style.display = "none";
+
+  el("guildSelect").addEventListener("change", () => {
+      const gid = el("guildSelect").value;
+      if (gid) {
+          el("btnLoadLive").style.display = "inline-block";
+          el("btnLoadSnapshot").style.display = "inline-block";
+          el("guildId").value = gid;
+      } else {
+          el("btnLoadLive").style.display = "none";
+          el("btnLoadSnapshot").style.display = "none";
+      }
+  });
+
+  el("btnPlexCheck").addEventListener("click", async () => {
+    try {
+      const r = await fetch("/plex/status").then(r=>r.json());
+      if (r.ok){
+        setStatus("plexStatus", "Plex reachable (code " + (r.status_code || 200) + ")", true);
+      } else {
+        setStatus("plexStatus", "Plex error: " + (r.error || r.status_code), false);
+      }
+    }catch(e){
+      setStatus("plexStatus", "Plex error: " + e.message, false);
+    }
+  });
+
+  el("btnLoadLive").addEventListener("click", async () => {
+    const gid = guildSelect.value.trim();
+    if (!gid){ alert("Select a server first"); return; }
+
+    try {
+      const res = await fetch('${WORKER_URL}/api/live_layout/${gid}');
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
+      }
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        const text = await res.text();
+        throw new Error("Non-JSON response: " + text.slice(0, 200));
+      }
+      const data = await res.json();
+
+      el("layoutJson").value = JSON.stringify(
+        data.categories_channels || data,
+        null,
+        2
+      );
+      el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
+      el("builderNote").textContent = "Loaded live layout for guild " + gid;
+
+    } catch (e){
+      console.error(e);
+      el("builderNote").textContent = "Failed to load from live: " + e.message;
+    }
+  });
+
+  document.getElementById("btnLoadSnapshot").addEventListener("click", async () => {
+    const gid = guildSelect.value.trim();
+    if (!gid){ alert("Select a server first"); return; }
+    try {
+      const res = await fetch('${WORKER_URL}/api/snapshot/${gid}');
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
+      }
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        const text = await res.text();
+        throw new Error("Non-JSON response: " + text.slice(0, 200));
+      }
+      const snap = await res.json();
+      if (!snap || !snap.layout){ 
+        el("builderNote").textContent = "No snapshot found."; 
+        return;
+      }
+      el("layoutJson").value = JSON.stringify(snap.layout, null, 2);
+      el("rolesJson").value = JSON.stringify(snap.roles || [], null, 2);
+      el("builderNote").textContent = "Loaded snapshot for guild " + gid;
+    } catch(e){
+      console.error(e);
+      el("builderNote").textContent = "Snapshot load failed: " + e.message;
+    }
+  });
+
+  el("btnSave").addEventListener("click", async () => {
+    const gid = guildSelect.value.trim();
+    if (!gid){ alert("Select a server first"); return; }
+
+    let layout = {}, roles = [];
+    try { layout = JSON.parse(el("layoutJson").value || "{}"); } 
+    catch(e){ return alert("Layout JSON is invalid"); }
+
+    try { roles = JSON.parse(el("rolesJson").value || "[]"); } 
+    catch(e){ return alert("Roles JSON is invalid"); }
+
+    const payload = { guild_id: gid, layout, roles };
+
+    const resp = await fetch("/submit-server-layout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (resp.ok){
+      el("builderNote").textContent = "Saved layout for guild " + gid;
+    } else {
+      const t = await resp.text();
+      el("builderNote").textContent = "Save failed: " + t;
+    }
+  });
+
+  loadStatuses();
+});
 </script>
 
 </body>
