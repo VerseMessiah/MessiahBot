@@ -6,7 +6,7 @@ import os
 from psycopg.rows import dict_row
 import psycopg
 
-from bot.workers import messiah_worker as worker
+from bot.workers import messiah_bot_worker as worker
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 

@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from datetime import timedelta
 from flask import abort
 import discord
-from bot.messiahbot_dc import bot
+from bot.messiah_bot import bot
 from bot.commands.server_builder import _snapshot_guild_best, _load_layout_for_guild
 
 load_dotenv()
