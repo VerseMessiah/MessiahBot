@@ -19,28 +19,28 @@ services:
         value: PRD
 
   # 🤖 Bot worker: PRD
-  - type: worker
-    name: messiahbot-worker
+  - type: service
+    name: messiah-bot-worker
     env: python
     plan: starter
     autoDeploy: true
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.messiahbot_dc
+    startCommand: python -m bot.workers.messiah_bot_worker
     envVars:
       - fromGroup: messiahbot-core
       - key: ENVIRONMENT
         value: PRD
 
-  # 📅 Twitch/Discord schedule sync worker: PRD
+  # Bot: PRD
   - type: worker
-    name: messiahbot-twitch-sync
+    name: messiah-bot
     env: python
     plan: starter
     autoDeploy: true
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.workers.twitch_sync_worker
+    startCommand: python -m bot.messiah_bot
     envVars:
       - fromGroup: messiahbot-core
       - key: ENVIRONMENT
@@ -64,29 +64,29 @@ services:
         value: TST
 
   # 🤖 Bot worker: TST
-  - type: worker
-    name: messiahbot-worker-tst
+  - type: service
+    name: messiah-bot-worker
     env: python
     plan: starter
     autoDeploy: true
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.messiahbot_dc
+    startCommand: python -m bot.workers.messiah_bot_worker
     envVars:
       - fromGroup: messiahbot-tst
       - key: ENVIRONMENT
         value: TST
 
-  # 📅 Twitch/Discord schedule sync worker: TST
-  # - type: worker
-    # name: messiahbot-twitch-sync-tst
-    # env: python
-    # plan: starter
-    # autoDeploy: true
-    # branch: main
-    # buildCommand: pip install -r requirements.txt
-    # startCommand: python -m bot.workers.twitch_sync_worker
-    # envVars:
-      # - fromGroup: messiahbot-tst
-      # - key: ENVIRONMENT
-        # value: TST 
+  # Bot
+  - type: worker
+    name: messiahbot-twitch-sync-tst
+    env: python
+    plan: starter
+    autoDeploy: true
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot.messiah_bot
+    envVars:
+      - fromGroup: messiahbot-tst
+      - key: ENVIRONMENT
+        value: TST 
