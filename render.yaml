@@ -65,7 +65,7 @@ services:
 
   # 🤖 Bot worker: TST
   - type: web
-    name: messiah-bot-worker
+    name: messiah-bot-worker-tst
     env: python
     plan: starter
     autoDeploy: true
@@ -79,7 +79,7 @@ services:
 
   # Bot
   - type: worker
-    name: messiahbot-twitch-sync-tst
+    name: messiah-bot-tst
     env: python
     plan: starter
     autoDeploy: true
