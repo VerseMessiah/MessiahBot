@@ -4,7 +4,6 @@ import os
 import asyncio
 import json
 from typing import Dict, Any
-
 import aiohttp
 import psycopg
 from psycopg.rows import dict_row
@@ -29,7 +28,11 @@ TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 # ------------------------------------------------------------
 
 app = Flask(__name__)
-CORS(app)
+CORS(app,
+    resources={r"/*": {"origins": [
+        "https://messiahbot-dashboard.onrender.com"
+    ]}},
+    supports_credentials=True)
 
 # ------------------------------------------------------------
 #   HELPER: Discord REST GET
