@@ -217,61 +217,67 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   el("btnLoadLive").addEventListener("click", async () => {
-    const gid = guildSelect.value.trim();
-    if (!gid){ alert("Select a server first"); return; }
+  const gid = guildSelect.value.trim();
+  if (!gid) { alert("Select a server first"); return; }
 
-    try {
-      const res = await fetch(`/api/live_layout/${gid}`);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
-      }
-      const ct = res.headers.get("content-type") || "";
-      if (!ct.includes("application/json")) {
-        const text = await res.text();
-        throw new Error("Non-JSON response: " + text.slice(0, 200));
-      }
-      const data = await res.json();
-
-      el("layoutJson").value = JSON.stringify(data, null, 2
-      el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
-      el("builderNote").textContent = "Loaded live layout for guild " + gid;
-
-    } catch (e){
-      console.error(e);
-      el("builderNote").textContent = "Failed to load from live: " + e.message;
+  try {
+    // Call the DASHBOARD, which proxies to the worker
+    const res = await fetch(`/api/live_layout/${gid}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
     }
-  });
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      const text = await res.text();
+      throw new Error("Non-JSON response: " + text.slice(0, 200));
+    }
+
+    const data = await res.json(); // This is the layout from snapshot_guild()
+
+    // Worker already returns the full layout object: { mode, roles, categories, channels }
+    el("layoutJson").value = JSON.stringify(data, null, 2);
+    el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
+    el("builderNote").textContent = "Loaded live layout for guild " + gid;
+
+  } catch (e) {
+    console.error(e);
+    el("builderNote").textContent = "Failed to load from live: " + e.message;
+  }
+});
 
   document.getElementById("btnLoadSnapshot").addEventListener("click", async () => {
-    const gid = guildSelect.value.trim();
-    if (!gid){ alert("Select a server first"); return; }
-    try {
-      const res = await fetch(`/api/snapshot/${gid}`);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
-      }
-      const ct = res.headers.get("content-type") || "";
-      if (!ct.includes("application/json")) {
-        const text = await res.text();
-        throw new Error("Non-JSON response: " + text.slice(0, 200));
-      }
-      const snap = await res.json();
-      if (!snap || !snap.ok || !snap.payload) { 
-        el("builderNote").textContent = "No snapshot found."; 
-        return;
-      }
+  const gid = guildSelect.value.trim();
+  if (!gid) { alert("Select a server first"); return; }
 
-      const payload = snap.payload;
-      el("layoutJson").value = JSON.stringify(payload, null, 2);
-      el("rolesJson").value = JSON.stringify(payload.roles || [], null, 2);
-      el("builderNote").textContent = "Loaded snapshot for guild " + gid;
-    } catch(e) {
-      console.error(e);
-      el("builderNote").textContent = "Snapshot load failed: " + e.message;
+  try {
+    // Again: call dashboard, let it talk to the worker
+    const res = await fetch(`/api/snapshot/${gid}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
     }
-  });
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      const text = await res.text();
+      throw new Error("Non-JSON response: " + text.slice(0, 200));
+    }
+
+    const snap = await res.json(); // { ok: True/False, payload: {...} }
+    if (!snap || !snap.ok || !snap.payload) {
+      el("builderNote").textContent = "No snapshot found.";
+      return;
+    }
+
+    const payload = snap.payload;
+    el("layoutJson").value = JSON.stringify(payload, null, 2);
+    el("rolesJson").value = JSON.stringify(payload.roles || [], null, 2);
+    el("builderNote").textContent = "Loaded snapshot for guild " + gid;
+  } catch (e) {
+    console.error(e);
+    el("builderNote").textContent = "Snapshot load failed: " + e.message;
+  }
+});
 
   el("btnSave").addEventListener("click", async () => {
     const gid = guildSelect.value.trim();
