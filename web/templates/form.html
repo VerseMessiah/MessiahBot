@@ -89,7 +89,7 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const BASE = "{{ worker_url }}"
+  const BASE = "";
   function el(id){ return document.getElementById(id); }
 
   const guildSelect = document.getElementById("guildSelect");
@@ -221,7 +221,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!gid){ alert("Select a server first"); return; }
 
     try {
-      const res = await fetch(`${BASE}/api/live_layout/${gid}`);
+      const res = await fetch(`/api/live_layout/${gid}`);
       if (!res.ok) {
         const text = await res.text();
         throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
@@ -233,11 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const data = await res.json();
 
-      el("layoutJson").value = JSON.stringify(
-        data.categories_channels || data,
-        null,
-        2
-      );
+      el("layoutJson").value = JSON.stringify(data, null, 2
       el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
       el("builderNote").textContent = "Loaded live layout for guild " + gid;
 
@@ -251,7 +247,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const gid = guildSelect.value.trim();
     if (!gid){ alert("Select a server first"); return; }
     try {
-      const res = await fetch(`${BASE}/api/snapshot/${gid}`);
+      const res = await fetch(`/api/snapshot/${gid}`);
       if (!res.ok) {
         const text = await res.text();
         throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
@@ -262,14 +258,16 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error("Non-JSON response: " + text.slice(0, 200));
       }
       const snap = await res.json();
-      if (!snap || !snap.layout){ 
+      if (!snap || !snap.ok || !snap.payload) { 
         el("builderNote").textContent = "No snapshot found."; 
         return;
       }
-      el("layoutJson").value = JSON.stringify(snap.layout, null, 2);
-      el("rolesJson").value = JSON.stringify(snap.roles || [], null, 2);
+
+      const payload = snap.payload;
+      el("layoutJson").value = JSON.stringify(payload, null, 2);
+      el("rolesJson").value = JSON.stringify(payload.roles || [], null, 2);
       el("builderNote").textContent = "Loaded snapshot for guild " + gid;
-    } catch(e){
+    } catch(e) {
       console.error(e);
       el("builderNote").textContent = "Snapshot load failed: " + e.message;
     }

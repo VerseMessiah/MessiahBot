@@ -29,9 +29,7 @@ TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 
 app = Flask(__name__)
 CORS(app,
-    resources={r"/*": {"origins": [
-        "https://messiahbot-dashboard.onrender.com"
-    ]}},
+    resources={r"/*": {"origins": "*"}},
     supports_credentials=True)
 
 # ------------------------------------------------------------
