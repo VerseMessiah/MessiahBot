@@ -19,7 +19,7 @@ services:
         value: PRD
 
   # 🤖 Bot worker: PRD
-  - type: service
+  - type: web
     name: messiah-bot-worker
     env: python
     plan: starter
@@ -64,7 +64,7 @@ services:
         value: TST
 
   # 🤖 Bot worker: TST
-  - type: service
+  - type: web
     name: messiah-bot-worker
     env: python
     plan: starter
