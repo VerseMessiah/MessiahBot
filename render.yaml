@@ -3,7 +3,7 @@ version: "1"
 services:
   # 🌐 Dashboard (web): PRD
   - type: web
-    name: messiahbot-dashboard
+    name: messiah-bot-dashboard
     env: python
     plan: starter
     autoDeploy: true
