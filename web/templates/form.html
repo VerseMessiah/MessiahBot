@@ -235,8 +235,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const data = await res.json(); // This is the layout from snapshot_guild()
 
-    // Worker already returns the full layout object: { mode, roles, categories, channels }
-    el("layoutJson").value = JSON.stringify(data, null, 2);
+    // Worker returns: { mode, roles, categories, channels }
+    const layout = data.categories || data.categories_channels || data;
+    el("layoutJson").value = JSON.stringify(layout, null, 2);
     el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
     el("builderNote").textContent = "Loaded live layout for guild " + gid;
 
@@ -270,7 +271,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const payload = snap.payload;
-    el("layoutJson").value = JSON.stringify(payload, null, 2);
+    const snapLayout = payload.categories || payload.categories_channels || payload;
+    el("layoutJson").value = JSON.stringify(snapLayout, null, 2);
     el("rolesJson").value = JSON.stringify(payload.roles || [], null, 2);
     el("builderNote").textContent = "Loaded snapshot for guild " + gid;
   } catch (e) {
