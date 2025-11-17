@@ -6,6 +6,9 @@
   <title>MessiahBot — Dashboard</title>
   <link rel="preload" href="{{ url_for('static', filename='fonts/XLOELX.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+  <script src="https://unpkg.com/htmx.org@1.0.10" defer></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajac/libs/Sortable/1.15.2/Sortable.min.js" defer></script>
 </head>
 <body>
   <nav class="topnav">
@@ -55,7 +58,6 @@
       <div class="formRow">
         <label for="guildSelect">Select Server</label>
         <select id="guildSelect">
-          <option value="">— Choose a Server —</option>
           {% for g in session.guilds %}
             <option value="{{ g.id }}">
               {{ g.name }}
@@ -67,7 +69,25 @@
         <input type="hidden" id="guildId">
       </div>
 
-      <div class="flex-column" style="display: flex; flex-direction: column; gap: 1.5rem;">
+      <div id="layoutBuilder" x-data="{ layout: [], roles: [] }">
+
+        <div class="builder-grid">
+          <div class="builder-panel">
+            <h3>Categories & Channels</h3>
+            <div id="categoryList"></div>
+            <button class="btn" id="btnAddCategory">+ Add Category</button>
+          </div>
+
+          <div class="builder-panel">
+            <h3>Roles</h3>
+            <div id="roleList"></div>
+            <button class="btn" id="btnAddRole">+ Add Roles</button>
+          </div>
+        </div>
+      
+      </div>
+      
+      <div class="json-raw flex-column" style="display: flex; flex-direction: column; gap: 1.5rem;">
         <div>
           <label>Roles (JSON)</label>
           <textarea id="rolesJson" rows="18" placeholder="[ /* roles appear here after Load from Live */ ]"></textarea>
@@ -240,7 +260,7 @@ document.addEventListener("DOMContentLoaded", () => {
     el("layoutJson").value = JSON.stringify(layout, null, 2);
     el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
     el("builderNote").textContent = "Loaded live layout for guild " + gid;
-
+    renderLayout();
   } catch (e) {
     console.error(e);
     el("builderNote").textContent = "Failed to load from live: " + e.message;
@@ -275,6 +295,7 @@ document.addEventListener("DOMContentLoaded", () => {
     el("layoutJson").value = JSON.stringify(snapLayout, null, 2);
     el("rolesJson").value = JSON.stringify(payload.roles || [], null, 2);
     el("builderNote").textContent = "Loaded snapshot for guild " + gid;
+    renderLayout(layout);
   } catch (e) {
     console.error(e);
     el("builderNote").textContent = "Snapshot load failed: " + e.message;
@@ -285,7 +306,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const gid = guildSelect.value.trim();
     if (!gid){ alert("Select a server first"); return; }
 
-    let layout = {}, roles = [];
+    let layout = collectLayoutFromUI();
+    let roles = [];
+
     try { layout = JSON.parse(el("layoutJson").value || "{}"); } 
     catch(e){ return alert("Layout JSON is invalid"); }
 
@@ -310,6 +333,67 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadStatuses();
 });
+function collectLayoutFromUI() {
+  const categories = [];
+  document.querySelectorAll(".category-block").forEach(block => {
+    const name = block.querySelector(".category-name").value;
+    const chList = block.querySelectorAll(".channel-row");
+
+    const channels = Array.from(chList).map(row => ({
+      type: row.querySelector(".channel-type").textContent,
+      name: row.querySelector(".channel-name").value,
+      options: {},
+      position: 0
+    }));
+
+    categories.push({
+      name,
+      channels,
+      position: 0
+    });
+  });
+  return categories;
+}
+
+
+function renderLayout(layout) {
+  const container = document.getElementById("categoryList");
+  container.innerHTML = "";
+
+  layout.forEach((cat, catIndex) => {
+    const catDiv = document.createElement("div");
+    catDiv.className = "category-block";
+    
+    const channelsId = `channels-${catIndex}`;
+    
+    catDiv.innerHTML = `
+      <div class="category-header">
+        <input class="category-name" value="${cat.name}">
+        <button class="btn-small" onclick="addChannel(${catIndex})">+ Channel</button>
+      </div>
+      <div class="channel-list" id="${channelsId}"></div>
+    `;
+    
+    container.appendChild(catDiv);
+
+    const chContainer = document.getElementById(channelsId);
+
+    cat.channels.forEach((ch, chIndex) => {
+      const chDiv = document.createElement("div");
+      chDiv.className = "channel-row";
+      chDiv.innerHTML = `
+        <span class="channel-type">${ch.type}</span>
+        <input class="channel-name" value="${ch.name}">
+      `;
+      chContainer.appendChild(chDiv);
+    });
+
+    new Sortable(chContainer, {
+      animation: 150,
+      onEnd: () => saveVisualToJson()
+    });
+  });
+}
 </script>
 
 </body>
