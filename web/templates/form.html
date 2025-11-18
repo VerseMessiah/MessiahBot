@@ -81,7 +81,7 @@
           <div class="builder-panel">
             <h3>Roles</h3>
             <div id="roleList"></div>
-            <button class="btn" id="btnAddRole">+ Add Roles</button>
+            <button class="btn" id="btnAddRole">+ Add Role</button>
           </div>
         </div>
       
@@ -108,9 +108,251 @@
   </footer>
 
 <script>
-document.addEventListener("DOMContentLoaded", () => {
-  function el(id){ return document.getElementById(id); }
+let rolesState = [];
 
+function el(id){ return document.getElementById(id); }
+
+function collectLayoutFromUI() {
+  const categories = [];
+  document.querySelectorAll(".category-block").forEach(block => {
+    const nameInput = block.querySelector(".category-name");
+    const name = nameInput ? nameInput.value : "";
+    const chList = block.querySelectorAll(".channel-row");
+
+    const channels = Array.from(chList).map(row => ({
+      type: (row.querySelector(".channel-type")?.textContent || "text").trim(),
+      name: row.querySelector(".channel-name")?.value || "",
+      options: {},
+      position: 0
+    }));
+
+    categories.push({
+      name,
+      channels,
+      position: 0
+    });
+  });
+  return categories;
+}
+
+function saveVisualToJson() {
+  const categories = collectLayoutFromUI();
+
+  // Layout JSON: normalized payload the bot expects
+  const layoutPayload = {
+    mode: "update",
+    categories: categories,
+    channels: []
+  };
+  const layoutBox = document.getElementById("layoutJson");
+  if (layoutBox) {
+    layoutBox.value = JSON.stringify(layoutPayload, null, 2);
+  }
+
+  // Roles JSON: from the current rolesState
+  const rolesBox = document.getElementById("rolesJson");
+  if (rolesBox) {
+    rolesBox.value = JSON.stringify(rolesState, null, 2);
+  }
+}
+
+function renderLayout(layout) {
+  const container = document.getElementById("categoryList");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const categories = Array.isArray(layout) ? layout : [];
+
+  categories.forEach((cat, catIndex) => {
+    const catDiv = document.createElement("div");
+    catDiv.className = "category-block";
+
+    const channelsId = `channels-${catIndex}`;
+
+    catDiv.innerHTML = `
+      <div class="category-header">
+        <span class="category-handle">☰</span>
+        <input class="category-name" value="${cat.name || ""}">
+        <button type="button" class="btn-small add-channel-btn" data-cat-index="${catIndex}">+ Channel</button>
+      </div>
+      <div class="channel-list" id="${channelsId}"></div>
+    `;
+
+    container.appendChild(catDiv);
+
+    const chContainer = document.getElementById(channelsId);
+    const chans = Array.isArray(cat.channels) ? cat.channels : [];
+    chans.forEach((ch) => {
+      const chDiv = document.createElement("div");
+      chDiv.className = "channel-row";
+      chDiv.innerHTML = `
+        <span class="channel-type">${(ch.type || "text")}</span>
+        <input class="channel-name" value="${ch.name || ""}">
+      `;
+      chContainer.appendChild(chDiv);
+    });
+
+    // Make channels sortable within each category
+    if (window.Sortable && chContainer) {
+      new Sortable(chContainer, {
+        animation: 150,
+        onEnd: () => saveVisualToJson()
+      });
+    }
+  });
+
+  // Make categories sortable
+  if (window.Sortable && container) {
+    new Sortable(container, {
+      animation: 150,
+      handle: ".category-handle",
+      onEnd: () => saveVisualToJson()
+    });
+  }
+
+  // Wire up "Add Channel" buttons
+  container.querySelectorAll(".add-channel-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.getAttribute("data-cat-index") || "0", 10);
+      addChannel(idx);
+    });
+  });
+
+  // Sync JSON after an initial render
+  saveVisualToJson();
+}
+
+function renderRoles(roles) {
+  const list = document.getElementById("roleList");
+  if (!list) return;
+
+  rolesState = (roles || []).map(r => ({
+    name: r.name || "",
+    color: r.color || "#000000"
+  }));
+
+  list.innerHTML = "";
+
+  rolesState.forEach((role, idx) => {
+    const row = document.createElement("div");
+    row.className = "role-row";
+    row.dataset.index = String(idx);
+
+    row.innerHTML = `
+      <span class="role-handle">☰</span>
+      <input class="role-name" value="${role.name}" placeholder="Role name">
+      <input class="role-color" type="color" value="${role.color}">
+      <button type="button" class="btn-small role-delete">✕</button>
+    `;
+
+    const nameInput = row.querySelector(".role-name");
+    const colorInput = row.querySelector(".role-color");
+    const delBtn = row.querySelector(".role-delete");
+
+    if (nameInput) {
+      nameInput.addEventListener("input", () => {
+        rolesState[idx].name = nameInput.value;
+        saveVisualToJson();
+      });
+    }
+    if (colorInput) {
+      colorInput.addEventListener("input", () => {
+        rolesState[idx].color = colorInput.value || "#000000";
+        saveVisualToJson();
+      });
+    }
+    if (delBtn) {
+      delBtn.addEventListener("click", () => {
+        rolesState.splice(idx, 1);
+        renderRoles(rolesState);
+        saveVisualToJson();
+      });
+    }
+
+    list.appendChild(row);
+  });
+
+  // Make roles sortable
+  if (window.Sortable && list) {
+    new Sortable(list, {
+      animation: 150,
+      handle: ".role-handle",
+      onEnd: () => {
+        const newOrder = [];
+        list.querySelectorAll(".role-row").forEach(row => {
+          const i = parseInt(row.dataset.index || "0", 10);
+          if (!Number.isNaN(i) && rolesState[i]) {
+            newOrder.push(rolesState[i]);
+          }
+        });
+        if (newOrder.length === rolesState.length) {
+          rolesState = newOrder;
+          renderRoles(rolesState);
+          saveVisualToJson();
+        }
+      }
+    });
+  }
+
+  // Sync JSON after render
+  saveVisualToJson();
+}
+
+function addCategory() {
+  const container = document.getElementById("categoryList");
+  if (!container) return;
+
+  const catIndex = container.querySelectorAll(".category-block").length;
+  const channelsId = `channels-${catIndex}`;
+
+  const catDiv = document.createElement("div");
+  catDiv.className = "category-block";
+  catDiv.innerHTML = `
+    <div class="category-header">
+      <span class="category-handle">☰</span>
+      <input class="category-name" value="" placeholder="New category">
+      <button type="button" class="btn-small add-channel-btn" data-cat-index="${catIndex}">+ Channel</button>
+    </div>
+    <div class="channel-list" id="${channelsId}"></div>
+  `;
+
+  container.appendChild(catDiv);
+
+  const chContainer = document.getElementById(channelsId);
+  if (window.Sortable && chContainer) {
+    new Sortable(chContainer, {
+      animation: 150,
+      onEnd: () => saveVisualToJson()
+    });
+  }
+
+  catDiv.querySelector(".add-channel-btn")?.addEventListener("click", () => {
+    addChannel(catIndex);
+  });
+
+  saveVisualToJson();
+}
+
+function addChannel(catIndex) {
+  const blocks = document.querySelectorAll(".category-block");
+  const block = blocks[catIndex];
+  if (!block) return;
+
+  const list = block.querySelector(".channel-list");
+  if (!list) return;
+
+  const row = document.createElement("div");
+  row.className = "channel-row";
+  row.innerHTML = `
+    <span class="channel-type">text</span>
+    <input class="channel-name" value="" placeholder="new-channel">
+  `;
+  list.appendChild(row);
+
+  saveVisualToJson();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
   const guildSelect = document.getElementById("guildSelect");
   const btnLoadLive = document.getElementById("btnLoadLive");
   const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
@@ -235,84 +477,99 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  el("btnLoadLive").addEventListener("click", async () => {
-  const gid = guildSelect.value.trim();
-  if (!gid) { alert("Select a server first"); return; }
+  const btnAddCategory = document.getElementById("btnAddCategory");
+  const btnAddRole = document.getElementById("btnAddRole");
 
-  try {
-    // Call the DASHBOARD, which proxies to the worker
-    const res = await fetch(`/api/live_layout/${gid}`);
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
-    }
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      const text = await res.text();
-      throw new Error("Non-JSON response: " + text.slice(0, 200));
-    }
-
-    const data = await res.json(); // This is the layout from snapshot_guild()
-
-    // Worker returns: { mode, roles, categories, channels }
-    const layout = data.categories || data.categories_channels || data;
-    el("layoutJson").value = JSON.stringify(layout, null, 2);
-    el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
-    el("builderNote").textContent = "Loaded live layout for guild " + gid;
-    renderLayout(layout);
-  } catch (e) {
-    console.error(e);
-    el("builderNote").textContent = "Failed to load from live: " + e.message;
+  if (btnAddCategory) {
+    btnAddCategory.addEventListener("click", () => {
+      addCategory();
+    });
   }
-});
+
+  if (btnAddRole) {
+    btnAddRole.addEventListener("click", () => {
+      rolesState.push({ name: "", color: "#000000" });
+      renderRoles(rolesState);
+    });
+  }
+
+  el("btnLoadLive").addEventListener("click", async () => {
+    const gid = guildSelect.value.trim();
+    if (!gid){ alert("Select a server first"); return; }
+
+    try {
+      const res = await fetch(`/api/live_layout/${gid}`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
+      }
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        const text = await res.text();
+        throw new Error("Non-JSON response: " + text.slice(0, 200));
+      }
+
+      const data = await res.json();
+      const categories = data.categories || data.categories_channels || [];
+      const roles = data.roles || [];
+
+      renderLayout(categories);
+      renderRoles(roles);
+
+      el("builderNote").textContent = "Loaded live layout for guild " + gid;
+    } catch (e){
+      console.error(e);
+      el("builderNote").textContent = "Failed to load from live: " + e.message;
+    }
+  });
 
   document.getElementById("btnLoadSnapshot").addEventListener("click", async () => {
-  const gid = guildSelect.value.trim();
-  if (!gid) { alert("Select a server first"); return; }
+    const gid = guildSelect.value.trim();
+    if (!gid){ alert("Select a server first"); return; }
 
-  try {
-    // Again: call dashboard, let it talk to the worker
-    const res = await fetch(`/api/snapshot/${gid}`);
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
-    }
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      const text = await res.text();
-      throw new Error("Non-JSON response: " + text.slice(0, 200));
-    }
+    try {
+      const res = await fetch(`/api/snapshot/${gid}`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error("HTTP " + res.status + " — " + text.slice(0, 200));
+      }
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        const text = await res.text();
+        throw new Error("Non-JSON response: " + text.slice(0, 200));
+      }
 
-    const snap = await res.json(); // { ok: True/False, payload: {...} }
-    if (!snap || !snap.ok || !snap.payload) {
-      el("builderNote").textContent = "No snapshot found.";
-      return;
-    }
+      const snap = await res.json();
+      if (!snap || !snap.ok || !snap.payload){
+        el("builderNote").textContent = "No snapshot found.";
+        return;
+      }
 
-    const payload = snap.payload;
-    const snapLayout = payload.categories || payload.categories_channels || payload;
-    el("layoutJson").value = JSON.stringify(snapLayout, null, 2);
-    el("rolesJson").value = JSON.stringify(payload.roles || [], null, 2);
-    el("builderNote").textContent = "Loaded snapshot for guild " + gid;
-    renderLayout(snapLayout);
-  } catch (e) {
-    console.error(e);
-    el("builderNote").textContent = "Snapshot load failed: " + e.message;
-  }
-});
+      const payload = snap.payload;
+      const categories = payload.categories || payload.categories_channels || [];
+      const roles = payload.roles || [];
+
+      renderLayout(categories);
+      renderRoles(roles);
+
+      el("builderNote").textContent = "Loaded snapshot for guild " + gid;
+    } catch(e){
+      console.error(e);
+      el("builderNote").textContent = "Snapshot load failed: " + e.message;
+    }
+  });
 
   el("btnSave").addEventListener("click", async () => {
     const gid = guildSelect.value.trim();
     if (!gid){ alert("Select a server first"); return; }
 
-    let layout = collectLayoutFromUI();
-    let roles = [];
-
-    try { layout = JSON.parse(el("layoutJson").value || "{}"); } 
-    catch(e){ return alert("Layout JSON is invalid"); }
-
-    try { roles = JSON.parse(el("rolesJson").value || "[]"); } 
-    catch(e){ return alert("Roles JSON is invalid"); }
+    const categories = collectLayoutFromUI();
+    const layout = {
+      mode: "update",
+      categories: categories,
+      channels: []
+    };
+    const roles = rolesState.slice();
 
     const payload = { guild_id: gid, layout, roles };
 
@@ -332,75 +589,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadStatuses();
 });
-function collectLayoutFromUI() {
-  const categories = [];
-  document.querySelectorAll(".category-block").forEach(block => {
-    const name = block.querySelector(".category-name").value;
-    const chList = block.querySelectorAll(".channel-row");
-
-    const channels = Array.from(chList).map(row => ({
-      type: row.querySelector(".channel-type").textContent,
-      name: row.querySelector(".channel-name").value,
-      options: {},
-      position: 0
-    }));
-
-    categories.push({
-      name,
-      channels,
-      position: 0
-    });
-  });
-  return categories;
-}
-
-function saveVisualToJson() {
-  const layout = collectLayoutFromUI();
-  const roles = [];
-
-  document.getElementById("layoutJson").value =
-    JSON.stringify(layout, null, 2);
-}
-
-
-function renderLayout(layout) {
-  const container = document.getElementById("categoryList");
-  container.innerHTML = "";
-
-  layout.forEach((cat, catIndex) => {
-    const catDiv = document.createElement("div");
-    catDiv.className = "category-block";
-    
-    const channelsId = `channels-${catIndex}`;
-    
-    catDiv.innerHTML = `
-      <div class="category-header">
-        <input class="category-name" value="${cat.name}">
-        <button class="btn-small" onclick="addChannel(${catIndex})">+ Channel</button>
-      </div>
-      <div class="channel-list" id="${channelsId}"></div>
-    `;
-    
-    container.appendChild(catDiv);
-
-    const chContainer = document.getElementById(channelsId);
-
-    cat.channels.forEach((ch, chIndex) => {
-      const chDiv = document.createElement("div");
-      chDiv.className = "channel-row";
-      chDiv.innerHTML = `
-        <span class="channel-type">${ch.type}</span>
-        <input class="channel-name" value="${ch.name}">
-      `;
-      chContainer.appendChild(chDiv);
-    });
-
-    new Sortable(chContainer, {
-      animation: 150,
-      onEnd: () => saveVisualToJson()
-    });
-  });
-}
 </script>
 
 </body>
