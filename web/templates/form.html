@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
   <script src="https://unpkg.com/htmx.org@1.0.10" defer></script>
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajac/libs/Sortable/1.15.2/Sortable.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js" defer></script>
 </head>
 <body>
   <nav class="topnav">
@@ -259,7 +259,7 @@ document.addEventListener("DOMContentLoaded", () => {
     el("layoutJson").value = JSON.stringify(layout, null, 2);
     el("rolesJson").value = JSON.stringify(data.roles || [], null, 2);
     el("builderNote").textContent = "Loaded live layout for guild " + gid;
-    renderLayout();
+    renderLayout(layout);
   } catch (e) {
     console.error(e);
     el("builderNote").textContent = "Failed to load from live: " + e.message;
@@ -352,6 +352,14 @@ function collectLayoutFromUI() {
     });
   });
   return categories;
+}
+
+function saveVisualToJson() {
+  const layout = collectLayoutFromUI();
+  const roles = [];
+
+  document.getElementById("layoutJson").value =
+    JSON.stringify(layout, null, 2);
 }
 
 
