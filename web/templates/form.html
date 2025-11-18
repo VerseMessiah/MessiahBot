@@ -109,7 +109,6 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const BASE = "";
   function el(id){ return document.getElementById(id); }
 
   const guildSelect = document.getElementById("guildSelect");
@@ -295,7 +294,7 @@ document.addEventListener("DOMContentLoaded", () => {
     el("layoutJson").value = JSON.stringify(snapLayout, null, 2);
     el("rolesJson").value = JSON.stringify(payload.roles || [], null, 2);
     el("builderNote").textContent = "Loaded snapshot for guild " + gid;
-    renderLayout(layout);
+    renderLayout(snapLayout);
   } catch (e) {
     console.error(e);
     el("builderNote").textContent = "Snapshot load failed: " + e.message;
