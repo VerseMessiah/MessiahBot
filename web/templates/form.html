@@ -119,17 +119,17 @@ function collectLayoutFromUI() {
     const name = nameInput ? nameInput.value : "";
     const chList = block.querySelectorAll(".channel-row");
 
-    const channels = Array.from(chList).map(row => ({
+    const channels = Array.from(chList).map((row,i) => ({
       type: (row.querySelector(".channel-type")?.textContent || "text").trim(),
       name: row.querySelector(".channel-name")?.value || "",
       options: {},
-      position: 0
+      position: i
     }));
 
     categories.push({
       name,
       channels,
-      position: 0
+      position: categories.length
     });
   });
   return categories;
@@ -161,7 +161,7 @@ function renderLayout(layout) {
   if (!container) return;
   container.innerHTML = "";
 
-  const categories = Array.isArray(layout) ? layout : [];
+  const categories = Array.isArray(layout) ? layout.slice().sort((a,b) => (a.position ?? 0) - (b.position ?? 0)) : [];
 
   categories.forEach((cat, catIndex) => {
     const catDiv = document.createElement("div");
@@ -181,7 +181,9 @@ function renderLayout(layout) {
     container.appendChild(catDiv);
 
     const chContainer = document.getElementById(channelsId);
-    const chans = Array.isArray(cat.channels) ? cat.channels : [];
+    const chans = Array.isArray(cat.channels)
+      ? cat.channels.slice().sort((a,b) => (a.position ?? 0) - (b.position ?? 0))
+      : [];
     chans.forEach((ch) => {
       const chDiv = document.createElement("div");
       chDiv.className = "channel-row";
@@ -226,7 +228,8 @@ function renderRoles(roles) {
   const list = document.getElementById("roleList");
   if (!list) return;
 
-  rolesState = (roles || []).map(r => ({
+  const sorted = (roles || []).slice().sort((a,b) => (a.position ?? 0) - (b.position ?? 0));
+  rolesState = sorted.map(r => ({
     name: r.name || "",
     color: r.color || "#000000"
   }));
@@ -241,7 +244,7 @@ function renderRoles(roles) {
     row.innerHTML = `
       <span class="role-handle">☰</span>
       <input class="role-name" value="${role.name}" placeholder="Role name">
-      <input class="role-color" type="color" value="${role.color}">
+      <input class="role-color" type="color" value="${role.color}" style="width: 36px; height: 28px; padding: 0; border: none; cursor: pointer;">
       <button type="button" class="btn-small role-delete">✕</button>
     `;
 
