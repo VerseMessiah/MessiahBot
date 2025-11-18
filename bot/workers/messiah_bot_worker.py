@@ -77,7 +77,7 @@ async def snapshot_guild(guild_id: str):
                     "speak": True
                 }
             })
-        roles_payload.sort(key=lambda x: x.get("position", 0) reverse=True)
+        roles_payload.sort(key=lambda x: x.get("position", 0), reverse=True)
 
         # channels
         chans = await _dget(http, f"/guilds/{guild_id}/channels")
@@ -105,14 +105,14 @@ async def snapshot_guild(guild_id: str):
                 }
                 for ch in non if str(ch.get("parent_id")) == cat_id
             ]
-            sub.sort(key=lambda x: x.get("position", 0) reverse=True)
+            sub.sort(key=lambda x: x.get("position", 0), reverse=True)
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
                 "channels": sub
             })
 
-        categories_payload.sort(key=lambda x: x.get("position", 0) reverse=True)
+        categories_payload.sort(key=lambda x: x.get("position", 0), reverse=True)
 
         return {
             "mode": "update",
