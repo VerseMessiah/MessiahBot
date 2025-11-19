@@ -79,12 +79,14 @@ async def snapshot_guild(guild_id: str):
                 }
             })
         # Sort to match visual Discord UI (highest position first)
-        # roles_payload.sort(key=lambda x: x["position"], reverse=True)
+        roles_payload.sort(key=lambda x: x["position"], reverse=True)
 
         # channels
         chans = await _dget(http, f"/guilds/{guild_id}/channels")
         cats = [c for c in chans if c["type"] == 4]
+        cats.sort(key=lambda c: c.get("position", 0))
         non = [c for c in chans if c["type"] != 4]
+        non.sort(key=lambda c: c.get("position", 0))
 
         # Categories should show in ascending order (top to bottom)
         # cats.sort(key=lambda c: c.get("position", 0))
@@ -109,6 +111,7 @@ async def snapshot_guild(guild_id: str):
                 }
                 for ch in non if str(ch.get("parent_id")) == cat_id
             ]
+            sub.sort(key=lambda x: x["position"])
             # sub.sort(key=lambda x: x["position"])
             categories_payload.append({
                 "name": c["name"],
