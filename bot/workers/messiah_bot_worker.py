@@ -160,8 +160,8 @@ async def snapshot_guild(guild_id: str):
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "text channels": text_ordered,
-                "voice channels": voice_ordered
+                "text channels": text_sub,
+                "voice channels": voice_sub
             })
 
         categories_payload.sort(key=lambda x: x["position"])
@@ -170,7 +170,8 @@ async def snapshot_guild(guild_id: str):
             "mode": "update",
             "roles": roles_payload,
             "categories": categories_payload,
-            "text channels" + "voice channels": []
+            "text channels": [],
+            "voice channels": []
         }
 
 # ------------------------------------------------------------
