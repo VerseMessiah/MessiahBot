@@ -97,13 +97,8 @@ async def snapshot_guild(guild_id: str):
             cat_id = str(c["id"])
 
             # Pull children first by true API order
-            text_children = [
-                ch for ch in non if c["type"] in [0, 5, 15]
-                if str(ch.get("parent_id")) == cat_id 
-            ]
-
-            voice_children = [
-                ch for ch in non if c["type"] in [2, 13]
+            children = [
+                ch for ch in non
                 if str(ch.get("parent_id")) == cat_id
             ]
 
@@ -111,11 +106,11 @@ async def snapshot_guild(guild_id: str):
             #  1) Text/Announcement/Forum in user-defined order (position asc)
             #  2) Voice exactly after all text/forum (position asc)
             #  3) Stage channels after voice (rare)
-            text = [ch for ch in text_children if ch["type"] == 0]
-            announcement = [ch for ch in text_children if ch["type"] == 5]
-            forum = [ch for ch in text_children if ch["type"] == 15]
-            stage = [ch for ch in voice_children if ch["type"] == 13]
-            voice = [ch for ch in voice_children if ch["type"] == 2]
+            text = [ch for ch in children if ch["type"] == 0]
+            announcement = [ch for ch in children if ch["type"] == 5]
+            forum = [ch for ch in children if ch["type"] == 15]
+            stage = [ch for ch in children if ch["type"] == 13]
+            voice = [ch for ch in children if ch["type"] == 2]
 
             text.sort(key=lambda ch: ch["position"])
             announcement.sort(key=lambda ch: ch["position"])
@@ -123,45 +118,29 @@ async def snapshot_guild(guild_id: str):
             voice.sort(key=lambda ch: ch["position"])
             stage.sort(key=lambda ch: ch["position"])
 
-            text_ordered = text + announcement + forum
-            voice_ordered = voice + stage
+            ordered = announcement + text + forum + voice + stage
 
-            text_sub = [
+            sub = [
                 {
                     "name": ch["name"],
                     "type": (
-                        "text" if ch["type"] == 0 else
+                        "text" if ch["type"] in [0, 5] else
                         "forum" if ch["type"] == 15 else
-                        "announcement" if ch["type"] == 5 else
+                        "voice" if ch["type"] == 2 else
+                        "stage" if ch["type"] == 13 else
                         "text"
                     ),
                     "raw_type": ch["type"],
                     "position": ch["position"],
                     "options": {}
                 }
-                for ch in text_ordered
-            ]
-
-            voice_sub = [
-                {
-                    "name": ch["name"],
-                    "type": (
-                        "voice" if ch["type"] == 2 else
-                        "stage" if ch["type"] == 13 else
-                        "voice"
-                    ),
-                    "raw_type": ch["type"],
-                    "position": ch["position"],
-                    "options": {}
-                }
-                for ch in voice_ordered
+                for ch in ordered
             ]
 
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "text channels": text_sub,
-                "voice channels": voice_sub
+                "channels": sub
             })
 
         categories_payload.sort(key=lambda x: x["position"])
@@ -170,8 +149,7 @@ async def snapshot_guild(guild_id: str):
             "mode": "update",
             "roles": roles_payload,
             "categories": categories_payload,
-            "text channels": [],
-            "voice channels": []
+            "channels": []
         }
 
 # ------------------------------------------------------------
