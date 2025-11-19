@@ -95,7 +95,22 @@ async def snapshot_guild(guild_id: str):
         categories_payload = []
         for c in cats:
             cat_id = str(c["id"])
-            # Channels inside this category, sorted by Discord UI order
+            # Discord UI–accurate ordering:
+            # 1. Text + Forum channels are grouped together and sortable among each other
+            # 2. Voice channels always appear beneath text+forum in Discord UI
+            # 3. Stage channels appear after voice
+            def get_type_rank(ch):
+                raw_type = ch.get("raw_type", None)
+                if raw_type in [0, 5]:   # text, announcement
+                    return 0
+                if raw_type == 15:       # forum
+                    return 0
+                if raw_type == 2:        # voice
+                    return 1
+                if raw_type == 13:       # stage
+                    return 2
+                return 3
+
             sub = sorted(
                 [
                     {
@@ -107,13 +122,14 @@ async def snapshot_guild(guild_id: str):
                             "forum" if ch["type"] == 15 else
                             "text"
                         ),
+                        "raw_type": ch["type"],
                         "position": ch["position"],
                         "options": {}
                     }
                     for ch in non
                     if str(ch.get("parent_id")) == cat_id
                 ],
-                key=lambda c: c["position"]  # <-- THIS LINE FIXES THE ORDER
+                key=lambda c: (get_type_rank(c), c["position"])
             )
             categories_payload.append({
                 "name": c["name"],
