@@ -95,24 +95,26 @@ async def snapshot_guild(guild_id: str):
         categories_payload = []
         for c in cats:
             cat_id = str(c["id"])
-            sub = []
-            for ch in chans:
-                if str(ch.get("parent_id")) != cat_id:
-                    continue
-                ctype = (
-                    "text" if ch["type"] in [0, 5] else
-                    "voice" if ch["type"] == 2 else
-                    "stage" if ch["type"] == 13 else
-                    "forum" if ch["type"] == 15 else
-                    "text"
-                )
-                sub.append({
-                    "name": ch["name"],
-                    "type": ctype,
-                    "position": ch.get("position", 0),
-                    "options": {}
-                })
-            sub.sort(key=lambda x: x["position"])
+            # Channels inside this category, sorted by Discord UI order
+            sub = sorted(
+                [
+                    {
+                        "name": ch["name"],
+                        "type": (
+                            "text" if ch["type"] in [0, 5] else
+                            "voice" if ch["type"] == 2 else
+                            "stage" if ch["type"] == 13 else
+                            "forum" if ch["type"] == 15 else
+                            "text"
+                        ),
+                        "position": ch["position"],
+                        "options": {}
+                    }
+                    for ch in non
+                    if str(ch.get("parent_id")) == cat_id
+                ],
+                key=lambda c: c["position"]  # <-- THIS LINE FIXES THE ORDER
+            )
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
