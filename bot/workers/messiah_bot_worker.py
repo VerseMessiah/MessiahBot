@@ -106,39 +106,57 @@ async def snapshot_guild(guild_id: str):
             #  1) Text/Announcement/Forum in user-defined order (position asc)
             #  2) Voice exactly after all text/forum (position asc)
             #  3) Stage channels after voice (rare)
-            text_forum = [ch for ch in children if ch["type"] in (0, 5, 15)]
-            voice = [ch for ch in children if ch["type"] == 2]
+            text = [ch for ch in children if ch["type"] == 0]
+            announcement = [ch for ch in children if ch["type"] == 5]
+            forum = [ch for ch in children if ch["type"] == 15]
             stage = [ch for ch in children if ch["type"] == 13]
-            other = [ch for ch in children if ch["type"] not in (0, 5, 15, 2, 13)]
+            voice = [ch for ch in children if ch["type"] == 2]
 
-            text_forum.sort(key=lambda ch: ch["position"])
+            text.sort(key=lambda ch: ch["position"])
+            announcement.sort(key=lambda ch: ch["position"])
+            forum.sort(key=lambda ch: ch["position"])
             voice.sort(key=lambda ch: ch["position"])
             stage.sort(key=lambda ch: ch["position"])
-            other.sort(key=lambda ch: ch["position"])
 
-            ordered = text_forum + voice + stage + other
+            text_ordered = text + announcement + forum
+            voice_ordered = voice + stage
 
-            sub = [
+            text_sub = [
                 {
                     "name": ch["name"],
                     "type": (
-                        "text" if ch["type"] in [0, 5] else
+                        "text" if ch["type"] == 0 else
                         "forum" if ch["type"] == 15 else
-                        "voice" if ch["type"] == 2 else
-                        "stage" if ch["type"] == 13 else
+                        "announcement" if ch["type"] == 5 else
                         "text"
                     ),
                     "raw_type": ch["type"],
                     "position": ch["position"],
                     "options": {}
                 }
-                for ch in ordered
+                for ch in text_ordered
+            ]
+
+            voice_sub = [
+                {
+                    "name": ch["name"],
+                    "type": (
+                        "voice" if ch["type"] == 2 else
+                        "stage" if ch["type"] == 13 else
+                        "voice"
+                    ),
+                    "raw_type": ch["type"],
+                    "position": ch["position"],
+                    "options": {}
+                }
+                for ch in voice_ordered
             ]
 
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "channels": sub
+                "channels": text_sub,
+                "channels": voice_sub
             })
 
         categories_payload.sort(key=lambda x: x["position"])
