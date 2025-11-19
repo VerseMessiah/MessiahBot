@@ -228,10 +228,26 @@ function renderRoles(roles) {
   const list = document.getElementById("roleList");
   if (!list) return;
 
-  const sorted = (roles || []).slice().sort((a,b) => (a.position ?? 0) - (b.position ?? 0));
+  // Prepare a base list with original index for stable fallback ordering
+  const base = (roles || []).map((r, idx) => ({
+    ...r,
+    _origIndex: idx
+  }));
+
+  // Discord UI shows higher "position" at the top of the list,
+  // so we sort DESC by position. If no position is present,
+  // we fall back to the original array index.
+  const sorted = base.slice().sort((a, b) => {
+    const pa = (typeof a.position === "number") ? a.position : a._origIndex;
+    const pb = (typeof b.position === "number") ? b.position : b._origIndex;
+    return pb - pa; // higher position first
+  });
+
+  // rolesState keeps the current UI order and propagates position forward
   rolesState = sorted.map(r => ({
     name: r.name || "",
-    color: r.color || "#000000"
+    color: r.color || "#000000",
+    position: r.position
   }));
 
   list.innerHTML = "";
@@ -275,7 +291,8 @@ function renderRoles(roles) {
     list.appendChild(row);
   });
 
-  // Make roles sortable
+  // Make roles sortable in the UI; when the user drags, we
+  // adopt the new visual order as the new authoritative order.
   if (window.Sortable && list) {
     new Sortable(list, {
       animation: 150,
