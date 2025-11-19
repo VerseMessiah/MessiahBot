@@ -96,30 +96,27 @@ async def snapshot_guild(guild_id: str):
         for c in cats:
             cat_id = str(c["id"])
 
-            # Pull children in API‑given order (this preserves actual UI)
+            # Pull children first by true API order
             children = [
                 ch for ch in non
                 if str(ch.get("parent_id")) == cat_id
             ]
 
-            # Discord UI grouping:
-            #  text (0,5), forum(15), announcement(5)  → group 0
-            #  voice (2)                               → group 1
-            #  stage (13)                              → group 2
-            def rank(ch):
-                t = ch["type"]
-                if t in (0, 5, 15):   # text/announcement/forum
-                    return 0
-                if t == 2:           # voice
-                    return 1
-                if t == 13:          # stage
-                    return 2
-                return 99
+            # Hard‑enforce Discord UI rules:
+            #  1) Text/Announcement/Forum in user-defined order (position asc)
+            #  2) Voice exactly after all text/forum (position asc)
+            #  3) Stage channels after voice (rare)
+            text_forum = [ch for ch in children if ch["type"] in (0, 5, 15)]
+            voice = [ch for ch in children if ch["type"] == 2]
+            stage = [ch for ch in children if ch["type"] == 13]
+            other = [ch for ch in children if ch["type"] not in (0, 5, 15, 2, 13)]
 
-            # Now sort ONLY by:
-            #   1) Type group rank
-            #   2) Position ASC (actual UI)
-            ordered = sorted(children, key=lambda ch: (rank(ch), ch["position"]))
+            text_forum.sort(key=lambda ch: ch["position"])
+            voice.sort(key=lambda ch: ch["position"])
+            stage.sort(key=lambda ch: ch["position"])
+            other.sort(key=lambda ch: ch["position"])
+
+            ordered = text_forum + voice + stage + other
 
             sub = [
                 {
