@@ -97,8 +97,13 @@ async def snapshot_guild(guild_id: str):
             cat_id = str(c["id"])
 
             # Pull children first by true API order
-            children = [
-                ch for ch in non
+            text_children = [
+                ch for ch in non if c["type"] in [0, 5, 15]
+                if str(ch.get("parent_id")) == cat_id 
+            ]
+
+            voice_children = [
+                ch for ch in non if c["type"] in [2, 13]
                 if str(ch.get("parent_id")) == cat_id
             ]
 
@@ -106,11 +111,11 @@ async def snapshot_guild(guild_id: str):
             #  1) Text/Announcement/Forum in user-defined order (position asc)
             #  2) Voice exactly after all text/forum (position asc)
             #  3) Stage channels after voice (rare)
-            text = [ch for ch in children if ch["type"] == 0]
-            announcement = [ch for ch in children if ch["type"] == 5]
-            forum = [ch for ch in children if ch["type"] == 15]
-            stage = [ch for ch in children if ch["type"] == 13]
-            voice = [ch for ch in children if ch["type"] == 2]
+            text = [ch for ch in text_children if ch["type"] == 0]
+            announcement = [ch for ch in text_children if ch["type"] == 5]
+            forum = [ch for ch in text_children if ch["type"] == 15]
+            stage = [ch for ch in voice_children if ch["type"] == 13]
+            voice = [ch for ch in voice_children if ch["type"] == 2]
 
             text.sort(key=lambda ch: ch["position"])
             announcement.sort(key=lambda ch: ch["position"])
@@ -155,7 +160,8 @@ async def snapshot_guild(guild_id: str):
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "channels": voice_sub + text_sub
+                "text channels": text_sub,
+                "voice channels": voice_sub
             })
 
         categories_payload.sort(key=lambda x: x["position"])
@@ -164,7 +170,7 @@ async def snapshot_guild(guild_id: str):
             "mode": "update",
             "roles": roles_payload,
             "categories": categories_payload,
-            "channels": []
+            "text channels" + "voice channels": []
         }
 
 # ------------------------------------------------------------
