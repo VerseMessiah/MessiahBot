@@ -85,8 +85,8 @@ async def snapshot_guild(guild_id: str):
         chans = await _dget(http, f"/guilds/{guild_id}/channels")
         cats = [c for c in chans if c["type"] == 4]
         cats.sort(key=lambda c: c.get("position", 0))
+        # Preserve API order for channels; do not pre-sort non-category channels
         non = [c for c in chans if c["type"] != 4]
-        non.sort(key=lambda c: c.get("position", 0))
 
         # Ensure categories and channels remain in true Discord UI order (top → bottom).
         # Categories: ascending position
@@ -95,22 +95,24 @@ async def snapshot_guild(guild_id: str):
         categories_payload = []
         for c in cats:
             cat_id = str(c["id"])
-            sub = [
-                {
+            sub = []
+            for ch in chans:
+                if str(ch.get("parent_id")) != cat_id:
+                    continue
+                ctype = (
+                    "text" if ch["type"] in [0, 5] else
+                    "voice" if ch["type"] == 2 else
+                    "stage" if ch["type"] == 13 else
+                    "forum" if ch["type"] == 15 else
+                    "text"
+                )
+                sub.append({
                     "name": ch["name"],
-                    "type": (
-                        "text" if ch["type"] in [0, 5] else
-                        "voice" if ch["type"] == 2 else
-                        "stage" if ch["type"] == 13 else
-                        "forum" if ch["type"] == 15 else
-                        "text"
-                    ),
-                    "position": ch["position"],
+                    "type": ctype,
+                    "position": ch.get("position", 0),
                     "options": {}
-                }
-                for ch in non if str(ch.get("parent_id")) == cat_id
-            ]
-            sub = sorted(sub, key=lambda x: x["position"])
+                })
+            sub.sort(key=lambda x: x["position"])
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
