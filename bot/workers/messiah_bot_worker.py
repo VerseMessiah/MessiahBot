@@ -155,7 +155,7 @@ async def snapshot_guild(guild_id: str):
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "channels": text_sub + voice_sub
+                "channels": voice_sub + text_sub
             })
 
         categories_payload.sort(key=lambda x: x["position"])
