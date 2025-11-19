@@ -47,6 +47,7 @@
       <div class="card__hdr">
         <h2>Server Builder</h2>
         <div class="card__hdrActions" id="builderActions" style="display: none;">
+          <button class="btn-small" id="btnDebugToggle" style="display:none;">Debug</button>
           <button class="btn" id="btnLoadLive" disabled>Load from Live</button>
           <button class="btn" id="btnLoadSnapshot" disabled>Load Snapshot</button>
           <button class="btn btn--primary" id="btnSave" disabled>Save Layout</button>
@@ -109,6 +110,11 @@
 
 <script>
 let rolesState = [];
+
+const DEV_ID = "757250912602554449";
+const debugToggle = document.getElementById("btnDebugToggle");
+const rawJsonBlock = document.querySelector(".json-raw");
+const envBadge = document.querySelector(".topnav__env");
 
 function el(id){ return document.getElementById(id); }
 
@@ -399,6 +405,15 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const who = await fetch("/whoami").then(r => r.json());
 
+      // Debug toggle logic
+      if (who.user && who.user.id === DEV_ID) {
+          debugToggle.style.display = "inline-block";
+      } else {
+          debugToggle.style.display = "none";
+          if (rawJsonBlock) rawJsonBlock.style.display = "none";
+          if (envBadge) envBadge.style.display = "none";
+      }
+
       if (who.logged_in) {
         setStatus("discordStatus", `Logged in as ${who.user.username}`, true);
 
@@ -606,6 +621,15 @@ document.addEventListener("DOMContentLoaded", () => {
       el("builderNote").textContent = "Save failed: " + t;
     }
   });
+
+  // Debug toggle event
+  if (debugToggle && rawJsonBlock && envBadge) {
+    debugToggle.addEventListener("click", () => {
+      const open = rawJsonBlock.style.display !== "none";
+      rawJsonBlock.style.display = open ? "none" : "flex";
+      envBadge.style.display = open ? "none" : "inline-block";
+    });
+  }
 
   loadStatuses();
 });
