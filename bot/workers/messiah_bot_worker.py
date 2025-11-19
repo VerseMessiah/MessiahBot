@@ -95,42 +95,49 @@ async def snapshot_guild(guild_id: str):
         categories_payload = []
         for c in cats:
             cat_id = str(c["id"])
-            # Discord UI–accurate ordering:
-            # 1. Text + Forum channels are grouped together and sortable among each other
-            # 2. Voice channels always appear beneath text+forum in Discord UI
-            # 3. Stage channels appear after voice
-            def get_type_rank(ch):
-                raw_type = ch.get("raw_type", None)
-                if raw_type in [0, 5]:   # text, announcement
-                    return 0
-                if raw_type == 15:       # forum
-                    return 0
-                if raw_type == 2:        # voice
-                    return 1
-                if raw_type == 13:       # stage
-                    return 2
-                return 3
 
-            sub = sorted(
-                [
-                    {
-                        "name": ch["name"],
-                        "type": (
-                            "text" if ch["type"] in [0, 5] else
-                            "voice" if ch["type"] == 2 else
-                            "stage" if ch["type"] == 13 else
-                            "forum" if ch["type"] == 15 else
-                            "text"
-                        ),
-                        "raw_type": ch["type"],
-                        "position": ch["position"],
-                        "options": {}
-                    }
-                    for ch in non
-                    if str(ch.get("parent_id")) == cat_id
-                ],
-                key=lambda c: (get_type_rank(c), c["position"])
-            )
+            # Pull children in API‑given order (this preserves actual UI)
+            children = [
+                ch for ch in non
+                if str(ch.get("parent_id")) == cat_id
+            ]
+
+            # Discord UI grouping:
+            #  text (0,5), forum(15), announcement(5)  → group 0
+            #  voice (2)                               → group 1
+            #  stage (13)                              → group 2
+            def rank(ch):
+                t = ch["type"]
+                if t in (0, 5, 15):   # text/announcement/forum
+                    return 0
+                if t == 2:           # voice
+                    return 1
+                if t == 13:          # stage
+                    return 2
+                return 99
+
+            # Now sort ONLY by:
+            #   1) Type group rank
+            #   2) Position ASC (actual UI)
+            ordered = sorted(children, key=lambda ch: (rank(ch), ch["position"]))
+
+            sub = [
+                {
+                    "name": ch["name"],
+                    "type": (
+                        "text" if ch["type"] in [0, 5] else
+                        "forum" if ch["type"] == 15 else
+                        "voice" if ch["type"] == 2 else
+                        "stage" if ch["type"] == 13 else
+                        "text"
+                    ),
+                    "raw_type": ch["type"],
+                    "position": ch["position"],
+                    "options": {}
+                }
+                for ch in ordered
+            ]
+
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
