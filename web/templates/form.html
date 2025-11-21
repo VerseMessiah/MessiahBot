@@ -228,26 +228,34 @@ function renderLayout(layout) {
     const textList = document.getElementById(textListId);
     const voiceList = document.getElementById(voiceListId);
 
-    const chans = Array.isArray(cat.channels)
-      ? cat.channels.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    const textLike = Array.isArray(cat.channels_text)
+      ? cat.channels_text.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
       : [];
 
-    chans.forEach((ch) => {
-      const rawType = (ch.type || "text").toLowerCase();
-      const type = (rawType === "voice" || rawType === "stage") ? "voice" : "text";
+    const voiceLike = Array.isArray(cat.channels_voice)
+      ? cat.channels_voice.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      : [];
 
+    textLike.forEach(ch => {
+      const normalizedType = "text";
       const row = document.createElement("div");
       row.className = "channel-row";
       row.innerHTML = `
-        <span class="channel-type" data-type="${type}">${type}</span>
-        <input class="channel-name" value="${ch.name || ""}" placeholder="${type}-channel">
+        <span class="channel-type" data-type="text">text</span>
+        <input class="channel-name" value="${ch.name || ""}" placeholder="text-channel">
       `;
+      textList.appendChild(row);
+    });
 
-      if (type === "voice") {
-        if (voiceList) voiceList.appendChild(row);
-      } else {
-        if (textList) textList.appendChild(row);
-      }
+    voiceLike.forEach(ch => {
+      const normalizedType = "voice";
+      const row = document.createElement("div");
+      row.className = "channel-row";
+      row.innerHTML = `
+        <span class="channel-type" data-type="voice">voice</span>
+        <input class="channel-name" value="${ch.name || ""}" placeholder="voice-channel">
+      `;
+      voiceList.appendChild(row);
     });
 
     // Make each list sortable within the category
