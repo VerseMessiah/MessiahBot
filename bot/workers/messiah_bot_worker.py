@@ -136,10 +136,12 @@ async def snapshot_guild(guild_id: str):
                 for ch in voice_like
             ]
 
+            ordered = text_sub + voice_sub
+
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "channels": text_sub + voice_sub
+                "channels": ordered
             })
 
         categories_payload.sort(key=lambda x: x["position"])
