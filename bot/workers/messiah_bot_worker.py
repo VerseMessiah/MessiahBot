@@ -95,35 +95,26 @@ async def snapshot_guild(guild_id: str):
 
         categories_payload = []
         for c in cats:
-            text_cat_id = str(c["id"])
-            voice_cat_id = str(c["id"])
-            # Pull children first by true API order
-            text_children = [
-                ch for ch in text
-                if str(ch.get("parent_id")) == text_cat_id
-            ]
+            cat_id = str(c["id"])
 
-            voice_children = [
-                ch for ch in voice
-                if str(ch.get("parent_id")) == voice_cat_id 
-            ]
+            # Pull ALL children for this category
+            children = [ch for ch in chans if str(ch.get("parent_id")) == cat_id]
 
-            # Hard‑enforce Discord UI rules:
-            #  1) Text/Announcement/Forum in user-defined order (position asc)
-            #  2) Voice exactly after all text/forum (position asc)
-            #  3) Stage channels after voice (rare)
-            text = [ch for ch in text_children if ch["type"] == 0]
-            announcement = [ch for ch in text_children if ch["type"] == 5]
-            forum = [ch for ch in text_children if ch["type"] == 15]
-            stage = [ch for ch in voice_children if ch["type"] == 13]
-            voice = [ch for ch in voice_children if ch["type"] == 2]
+            # Split them but DO NOT overwrite the global lists
+            text_like = [ch for ch in children if ch["type"] in (0, 5, 15)]
+            voice_like = [ch for ch in children if ch["type"] in (2, 13)]
 
+            # Sort each group by their real Discord position
+            text_like.sort(key=lambda ch: ch["position"])
+            voice_like.sort(key=lambda ch: ch["position"])
+
+            # Convert to unified format
             text_sub = [
                 {
                     "name": ch["name"],
                     "type": (
                         "text" if ch["type"] == 0 else
-                        "announcement" if ch ["type"] == 5 else
+                        "announcement" if ch["type"] == 5 else
                         "forum" if ch["type"] == 15 else
                         "text"
                     ),
@@ -131,28 +122,24 @@ async def snapshot_guild(guild_id: str):
                     "position": ch["position"],
                     "options": {}
                 }
-                for ch in text_children
+                for ch in text_like
             ]
 
             voice_sub = [
                 {
                     "name": ch["name"],
-                    "type": (
-                        "voice" if ch["type"] == 2 else
-                        "stage" if ch["type"] == 13 else
-                        "voice"
-                    ),
-                "raw_type": ch["type"],
-                "position": ch["position"],
-                "options": {}
+                    "type": "voice" if ch["type"] == 2 else "stage",
+                    "raw_type": ch["type"],
+                    "position": ch["position"],
+                    "options": {}
                 }
-                for ch in voice_children
+                for ch in voice_like
             ]
 
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "channels": text_sub + voice_sub 
+                "channels": text_sub + voice_sub
             })
 
         categories_payload.sort(key=lambda x: x["position"])
