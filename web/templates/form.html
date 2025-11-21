@@ -123,14 +123,40 @@ function collectLayoutFromUI() {
   document.querySelectorAll(".category-block").forEach(block => {
     const nameInput = block.querySelector(".category-name");
     const name = nameInput ? nameInput.value : "";
-    const chList = block.querySelectorAll(".channel-row");
 
-    const channels = Array.from(chList).map((row,i) => ({
-      type: (row.querySelector(".channel-type")?.textContent || "text").trim(),
-      name: row.querySelector(".channel-name")?.value || "",
-      options: {},
-      position: i
-    }));
+    const textRows = block.querySelectorAll(".text-channel-list .channel-row");
+    const voiceRows = block.querySelectorAll(".voice-channel-list .channel-row");
+
+    const channels = [];
+    let pos = 0;
+
+    // Text-like channels first
+    Array.from(textRows).forEach(row => {
+      const typeSpan = row.querySelector(".channel-type");
+      const rawType = (typeSpan?.dataset.type || typeSpan?.textContent || "text").toLowerCase().trim();
+      const type = rawType || "text";
+      const nameVal = row.querySelector(".channel-name")?.value || "";
+      channels.push({
+        type,
+        name: nameVal,
+        options: {},
+        position: pos++
+      });
+    });
+
+    // Voice-like channels after text/forum
+    Array.from(voiceRows).forEach(row => {
+      const typeSpan = row.querySelector(".channel-type");
+      const rawType = (typeSpan?.dataset.type || typeSpan?.textContent || "voice").toLowerCase().trim();
+      const type = rawType || "voice";
+      const nameVal = row.querySelector(".channel-name")?.value || "";
+      channels.push({
+        type,
+        name: nameVal,
+        options: {},
+        position: pos++
+      });
+    });
 
     categories.push({
       name,
@@ -167,42 +193,70 @@ function renderLayout(layout) {
   if (!container) return;
   container.innerHTML = "";
 
-  const categories = Array.isArray(layout) ? layout.slice().sort((a,b) => (a.position ?? 0) - (b.position ?? 0)) : [];
+  const categories = Array.isArray(layout)
+    ? layout.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    : [];
 
   categories.forEach((cat, catIndex) => {
     const catDiv = document.createElement("div");
     catDiv.className = "category-block";
 
-    const channelsId = `channels-${catIndex}`;
+    const textListId = `text-channels-${catIndex}`;
+    const voiceListId = `voice-channels-${catIndex}`;
 
     catDiv.innerHTML = `
       <div class="category-header">
         <span class="category-handle">☰</span>
-        <input class="category-name" value="${cat.name || ""}">
-        <button type="button" class="btn-small add-channel-btn" data-cat-index="${catIndex}">+ Channel</button>
+        <input class="category-name" value="${cat.name || ""}" placeholder="Category name">
       </div>
-      <div class="channel-list" id="${channelsId}"></div>
+      <div class="channel-groups">
+        <div class="channel-group channel-group--text">
+          <div class="channel-group-header">Text &amp; Forum Channels</div>
+          <div class="channel-list text-channel-list" id="${textListId}"></div>
+          <button type="button" class="btn-small add-text-channel-btn" data-cat-index="${catIndex}">+ Text / Forum</button>
+        </div>
+        <div class="channel-group channel-group--voice">
+          <div class="channel-group-header">Voice &amp; Stage Channels</div>
+          <div class="channel-list voice-channel-list" id="${voiceListId}"></div>
+          <button type="button" class="btn-small add-voice-channel-btn" data-cat-index="${catIndex}">+ Voice / Stage</button>
+        </div>
+      </div>
     `;
 
     container.appendChild(catDiv);
 
-    const chContainer = document.getElementById(channelsId);
+    const textList = document.getElementById(textListId);
+    const voiceList = document.getElementById(voiceListId);
+
     const chans = Array.isArray(cat.channels)
-      ? cat.channels.slice().sort((a,b) => (a.position ?? 0) - (b.position ?? 0))
+      ? cat.channels.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
       : [];
+
     chans.forEach((ch) => {
-      const chDiv = document.createElement("div");
-      chDiv.className = "channel-row";
-      chDiv.innerHTML = `
-        <span class="channel-type">${(ch.type || "text")}</span>
-        <input class="channel-name" value="${ch.name || ""}">
+      const type = (ch.type || "text").toLowerCase();
+      const row = document.createElement("div");
+      row.className = "channel-row";
+      row.innerHTML = `
+        <span class="channel-type" data-type="${type}">${type}</span>
+        <input class="channel-name" value="${ch.name || ""}" placeholder="channel-name">
       `;
-      chContainer.appendChild(chDiv);
+
+      if (type === "voice" || type === "stage") {
+        if (voiceList) voiceList.appendChild(row);
+      } else {
+        if (textList) textList.appendChild(row);
+      }
     });
 
-    // Make channels sortable within each category
-    if (window.Sortable && chContainer) {
-      new Sortable(chContainer, {
+    // Make each list sortable within the category
+    if (window.Sortable && textList) {
+      new Sortable(textList, {
+        animation: 150,
+        onEnd: () => saveVisualToJson()
+      });
+    }
+    if (window.Sortable && voiceList) {
+      new Sortable(voiceList, {
         animation: 150,
         onEnd: () => saveVisualToJson()
       });
@@ -218,11 +272,18 @@ function renderLayout(layout) {
     });
   }
 
-  // Wire up "Add Channel" buttons
-  container.querySelectorAll(".add-channel-btn").forEach(btn => {
+  // Wire up "Add Text" / "Add Voice" buttons
+  container.querySelectorAll(".add-text-channel-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const idx = parseInt(btn.getAttribute("data-cat-index") || "0", 10);
-      addChannel(idx);
+      addChannel(idx, "text");
+    });
+  });
+
+  container.querySelectorAll(".add-voice-channel-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.getAttribute("data-cat-index") || "0", 10);
+      addChannel(idx, "voice");
     });
   });
 
@@ -329,7 +390,8 @@ function addCategory() {
   if (!container) return;
 
   const catIndex = container.querySelectorAll(".category-block").length;
-  const channelsId = `channels-${catIndex}`;
+  const textListId = `text-channels-${catIndex}`;
+  const voiceListId = `voice-channels-${catIndex}`;
 
   const catDiv = document.createElement("div");
   catDiv.className = "category-block";
@@ -337,41 +399,68 @@ function addCategory() {
     <div class="category-header">
       <span class="category-handle">☰</span>
       <input class="category-name" value="" placeholder="New category">
-      <button type="button" class="btn-small add-channel-btn" data-cat-index="${catIndex}">+ Channel</button>
     </div>
-    <div class="channel-list" id="${channelsId}"></div>
+    <div class="channel-groups">
+      <div class="channel-group channel-group--text">
+        <div class="channel-group-header">Text &amp; Forum Channels</div>
+        <div class="channel-list text-channel-list" id="${textListId}"></div>
+        <button type="button" class="btn-small add-text-channel-btn" data-cat-index="${catIndex}">+ Text / Forum</button>
+      </div>
+      <div class="channel-group channel-group--voice">
+        <div class="channel-group-header">Voice &amp; Stage Channels</div>
+        <div class="channel-list voice-channel-list" id="${voiceListId}"></div>
+        <button type="button" class="btn-small add-voice-channel-btn" data-cat-index="${catIndex}">+ Voice / Stage</button>
+      </div>
+    </div>
   `;
 
   container.appendChild(catDiv);
 
-  const chContainer = document.getElementById(channelsId);
-  if (window.Sortable && chContainer) {
-    new Sortable(chContainer, {
+  const textList = document.getElementById(textListId);
+  const voiceList = document.getElementById(voiceListId);
+
+  if (window.Sortable && textList) {
+    new Sortable(textList, {
+      animation: 150,
+      onEnd: () => saveVisualToJson()
+    });
+  }
+  if (window.Sortable && voiceList) {
+    new Sortable(voiceList, {
       animation: 150,
       onEnd: () => saveVisualToJson()
     });
   }
 
-  catDiv.querySelector(".add-channel-btn")?.addEventListener("click", () => {
-    addChannel(catIndex);
+  catDiv.querySelector(".add-text-channel-btn")?.addEventListener("click", () => {
+    addChannel(catIndex, "text");
+  });
+  catDiv.querySelector(".add-voice-channel-btn")?.addEventListener("click", () => {
+    addChannel(catIndex, "voice");
   });
 
   saveVisualToJson();
 }
 
-function addChannel(catIndex) {
+function addChannel(catIndex, kind = "text") {
   const blocks = document.querySelectorAll(".category-block");
   const block = blocks[catIndex];
   if (!block) return;
 
-  const list = block.querySelector(".channel-list");
+  const listSelector = (kind === "voice" || kind === "stage")
+    ? ".voice-channel-list"
+    : ".text-channel-list";
+
+  const list = block.querySelector(listSelector);
   if (!list) return;
+
+  const normalizedType = (kind === "voice" || kind === "stage") ? "voice" : "text";
 
   const row = document.createElement("div");
   row.className = "channel-row";
   row.innerHTML = `
-    <span class="channel-type">text</span>
-    <input class="channel-name" value="" placeholder="new-channel">
+    <span class="channel-type" data-type="${normalizedType}">${normalizedType}</span>
+    <input class="channel-name" value="" placeholder="${normalizedType === "voice" ? "new-voice-channel" : "new-channel"}">
   `;
   list.appendChild(row);
 
