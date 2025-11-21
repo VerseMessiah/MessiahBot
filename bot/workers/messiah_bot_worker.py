@@ -86,7 +86,8 @@ async def snapshot_guild(guild_id: str):
         cats = [c for c in chans if c["type"] == 4]
         cats.sort(key=lambda c: c.get("position", 0))
         # Preserve API order for channels; do not pre-sort non-category channels
-        non = [c for c in chans if c["type"] != 4]
+        text = [c for c in chans if c["type"] in [0, 5, 15]]
+        voice = [c for c in chans if c["type"] in [2, 13]]
 
         # Ensure categories and channels remain in true Discord UI order (top → bottom).
         # Categories: ascending position
@@ -97,34 +98,34 @@ async def snapshot_guild(guild_id: str):
             cat_id = str(c["id"])
 
             # Pull children first by true API order
-            children = [
-                ch for ch in non
+            text_children = [
+                ch for ch in text
                 if str(ch.get("parent_id")) == cat_id
+            ]
+
+            voice_children = [
+                ch for ch in voice
+                if str(ch.get("parent_id")) == cat_id 
             ]
 
             # Hard‑enforce Discord UI rules:
             #  1) Text/Announcement/Forum in user-defined order (position asc)
             #  2) Voice exactly after all text/forum (position asc)
             #  3) Stage channels after voice (rare)
-            text = [ch for ch in children if ch["type"] == 0]
-            announcement = [ch for ch in children if ch["type"] == 5]
-            forum = [ch for ch in children if ch["type"] == 15]
-            stage = [ch for ch in children if ch["type"] == 13]
-            voice = [ch for ch in children if ch["type"] == 2]
+            text = [ch for ch in text_children if ch["type"] == 0]
+            announcement = [ch for ch in text_children if ch["type"] == 5]
+            forum = [ch for ch in text_children if ch["type"] == 15]
+            stage = [ch for ch in voice_children if ch["type"] == 13]
+            voice = [ch for ch in voice_children if ch["type"] == 2]
 
-            text.sort(key=lambda ch: ch["position"])
-            announcement.sort(key=lambda ch: ch["position"])
-            forum.sort(key=lambda ch: ch["position"])
-            voice.sort(key=lambda ch: ch["position"])
-            stage.sort(key=lambda ch: ch["position"])
-
-            ordered = announcement + text + forum + voice + stage
+            ordered = text_children + voice_children
 
             sub = [
                 {
                     "name": ch["name"],
                     "type": (
-                        "text" if ch["type"] in [0, 5] else
+                        "text" if ch["type"] == 0 else
+                        "announcement" if ch ["type"] == 5 else
                         "forum" if ch["type"] == 15 else
                         "voice" if ch["type"] == 2 else
                         "stage" if ch["type"] == 13 else
