@@ -9,11 +9,34 @@
   <script src="https://unpkg.com/htmx.org@1.0.10" defer></script>
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js" defer></script>
+  <style>
+    .builder-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+
+    .builder-panel {
+      border: 1px solid #333;
+      padding: 1rem;
+      border-radius: 8px;
+      background: #111;
+    }
+
+    .scroll-panel {
+      max-height: 350px;
+      overflow-y: auto;
+      border: 1px solid #222;
+      padding: 0.5rem;
+      margin-bottom: 1rem;
+    }
+  </style>
 </head>
 <body>
   <nav class="topnav">
     <div class="topnav__brand">MessiahBot</div>
     <div class="topnav__env">ENV: <strong>{{ env }}</strong></div>
+    <button id="btnDebugToggleTop" class="btn-small" style="margin-left: 1rem; display:none;">Debug</button>
   </nav>
 
   <main class="container">
@@ -71,21 +94,19 @@
       </div>
 
       <div id="layoutBuilder" x-data="{ layout: [], roles: [] }">
-
-        <div class="builder-grid">
-          <div class="builder-panel">
-            <h3>Categories & Channels</h3>
-            <div id="categoryList"></div>
+        <div class="builder-stack">
+          <div class="builder-panel builder-panel--categories">
+            <h3>Categories &amp; Channels</h3>
+            <div id="categoryList" class="scroll-panel"></div>
             <button class="btn" id="btnAddCategory">+ Add Category</button>
           </div>
 
-          <div class="builder-panel">
+          <div class="builder-panel builder-panel--roles">
             <h3>Roles</h3>
-            <div id="roleList"></div>
+            <div id="roleList" class="scroll-panel"></div>
             <button class="btn" id="btnAddRole">+ Add Role</button>
           </div>
         </div>
-      
       </div>
       
       <div class="json-raw flex-column" style="display: flex; flex-direction: column; gap: 1.5rem;">
@@ -113,6 +134,7 @@ let rolesState = [];
 
 const DEV_ID = "757250912602554449";
 const debugToggle = document.getElementById("btnDebugToggle");
+const debugToggleTop = document.getElementById("btnDebugToggleTop");
 const rawJsonBlock = document.querySelector(".json-raw");
 const envBadge = document.querySelector(".topnav__env");
 
@@ -507,8 +529,10 @@ document.addEventListener("DOMContentLoaded", () => {
       // Debug toggle logic
       if (who.user && who.user.id === DEV_ID) {
           debugToggle.style.display = "inline-block";
+          if (debugToggleTop) debugToggleTop.style.display = "inline-block";
       } else {
           debugToggle.style.display = "none";
+          if (debugToggleTop) debugToggleTop.style.display = "none";
           if (rawJsonBlock) rawJsonBlock.style.display = "none";
           if (envBadge) envBadge.style.display = "none";
       }
@@ -724,6 +748,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // Debug toggle event
   if (debugToggle && rawJsonBlock && envBadge) {
     debugToggle.addEventListener("click", () => {
+      const open = rawJsonBlock.style.display !== "none";
+      rawJsonBlock.style.display = open ? "none" : "flex";
+      envBadge.style.display = open ? "none" : "inline-block";
+    });
+  }
+  if (debugToggleTop && rawJsonBlock && envBadge) {
+    debugToggleTop.addEventListener("click", () => {
       const open = rawJsonBlock.style.display !== "none";
       rawJsonBlock.style.display = open ? "none" : "flex";
       envBadge.style.display = open ? "none" : "inline-block";
