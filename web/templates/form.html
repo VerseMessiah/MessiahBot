@@ -233,15 +233,17 @@ function renderLayout(layout) {
       : [];
 
     chans.forEach((ch) => {
-      const type = (ch.type || "text").toLowerCase();
+      const rawType = (ch.type || "text").toLowerCase();
+      const type = (rawType === "voice" || rawType === "stage") ? "voice" : "text";
+
       const row = document.createElement("div");
       row.className = "channel-row";
       row.innerHTML = `
         <span class="channel-type" data-type="${type}">${type}</span>
-        <input class="channel-name" value="${ch.name || ""}" placeholder="channel-name">
+        <input class="channel-name" value="${ch.name || ""}" placeholder="${type}-channel">
       `;
 
-      if (type === "voice" || type === "stage") {
+      if (type === "voice") {
         if (voiceList) voiceList.appendChild(row);
       } else {
         if (textList) textList.appendChild(row);
