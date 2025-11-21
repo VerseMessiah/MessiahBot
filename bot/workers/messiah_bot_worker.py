@@ -95,17 +95,17 @@ async def snapshot_guild(guild_id: str):
 
         categories_payload = []
         for c in cats:
-            cat_id = str(c["id"])
-
+            text_cat_id = str(c["id"])
+            voice_cat_id = str(c["id"])
             # Pull children first by true API order
             text_children = [
                 ch for ch in text
-                if str(ch.get("parent_id")) == cat_id
+                if str(ch.get("parent_id")) == text_cat_id
             ]
 
             voice_children = [
                 ch for ch in voice
-                if str(ch.get("parent_id")) == cat_id 
+                if str(ch.get("parent_id")) == voice_cat_id 
             ]
 
             # Hard‑enforce Discord UI rules:
@@ -118,30 +118,41 @@ async def snapshot_guild(guild_id: str):
             stage = [ch for ch in voice_children if ch["type"] == 13]
             voice = [ch for ch in voice_children if ch["type"] == 2]
 
-            ordered = text_children + voice_children
-
-            sub = [
+            text_sub = [
                 {
                     "name": ch["name"],
                     "type": (
                         "text" if ch["type"] == 0 else
                         "announcement" if ch ["type"] == 5 else
                         "forum" if ch["type"] == 15 else
-                        "voice" if ch["type"] == 2 else
-                        "stage" if ch["type"] == 13 else
                         "text"
                     ),
                     "raw_type": ch["type"],
                     "position": ch["position"],
                     "options": {}
                 }
-                for ch in ordered
+                for ch in text_children
+            ]
+
+            voice_sub = [
+                {
+                    "name": ch["name"],
+                    "type": (
+                        "voice" if ch["type"] == 2 else
+                        "stage" if ch["type"] == 13 else
+                        "voice"
+                    ),
+                "raw_type": ch["type"],
+                "position": ch["position"],
+                "options": {}
+                }
+                for ch in voice_children
             ]
 
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                "channels": sub
+                "channels": text_sub + voice_sub 
             })
 
         categories_payload.sort(key=lambda x: x["position"])
