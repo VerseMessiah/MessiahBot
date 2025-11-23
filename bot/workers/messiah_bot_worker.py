@@ -136,11 +136,20 @@ async def snapshot_guild(guild_id: str):
                 for ch in voice_like
             ]
 
+            # Merge text + voice into a single channels list for ServerBuilder compatibility
+            combined = sorted(
+                (text_sub + voice_sub),
+                key=lambda ch: ch.get("position", 0)
+            )
+
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
+                # Used by the dashboard UI (two separate boxes)
                 "channels_text": text_sub,
-                "channels_voice": voice_sub
+                "channels_voice": voice_sub,
+                # Used by ServerBuilder (single merged list)
+                "channels": combined
             })
 
         categories_payload.sort(key=lambda x: x["position"])
@@ -208,32 +217,82 @@ def ping():
 
 @app.post("/api/save_layout")
 def api_save_layout():
+    """
+    Save a layout coming from the dashboard into builder_layouts
+    so that /snapshot_layout, /build_server and /update_server
+    all work off the same table.
+
+    Expected JSON:
+    {
+      "guild_id": "1234567890",
+      "layout": { ... full layout object ... }
+    }
+
+    The layout should already be in the same shape that
+    ServerBuilder._apply_layout expects, e.g.:
+
+      {
+        "mode": "update",
+        "roles": [...],
+        "categories": [...],
+        "channels": [...],
+        "prune": {...},        # optional
+        "renames": {...},      # optional
+        "community": {...}     # optional
+      }
+    """
     payload = request.json or {}
     gid = str(payload.get("guild_id", "")).strip()
     layout = payload.get("layout")
-    roles = payload.get("roles")
 
-    if not gid or layout is None or roles is None:
-        return jsonify({"ok": False, "error": "Missing guild_id, layout, or roles"}), 400
+    if not gid or not isinstance(layout, dict):
+        return jsonify({"ok": False, "error": "Missing or invalid guild_id/layout"}), 400
+
+    # Ensure mode is set to "update" for dashboard-driven layouts
+    if not layout.get("mode"):
+        layout["mode"] = "update"
+
+    # 🔁 Normalize categories for ServerBuilder:
+    # If a category has channels_text / channels_voice but no unified channels list,
+    # merge them into a single channels[] array ordered by position.
+    cats = layout.get("categories") or []
+    if isinstance(cats, list):
+        for cat in cats:
+            if not isinstance(cat, dict):
+                continue
+            # Only synthesize channels if they are missing or empty
+            existing_channels = cat.get("channels") or []
+            if existing_channels:
+                continue
+
+            text_sub = cat.get("channels_text") or []
+            voice_sub = cat.get("channels_voice") or []
+            merged = []
+
+            for ch in list(text_sub) + list(voice_sub):
+                if isinstance(ch, dict):
+                    merged.append(ch)
+
+            if merged:
+                merged.sort(key=lambda ch: ch.get("position", 0))
+                cat["channels"] = merged
 
     try:
-        record = {
-            "mode": "update",
-            "roles": roles,
-            "categories": layout.get("categories", []),
-            "channels": layout.get("channels", [])
-        }
         with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
             with conn.cursor(row_factory=dict_row) as cur:
+                # Next version number for this guild
                 cur.execute(
                     "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
-                    (gid,)
+                    (gid,),
                 )
                 ver = int((cur.fetchone() or {}).get("v", 1))
+
+                # Insert full layout as JSONB payload
                 cur.execute(
                     "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
-                    (gid, ver, json.dumps(record))
+                    (gid, ver, json.dumps(layout)),
                 )
+
         return jsonify({"ok": True, "version": ver})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

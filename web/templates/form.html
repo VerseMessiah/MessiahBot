@@ -72,6 +72,7 @@
           <button class="btn" id="btnLoadLive" disabled>Load from Live</button>
           <button class="btn" id="btnLoadSnapshot" disabled>Load Snapshot</button>
           <button class="btn btn--primary" id="btnSave" disabled>Save Layout</button>
+          <button class="btn" id="btnSnapshot" disabled>Save Snapshot</button>
         </div>
       </div>
 
@@ -502,6 +503,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnLoadLive = document.getElementById("btnLoadLive");
   const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
   const btnSave = document.getElementById("btnSave");
+  const btnSnapshot = document.getElementById("btnSnapshot");
   const builderActions = document.getElementById("builderActions");
 
   guildSelect.addEventListener("change", () => {
@@ -509,6 +511,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnLoadLive.disabled = !has;
     btnLoadSnapshot.disabled = !has;
     btnSave.disabled = !has;
+    btnSnapshot.disabled = !has;
     if (builderActions) {
       builderActions.style.display = has ? "flex" : "none";
     }
@@ -569,6 +572,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnLoadLive.disabled = true;
         btnLoadSnapshot.disabled = true;
         btnSave.disabled = true;
+        btnSnapshot.disabled = true;
 
         // Force the change handler to run once to sync button disabled state
         guildSelect.dispatchEvent(new Event("change"));
@@ -583,6 +587,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnLoadLive.disabled = true;
         btnLoadSnapshot.disabled = true;
         btnSave.disabled = true;
+        btnSnapshot.disabled = true;
       }
 
       // Twitch status
@@ -757,3 +762,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
 </body>
 </html>
+  btnSnapshot.addEventListener("click", async () => {
+      const gid = guildSelect.value.trim();
+      if (!gid){ alert("Select a server first"); return; }
+
+      try {
+        const res = await fetch(`/api/snapshot/${gid}`, { method: "GET" });
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error("Snapshot failed: " + t.slice(0,200));
+        }
+        el("builderNote").textContent = "Snapshot saved for guild " + gid;
+      } catch(e){
+        el("builderNote").textContent = "Snapshot error: " + e.message;
+      }
+  });

@@ -21,6 +21,18 @@ PLEX_OWNER = os.getenv("PLEX_OWNER", None)
 PLEX_PLATFORM = os.getenv("PLEX_PLATFORM", None)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+app = Flask(
+    __name__,
+    template_folder=TEMPLATE_DIR,
+    static_folder=STATIC_DIR
+)
+
 @app.route("/submit-server-layout", methods=["POST"])
 def submit_server_layout():
     """Save the current layout from the dashboard into builder_layouts.
@@ -77,27 +89,16 @@ def submit_server_layout():
                 row = cur.fetchone() or {}
                 ver = int(row.get("v", 1))
 
-                # Store the layout as JSONB
+                # Store the layout as JSONB, with layout_type='active'
                 cur.execute(
-                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s, %s, %s::jsonb)",
-                    (gid, ver, json.dumps(layout)),
+                    "INSERT INTO builder_layouts (guild_id, version, layout_type, payload) VALUES (%s, %s, %s, %s::jsonb)",
+                    (gid, ver, "active", json.dumps(layout)),
                 )
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB write failed: {e}"}), 500
 
     return jsonify({"ok": True, "version": ver})
 
-
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-
-TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-
-app = Flask(
-    __name__,
-    template_folder=TEMPLATE_DIR,
-    static_folder=STATIC_DIR
-)
 
 # --- Cookie-based session config (no Redis) ---
 app.config.update({

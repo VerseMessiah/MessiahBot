@@ -741,6 +741,11 @@ class ServerBuilder(commands.Cog):
         try:
             with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
                 with conn.cursor(row_factory=dict_row) as cur:
+                    # Remove existing active rows before inserting new active layout
+                    cur.execute(
+                        "DELETE FROM builder_layouts WHERE guild_id=%s AND type='active'",
+                        (str(interaction.guild.id),),
+                    )
                     cur.execute(
                         "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
                         (str(interaction.guild.id),),
@@ -748,7 +753,7 @@ class ServerBuilder(commands.Cog):
                     ver = int((cur.fetchone() or {}).get("v", 1))
                     cur.execute(
                         "INSERT INTO builder_layouts (guild_id, version, type, payload) VALUES (%s,%s,%s,%s::jsonb)",
-                        (str(interaction.guild.id), ver, "snapshot", json.dumps(layout)),
+                        (str(interaction.guild.id), ver, "active", json.dumps(layout)),
                     )
             await interaction.followup.send(
                 f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Latest From DB** to edit.",
