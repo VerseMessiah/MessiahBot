@@ -35,7 +35,7 @@
 <body>
   <nav class="topnav">
     <div class="topnav__brand">MessiahBot</div>
-    <button id="btnDebugToggleTop" class="btn-small" style="margin-left: 1rem; display:none;">Debug</button>
+    <button id="btnDebugToggleTop" type="button" class="btn-small" style="margin-left: 1rem; display:none;">Debug</button>
   </nav>
 
   <main class="container">
@@ -135,7 +135,6 @@ let rolesState = [];
 const DEV_ID = "757250912602554449";
 const debugToggleTop = document.getElementById("btnDebugToggleTop");
 const rawJsonBlock = document.querySelector(".json-raw");
-const envBadge = document.querySelector(".topnav__env");
 
 function el(id){ return document.getElementById(id); }
 
@@ -742,10 +741,13 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Debug toggle event
-  if (debugToggleTop && rawJsonBlock && envBadge) {
+  if (debugToggleTop && rawJsonBlock) {
     debugToggleTop.addEventListener("click", () => {
-      const open = rawJsonBlock.style.display !== "none";
-      rawJsonBlock.style.display = open ? "none" : "flex";
+        if (rawJsonBlock.style.display === "none" || rawJsonBlock.style.display === "") {
+            rawJsonBlock.style.display = "flex";
+        } else {
+            rawJsonBlock.style.display = "none";
+        }
     });
   }
 
