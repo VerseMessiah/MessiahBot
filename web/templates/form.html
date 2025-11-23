@@ -35,7 +35,6 @@
 <body>
   <nav class="topnav">
     <div class="topnav__brand">MessiahBot</div>
-    <div class="topnav__env">ENV: <strong>{{ env }}</strong></div>
     <button id="btnDebugToggleTop" class="btn-small" style="margin-left: 1rem; display:none;">Debug</button>
   </nav>
 
@@ -70,7 +69,6 @@
       <div class="card__hdr">
         <h2>Server Builder</h2>
         <div class="card__hdrActions" id="builderActions" style="display: none;">
-          <button class="btn-small" id="btnDebugToggle" style="display:none;">Debug</button>
           <button class="btn" id="btnLoadLive" disabled>Load from Live</button>
           <button class="btn" id="btnLoadSnapshot" disabled>Load Snapshot</button>
           <button class="btn btn--primary" id="btnSave" disabled>Save Layout</button>
@@ -124,8 +122,10 @@
 
   <footer class="footer">
     <div class="footer__inner">
+      <!--
       <span>Environment:</span>
       <code>{{ env }}</code>
+      -->
     </div>
   </footer>
 
@@ -133,7 +133,6 @@
 let rolesState = [];
 
 const DEV_ID = "757250912602554449";
-const debugToggle = document.getElementById("btnDebugToggle");
 const debugToggleTop = document.getElementById("btnDebugToggleTop");
 const rawJsonBlock = document.querySelector(".json-raw");
 const envBadge = document.querySelector(".topnav__env");
@@ -528,10 +527,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Debug toggle logic
       if (who.user && who.user.id === DEV_ID) {
-          debugToggle.style.display = "inline-block";
           if (debugToggleTop) debugToggleTop.style.display = "inline-block";
       } else {
-          debugToggle.style.display = "none";
           if (debugToggleTop) debugToggleTop.style.display = "none";
           if (rawJsonBlock) rawJsonBlock.style.display = "none";
           if (envBadge) envBadge.style.display = "none";
@@ -746,13 +743,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Debug toggle event
-  if (debugToggle && rawJsonBlock && envBadge) {
-    debugToggle.addEventListener("click", () => {
-      const open = rawJsonBlock.style.display !== "none";
-      rawJsonBlock.style.display = open ? "none" : "flex";
-      envBadge.style.display = open ? "none" : "inline-block";
-    });
-  }
   if (debugToggleTop && rawJsonBlock && envBadge) {
     debugToggleTop.addEventListener("click", () => {
       const open = rawJsonBlock.style.display !== "none";
