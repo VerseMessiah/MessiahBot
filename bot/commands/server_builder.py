@@ -77,13 +77,27 @@ class Progress:
 
 
 # ---------- DB / layout helpers ----------
+#
+# NOTE:
+# builder_layouts now has a `type` column:
+#   - 'snapshot' rows are saved via the dashboard or /snapshot_layout
+#   - exactly one 'active' row (if present) is what build/update_server will apply
+# This helper always prefers the active row, falling back to the latest snapshot.
 def _load_layout_for_guild(guild_id: int):
     """Load the latest saved layout for this guild from DB, or local file as fallback."""
     if _psyco_ok and DATABASE_URL:
         with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    "SELECT payload FROM builder_layouts WHERE guild_id=%s ORDER BY version DESC LIMIT 1",
+                    """
+                    SELECT payload
+                    FROM builder_layouts
+                    WHERE guild_id=%s
+                    ORDER BY
+                      CASE WHEN type = 'active' THEN 0 ELSE 1 END,
+                      version DESC
+                    LIMIT 1
+                    """,
                     (str(guild_id),),
                 )
                 row = cur.fetchone()
@@ -733,8 +747,8 @@ class ServerBuilder(commands.Cog):
                     )
                     ver = int((cur.fetchone() or {}).get("v", 1))
                     cur.execute(
-                        "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
-                        (str(interaction.guild.id), ver, json.dumps(layout)),
+                        "INSERT INTO builder_layouts (guild_id, version, type, payload) VALUES (%s,%s,%s,%s::jsonb)",
+                        (str(interaction.guild.id), ver, "snapshot", json.dumps(layout)),
                     )
             await interaction.followup.send(
                 f"✅ Saved layout snapshot as version {ver}. Open the dashboard and click **Load Latest From DB** to edit.",

@@ -203,6 +203,42 @@ def ping():
     return jsonify({"ok": True, "worker": "messiah_worker", "time": dt.utcnow().isoformat()})
 
 # ------------------------------------------------------------
+#   ROUTE: SAVE LAYOUT
+# ------------------------------------------------------------
+
+@app.post("/api/save_layout")
+def api_save_layout():
+    payload = request.json or {}
+    gid = str(payload.get("guild_id", "")).strip()
+    layout = payload.get("layout")
+    roles = payload.get("roles")
+
+    if not gid or layout is None or roles is None:
+        return jsonify({"ok": False, "error": "Missing guild_id, layout, or roles"}), 400
+
+    try:
+        record = {
+            "mode": "update",
+            "roles": roles,
+            "categories": layout.get("categories", []),
+            "channels": layout.get("channels", [])
+        }
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
+                    (gid,)
+                )
+                ver = int((cur.fetchone() or {}).get("v", 1))
+                cur.execute(
+                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
+                    (gid, ver, json.dumps(record))
+                )
+        return jsonify({"ok": True, "version": ver})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ------------------------------------------------------------
 #   ENTRYPOINT
 # ------------------------------------------------------------
 

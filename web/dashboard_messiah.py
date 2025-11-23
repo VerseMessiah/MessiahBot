@@ -1,4 +1,7 @@
 import os
+import json
+import psycopg
+from psycopg.rows import dict_row
 from flask import Flask, Blueprint, current_app, redirect, request, session, url_for, jsonify, render_template
 from dotenv import load_dotenv
 from datetime import timedelta
@@ -16,6 +19,74 @@ PLEX_URL = os.getenv("PLEX_URL", None)
 PLEX_TOKEN = os.getenv("PLEX_TOKEN", None)
 PLEX_OWNER = os.getenv("PLEX_OWNER", None)
 PLEX_PLATFORM = os.getenv("PLEX_PLATFORM", None)
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+@app.route("/submit-server-layout", methods=["POST"])
+def submit_server_layout():
+    """Save the current layout from the dashboard into builder_layouts.
+
+    Expects JSON:
+      {
+        "guild_id": "...",
+        "layout": {...},   # categories/channels structure OR full layout
+        "roles": [...]     # roles array from the Roles editor
+      }
+    """
+    if not session.get("discord_user"):
+        return jsonify({"ok": False, "error": "Not logged in via Discord"}), 401
+
+    if not DATABASE_URL:
+        return jsonify({"ok": False, "error": "DATABASE_URL not configured"}), 500
+
+    data = request.get_json(silent=True) or {}
+    gid = str(data.get("guild_id") or "").strip()
+    if not gid:
+        return jsonify({"ok": False, "error": "Missing guild_id"}), 400
+
+    # Enforce that the logged-in user actually owns this guild; aborts with 401/403/404 as needed
+    get_owned_guilds_or_403(gid)
+
+    raw_layout = data.get("layout") or {}
+    roles = data.get("roles") or []
+
+    # Normalise layout shape: if it's already a dict, copy it; if it's a list, treat as categories.
+    if isinstance(raw_layout, dict):
+        layout = dict(raw_layout)  # shallow copy so we don't mutate the original
+    else:
+        # e.g. layout is just a list of categories
+        layout = {"categories": raw_layout}
+
+    # Attach roles from the dashboard as the source of truth
+    layout["roles"] = roles
+
+    # Ensure the minimal fields server_builder._apply_layout expects exist
+    layout.setdefault("mode", "update")
+    layout.setdefault("channels", [])
+    layout.setdefault("prune", {"roles": False, "categories": False, "channels": False})
+    layout.setdefault("renames", {"roles": [], "categories": [], "channels": []})
+    layout.setdefault("community", {"enable_on_build": False, "settings": {}})
+
+    try:
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                # Next version for this guild (no type column yet; we just reuse the same pattern
+                cur.execute(
+                    "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM builder_layouts WHERE guild_id = %s",
+                    (gid,),
+                )
+                row = cur.fetchone() or {}
+                ver = int(row.get("v", 1))
+
+                # Store the layout as JSONB
+                cur.execute(
+                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s, %s, %s::jsonb)",
+                    (gid, ver, json.dumps(layout)),
+                )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB write failed: {e}"}), 500
+
+    return jsonify({"ok": True, "version": ver})
+
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
