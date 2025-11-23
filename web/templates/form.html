@@ -531,7 +531,6 @@ document.addEventListener("DOMContentLoaded", () => {
       } else {
           if (debugToggleTop) debugToggleTop.style.display = "none";
           if (rawJsonBlock) rawJsonBlock.style.display = "none";
-          if (envBadge) envBadge.style.display = "none";
       }
 
       if (who.logged_in) {
@@ -747,7 +746,6 @@ document.addEventListener("DOMContentLoaded", () => {
     debugToggleTop.addEventListener("click", () => {
       const open = rawJsonBlock.style.display !== "none";
       rawJsonBlock.style.display = open ? "none" : "flex";
-      envBadge.style.display = open ? "none" : "inline-block";
     });
   }
 
