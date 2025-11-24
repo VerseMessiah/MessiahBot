@@ -731,11 +731,18 @@ class ServerBuilder(commands.Cog):
             await interaction.followup.send("❌ Database not configured on worker.", ephemeral=True)
             return
 
-        # Try discord.py first, fall back to REST on error/empty
+        # NEW: Fetch snapshot directly from worker (same as dashboard "Load From Live")
+        worker_url = os.getenv("WORKER_URL")
+        if not worker_url:
+            await interaction.followup.send("❌ WORKER_URL not configured.", ephemeral=True)
+            return
+
         try:
-            layout = _snapshot_guild_best(interaction.guild)
+            resp = requests.get(f"{worker_url}/api/live_layout/{interaction.guild.id}", timeout=20)
+            resp.raise_for_status()
+            layout = resp.json()
         except Exception as e:
-            await interaction.followup.send(f"❌ Snapshot failed (both methods): `{e}`", ephemeral=True)
+            await interaction.followup.send(f"❌ Worker snapshot failed: `{e}`", ephemeral=True)
             return
 
         try:
