@@ -8,13 +8,11 @@ from datetime import timedelta
 from flask import abort
 import discord
 from bot.messiah_bot import bot
-from bot.commands.server_builder import _snapshot_guild_best, _load_layout_for_guild
 
 load_dotenv()
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "PRD").upper()
 PORT = int(os.getenv("PORT", 5000))
-REDIS_URL = os.getenv("REDIS_URL", None)
 PLEX_URL = os.getenv("PLEX_URL", None)
 PLEX_TOKEN = os.getenv("PLEX_TOKEN", None)
 PLEX_OWNER = os.getenv("PLEX_OWNER", None)
@@ -373,16 +371,29 @@ def api_build_server(gid):
     
 @app.get("/api/snapshot/latest/<gid>")
 def api_latest_snapshot(gid):
-    # Ensure the logged-in user actually owns this guild; this will
-    # raise 401/403 if not allowed, and otherwise returns the guild
-    # metadata dict (which we don't need further here).
+    # Ensure user owns the guild
     _ = get_owned_guilds_or_403(gid)
 
-    # Use the guild ID directly when loading the layout from the DB.
-    layout = _load_layout_for_guild(gid)
-    if not layout:
-        return jsonify({"error": "No saved layout for this guild"}), 404
-    return jsonify(layout)
+    # Now call the worker instead
+    try:
+        import requests
+        WORKER_URL = os.getenv("WORKER_URL")
+        if not WORKER_URL:
+            return {"error": "WORKER_URL missing"}, 500
+
+        r = requests.get(f"{WORKER_URL}/api/snapshot/{gid}", timeout=15)
+
+        if r.status_code != 200:
+            return (r.text, r.status_code)
+
+        data = r.json()
+        if not data:
+            return {"error": "Snapshot missing"}, 404
+
+        return jsonify(data)
+
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 @app.route("/layout-config")
 def layout_config():
