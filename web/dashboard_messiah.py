@@ -332,6 +332,43 @@ def api_snapshot(gid):
 
     except Exception as e:
         return {"error": str(e)}, 500
+
+@app.post("/api/save_snapshot/<gid>")
+def api_save_snapshot(gid):
+    """Forward a snapshot save request to the worker and store it as active."""
+    try:
+        import requests
+        WORKER_URL = os.getenv("WORKER_URL")
+        if not WORKER_URL:
+            return {"error": "WORKER_URL missing"}, 500
+
+        r = requests.post(f"{WORKER_URL}/api/save_snapshot/{gid}", timeout=15)
+        if r.status_code != 200:
+            return (r.text, r.status_code)
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+@app.post("/api/build_server/<gid>")
+def api_build_server(gid):
+    """Forward a build/update request from dashboard to the worker."""
+    try:
+        import requests
+        WORKER_URL = os.getenv("WORKER_URL")
+        if not WORKER_URL:
+            return {"error": "WORKER_URL missing"}, 500
+
+        payload = request.get_json(silent=True) or {}
+        r = requests.post(
+            f"{WORKER_URL}/api/build_server/{gid}",
+            json=payload,
+            timeout=30
+        )
+        if r.status_code != 200:
+            return (r.text, r.status_code)
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}, 500
     
 @app.get("/api/snapshot/latest/<gid>")
 def api_latest_snapshot(gid):
