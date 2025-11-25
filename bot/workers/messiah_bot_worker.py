@@ -298,6 +298,84 @@ def api_save_layout():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
+#   ROUTE: SNAPSHOT LAYOUT (alias of save_layout for now)
+# ------------------------------------------------------------
+
+@app.post("/api/snapshot_layout")
+def api_snapshot_layout():
+    """
+    Wrapper for dashboard snapshot button.
+    Behaves exactly like /api/save_layout for now.
+    """
+    payload = request.json or {}
+    gid = str(payload.get("guild_id", "")).strip()
+    layout = payload.get("layout")
+
+    if not gid or not isinstance(layout, dict):
+        return jsonify({"ok": False, "error": "Missing or invalid guild_id/layout"}), 400
+
+    if not layout.get("mode"):
+        layout["mode"] = "update"
+
+    cats = layout.get("categories") or []
+    if isinstance(cats, list):
+        for cat in cats:
+            if not isinstance(cat, dict):
+                continue
+            existing_channels = cat.get("channels") or []
+            if existing_channels:
+                continue
+            text_sub = cat.get("channels_text") or []
+            voice_sub = cat.get("channels_voice") or []
+            merged = []
+            for ch in list(text_sub) + list(voice_sub):
+                if isinstance(ch, dict):
+                    merged.append(ch)
+            if merged:
+                merged.sort(key=lambda ch: ch.get("position", 0))
+                cat["channels"] = merged
+
+    try:
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
+                    (gid,),
+                )
+                ver = int((cur.fetchone() or {}).get("v", 1))
+
+                cur.execute(
+                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
+                    (gid, ver, json.dumps(layout)),
+                )
+        return jsonify({"ok": True, "version": ver})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ------------------------------------------------------------
+#   ROUTE: BUILD SERVER (placeholder)
+# ------------------------------------------------------------
+
+@app.post("/api/build_server")
+def api_build_server():
+    """
+    Placeholder endpoint until full ServerBuilder wiring is added.
+    Returns ok immediately so the dashboard stops erroring.
+    """
+    return jsonify({"ok": True, "msg": "Build server placeholder reached"})
+
+# ------------------------------------------------------------
+#   ROUTE: UPDATE SERVER (placeholder)
+# ------------------------------------------------------------
+
+@app.post("/api/update_server")
+def api_update_server():
+    """
+    Placeholder endpoint for updating an existing server layout.
+    """
+    return jsonify({"ok": True, "msg": "Update server placeholder reached"})
+
+# ------------------------------------------------------------
 #   ENTRYPOINT
 # ------------------------------------------------------------
 
