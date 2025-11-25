@@ -212,6 +212,41 @@ def ping():
     return jsonify({"ok": True, "worker": "messiah_worker", "time": dt.utcnow().isoformat()})
 
 # ------------------------------------------------------------
+#   HELPER: STORE LAYOUT VERSION
+# ------------------------------------------------------------
+
+def _store_layout_version(guild_id: str, layout: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Helper to insert a new layout row into builder_layouts and return metadata.
+    Assumes DATABASE_URL is set and psycopg is available.
+    """
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not configured on worker")
+
+    # Ensure mode is set
+    if not layout.get("mode"):
+        layout["mode"] = "update"
+
+    try:
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                # Next version number for this guild
+                cur.execute(
+                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
+                    (guild_id,),
+                )
+                ver = int((cur.fetchone() or {}).get("v", 1))
+
+                # Insert full layout as JSONB payload
+                cur.execute(
+                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
+                    (guild_id, ver, json.dumps(layout)),
+                )
+        return {"version": ver}
+    except Exception as e:
+        raise
+
+# ------------------------------------------------------------
 #   ROUTE: SAVE LAYOUT
 # ------------------------------------------------------------
 
@@ -227,19 +262,6 @@ def api_save_layout():
       "guild_id": "1234567890",
       "layout": { ... full layout object ... }
     }
-
-    The layout should already be in the same shape that
-    ServerBuilder._apply_layout expects, e.g.:
-
-      {
-        "mode": "update",
-        "roles": [...],
-        "categories": [...],
-        "channels": [...],
-        "prune": {...},        # optional
-        "renames": {...},      # optional
-        "community": {...}     # optional
-      }
     """
     payload = request.json or {}
     gid = str(payload.get("guild_id", "")).strip()
@@ -247,10 +269,6 @@ def api_save_layout():
 
     if not gid or not isinstance(layout, dict):
         return jsonify({"ok": False, "error": "Missing or invalid guild_id/layout"}), 400
-
-    # Ensure mode is set to "update" for dashboard-driven layouts
-    if not layout.get("mode"):
-        layout["mode"] = "update"
 
     # 🔁 Normalize categories for ServerBuilder:
     # If a category has channels_text / channels_voice but no unified channels list,
@@ -260,40 +278,22 @@ def api_save_layout():
         for cat in cats:
             if not isinstance(cat, dict):
                 continue
-            # Only synthesize channels if they are missing or empty
             existing_channels = cat.get("channels") or []
             if existing_channels:
                 continue
-
             text_sub = cat.get("channels_text") or []
             voice_sub = cat.get("channels_voice") or []
             merged = []
-
             for ch in list(text_sub) + list(voice_sub):
                 if isinstance(ch, dict):
                     merged.append(ch)
-
             if merged:
                 merged.sort(key=lambda ch: ch.get("position", 0))
                 cat["channels"] = merged
 
     try:
-        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                # Next version number for this guild
-                cur.execute(
-                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
-                    (gid,),
-                )
-                ver = int((cur.fetchone() or {}).get("v", 1))
-
-                # Insert full layout as JSONB payload
-                cur.execute(
-                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
-                    (gid, ver, json.dumps(layout)),
-                )
-
-        return jsonify({"ok": True, "version": ver})
+        meta = _store_layout_version(gid, layout)
+        return jsonify({"ok": True, "version": meta["version"]})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -305,7 +305,8 @@ def api_save_layout():
 def api_snapshot_layout():
     """
     Wrapper for dashboard snapshot button.
-    Behaves exactly like /api/save_layout for now.
+    Behaves the same as /api/save_layout for now, but kept separate
+    so we can give it different semantics later (e.g. snapshot vs active).
     """
     payload = request.json or {}
     gid = str(payload.get("guild_id", "")).strip()
@@ -313,9 +314,6 @@ def api_snapshot_layout():
 
     if not gid or not isinstance(layout, dict):
         return jsonify({"ok": False, "error": "Missing or invalid guild_id/layout"}), 400
-
-    if not layout.get("mode"):
-        layout["mode"] = "update"
 
     cats = layout.get("categories") or []
     if isinstance(cats, list):
@@ -336,44 +334,101 @@ def api_snapshot_layout():
                 cat["channels"] = merged
 
     try:
-        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(
-                    "SELECT COALESCE(MAX(version),0)+1 AS v FROM builder_layouts WHERE guild_id=%s",
-                    (gid,),
-                )
-                ver = int((cur.fetchone() or {}).get("v", 1))
-
-                cur.execute(
-                    "INSERT INTO builder_layouts (guild_id, version, payload) VALUES (%s,%s,%s::jsonb)",
-                    (gid, ver, json.dumps(layout)),
-                )
-        return jsonify({"ok": True, "version": ver})
+        meta = _store_layout_version(gid, layout)
+        return jsonify({"ok": True, "version": meta["version"]})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
-#   ROUTE: BUILD SERVER (placeholder)
+#   ROUTE: BUILD SERVER
 # ------------------------------------------------------------
 
-@app.post("/api/build_server")
-def api_build_server():
+@app.post("/api/build_server/<guild_id>")
+def api_build_server(guild_id):
     """
-    Placeholder endpoint until full ServerBuilder wiring is added.
-    Returns ok immediately so the dashboard stops erroring.
+    Dashboard hook for 'Build Server' if/when we want it.
+    For now, it just stores the provided layout as a new version
+    so the Discord slash command /build_server can consume the latest layout.
     """
-    return jsonify({"ok": True, "msg": "Build server placeholder reached"})
+    payload = request.json or {}
+    layout = payload.get("layout")
+
+    if not isinstance(layout, dict):
+        return jsonify({"ok": False, "error": "Missing or invalid layout"}), 400
+
+    # Normalize as with save_layout/snapshot_layout
+    cats = layout.get("categories") or []
+    if isinstance(cats, list):
+        for cat in cats:
+            if not isinstance(cat, dict):
+                continue
+            existing_channels = cat.get("channels") or []
+            if existing_channels:
+                continue
+            text_sub = cat.get("channels_text") or []
+            voice_sub = cat.get("channels_voice") or []
+            merged = []
+            for ch in list(text_sub) + list(voice_sub):
+                if isinstance(ch, dict):
+                    merged.append(ch)
+            if merged:
+                merged.sort(key=lambda ch: ch.get("position", 0))
+                cat["channels"] = merged
+
+    try:
+        meta = _store_layout_version(str(guild_id), layout)
+        return jsonify({
+            "ok": True,
+            "version": meta["version"],
+            "msg": "Layout stored. Run /build_server in Discord to apply it."
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
-#   ROUTE: UPDATE SERVER (placeholder)
+#   ROUTE: UPDATE SERVER
 # ------------------------------------------------------------
 
-@app.post("/api/update_server")
-def api_update_server():
+@app.post("/api/update_server/<guild_id>")
+def api_update_server(guild_id):
     """
-    Placeholder endpoint for updating an existing server layout.
+    Dashboard hook for 'Update Server'.
+    Behaves like /api/build_server for now: stores a new version that
+    /update_server (slash command) will pull as the latest layout.
     """
-    return jsonify({"ok": True, "msg": "Update server placeholder reached"})
+    payload = request.json or {}
+    layout = payload.get("layout")
+
+    if not isinstance(layout, dict):
+        return jsonify({"ok": False, "error": "Missing or invalid layout"}), 400
+
+    cats = layout.get("categories") or []
+    if isinstance(cats, list):
+        for cat in cats:
+            if not isinstance(cat, dict):
+                continue
+            existing_channels = cat.get("channels") or []
+            if existing_channels:
+                continue
+            text_sub = cat.get("channels_text") or []
+            voice_sub = cat.get("channels_voice") or []
+            merged = []
+            for ch in list(text_sub) + list(voice_sub):
+                if isinstance(ch, dict):
+                    merged.append(ch)
+            if merged:
+                merged.sort(key=lambda ch: ch.get("position", 0))
+                cat["channels"] = merged
+
+    try:
+        meta = _store_layout_version(str(guild_id), layout)
+        return jsonify({
+            "ok": True,
+            "version": meta["version"],
+            "msg": "Layout stored. Run /update_server in Discord to apply it."
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ------------------------------------------------------------
 #   ENTRYPOINT
