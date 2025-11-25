@@ -173,22 +173,23 @@ def debug_cookie_headers(response):
     return response
 
 def get_owned_guilds_or_403(gid: str):
-    """Return discord guild only if logged in user is owner."""
+    """Ensure the logged-in user owns the guild ID; return the guild metadata from session.
+
+    This version does NOT rely on the Discord bot cache, because the dashboard
+    runs in a separate service where `bot.get_guild()` is not populated.
+    """
     discord_user = session.get("discord_user")
-    guilds = session.get("guilds",[])
+    guilds = session.get("guilds") or []
 
     if not discord_user:
         abort(401, "Not logged in via Discord")
-    
-    owned = [g for g in guilds if g.get("id") == gid and g.get("owner") ]
-    if not owned:
-        abort (403, f"You do not own guild ID {gid}")
 
-    g_obj = bot.get_guild(int(gid))
-    if g_obj is None:
-        abort(404, f"Bot cannot see guild {gid} (not cached)")
-    
-    return g_obj
+    owned = next((g for g in guilds if g.get("id") == gid and g.get("owner")), None)
+    if not owned:
+        abort(403, f"You do not own guild ID {gid}")
+
+    # Return the guild metadata dict from the OAuth session
+    return owned
 
 @app.route("/")
 def index():
@@ -372,9 +373,13 @@ def api_build_server(gid):
     
 @app.get("/api/snapshot/latest/<gid>")
 def api_latest_snapshot(gid):
-    guild_obj = get_owned_guild_or_403(gid)
+    # Ensure the logged-in user actually owns this guild; this will
+    # raise 401/403 if not allowed, and otherwise returns the guild
+    # metadata dict (which we don't need further here).
+    _ = get_owned_guilds_or_403(gid)
 
-    layout = _load_layout_for_guild(guild_obj.id)
+    # Use the guild ID directly when loading the layout from the DB.
+    layout = _load_layout_for_guild(gid)
     if not layout:
         return jsonify({"error": "No saved layout for this guild"}), 404
     return jsonify(layout)
