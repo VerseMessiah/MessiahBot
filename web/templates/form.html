@@ -745,6 +745,40 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+    // Save Snapshot (equivalent to Save Layout, but marks snapshot=true)
+  el("btnSnapshot").addEventListener("click", async () => {
+    const gid = guildSelect.value.trim();
+    if (!gid){ alert("Select a server first"); return; }
+
+    const categories = collectLayoutFromUI();
+    const layout = {
+      mode: "update",
+      categories: categories,
+      channels: []
+    };
+    const roles = rolesState.slice();
+
+    const payload = {
+      guild_id: gid,
+      layout,
+      roles,
+      snapshot: true   // <— the worker uses this to mark this as a snapshot
+    };
+
+    const resp = await fetch("/submit-server-layout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (resp.ok){
+      el("builderNote").textContent = "Snapshot saved for guild " + gid;
+    } else {
+      const t = await resp.text();
+      el("builderNote").textContent = "Snapshot failed: " + t;
+    }
+  });
+
   // Debug toggle event
   if (debugToggleTop && rawJsonBlock) {
     debugToggleTop.addEventListener("click", () => {
@@ -762,18 +796,3 @@ document.addEventListener("DOMContentLoaded", () => {
 
 </body>
 </html>
-  btnSnapshot.addEventListener("click", async () => {
-      const gid = guildSelect.value.trim();
-      if (!gid){ alert("Select a server first"); return; }
-
-      try {
-        const res = await fetch(`/api/snapshot/${gid}`, { method: "GET" });
-        if (!res.ok) {
-          const t = await res.text();
-          throw new Error("Snapshot failed: " + t.slice(0,200));
-        }
-        el("builderNote").textContent = "Snapshot saved for guild " + gid;
-      } catch(e){
-        el("builderNote").textContent = "Snapshot error: " + e.message;
-      }
-  });

@@ -49,6 +49,9 @@ def submit_server_layout():
         return jsonify({"ok": False, "error": "DATABASE_URL not configured"}), 500
 
     data = request.get_json(silent=True) or {}
+    layout_type = (data.get("layout_type") or "active").strip().lower()
+    if layout_type not in ("active", "snapshot"):
+        layout_type = "active"
     gid = str(data.get("guild_id") or "").strip()
     if not gid:
         return jsonify({"ok": False, "error": "Missing guild_id"}), 400
@@ -90,7 +93,7 @@ def submit_server_layout():
                 # Store the layout as JSONB, with layout_type='active'
                 cur.execute(
                     "INSERT INTO builder_layouts (guild_id, version, layout_type, payload) VALUES (%s, %s, %s, %s::jsonb)",
-                    (gid, ver, "active", json.dumps(layout)),
+                    (gid, ver, layout_type, json.dumps(layout)),
                 )
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB write failed: {e}"}), 500
