@@ -141,57 +141,57 @@ function el(id){ return document.getElementById(id); }
 
 function collectLayoutFromUI() {
   const categories = [];
-  document.querySelectorAll(".category-block").forEach(block => {
+
+  document.querySelectorAll(".category-block").forEach((block, catIndex) => {
     const nameInput = block.querySelector(".category-name");
     const name = nameInput ? nameInput.value : "";
 
     const textRows = block.querySelectorAll(".text-channel-list .channel-row");
     const voiceRows = block.querySelectorAll(".voice-channel-list .channel-row");
 
-    const channels = [];
-    let pos = 0;
+    const channels_text = [];
+    const channels_voice = [];
 
-    // Text-like channels first
+    let textPos = 0;
+    let voicePos = 0;
+
+    // Text-like channels
     Array.from(textRows).forEach(row => {
-      const typeSpan = row.querySelector(".channel-type");
-      const rawType = (typeSpan?.dataset.type || typeSpan?.textContent || "text").toLowerCase().trim();
-      const type = rawType || "text";
       const nameVal = row.querySelector(".channel-name")?.value || "";
-      channels.push({
-        type,
+      channels_text.push({
+        type: "text",
         name: nameVal,
         options: {},
-        position: pos++
+        position: textPos++
       });
     });
 
-    // Voice-like channels after text/forum
+    // Voice-like channels
     Array.from(voiceRows).forEach(row => {
-      const typeSpan = row.querySelector(".channel-type");
-      const rawType = (typeSpan?.dataset.type || typeSpan?.textContent || "voice").toLowerCase().trim();
-      const type = rawType || "voice";
       const nameVal = row.querySelector(".channel-name")?.value || "";
-      channels.push({
-        type,
+      channels_voice.push({
+        type: "voice",
         name: nameVal,
         options: {},
-        position: pos++
+        position: voicePos++
       });
     });
 
     categories.push({
       name,
-      channels,
-      position: categories.length
+      channels_text,
+      channels_voice,
+      position: catIndex
     });
   });
+
   return categories;
 }
 
 function saveVisualToJson() {
   const categories = collectLayoutFromUI();
 
-  // Layout JSON: normalized payload the bot expects
+  // Layout JSON: canonical Option 1 payload (categories + channels_text/channels_voice)
   const layoutPayload = {
     mode: "update",
     categories: categories,
