@@ -790,7 +790,12 @@ class ServerBuilder(commands.Cog):
             for c in cats_payload:
                 cname = c.get("name", "")
                 desired_categories.append((cname, c.get("overwrites") or {}))
-                for ch in (c.get("channels") or []):
+
+                text_list = c.get("channels_text") or []
+                voice_list = c.get("channels_voice") or []
+                merged = (c.get("channels") or []) + text_list + voice_list
+
+                for ch in merged:
                     channels_spec.append({
                         "name": ch.get("name"),
                         "type": (ch.get("type") or "text").lower(),
