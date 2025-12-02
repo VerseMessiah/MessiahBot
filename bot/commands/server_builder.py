@@ -113,7 +113,7 @@ def _load_layout_for_guild(guild_id: int):
 
 
 def _norm(name: Optional[str]) -> str:
-    return (name or "").strip().lower()
+    return (name or "").strip()
 
 
 def _hex_to_color(hex_str: Optional[str]) -> discord.Color:
@@ -126,28 +126,40 @@ def _hex_to_color(hex_str: Optional[str]) -> discord.Color:
 
 # ---------- finders ----------
 def _find_role(guild: discord.Guild, name: str) -> Optional[discord.Role]:
-    nl = name.lower()
-    return next((r for r in guild.roles if r.name.lower() == nl), None)
+    """Find a role by exact name (case‑sensitive)."""
+    return next((r for r in guild.roles if r.name == name), None)
 
 def _find_category(guild: discord.Guild, name: str) -> Optional[discord.CategoryChannel]:
-    nl = name.lower()
-    return next((c for c in guild.categories if c.name.lower() == nl), None)
+    """Find a category by exact name (case‑sensitive)."""
+    return next((c for c in guild.categories if c.name == name), None)
 
 def _find_text(guild: discord.Guild, name: str) -> Optional[discord.TextChannel]:
-    nl = name.lower()
-    return next((c for c in guild.text_channels if c.name.lower() == nl), None)
+    """Find a text (or announcement/news) channel by exact name (case‑sensitive).
+    Announcement/news channels are subclasses of TextChannel and are included in guild.text_channels.
+    """
+    try:
+        text_channels = list(guild.text_channels)
+    except Exception:
+        text_channels = []
+    return next((c for c in text_channels if c.name == name), None)
 
 def _find_voice(guild: discord.Guild, name: str) -> Optional[discord.VoiceChannel]:
-    nl = name.lower()
-    return next((c for c in guild.voice_channels if c.name.lower() == nl), None)
+    """Find a voice or stage channel by exact name (case‑sensitive).
+    Stage channels are subclasses of VoiceChannel and are included in guild.voice_channels.
+    """
+    try:
+        voice_channels = list(guild.voice_channels)
+    except Exception:
+        voice_channels = []
+    return next((c for c in voice_channels if c.name == name), None)
 
 def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChannel]:
+    """Find a forum channel by exact name (case‑sensitive)."""
     try:
         forums = list(guild.forums)
     except Exception:
         forums = []
-    nl = name.lower()
-    return next((c for c in forums if c.name.lower() == nl), None)
+    return next((c for c in forums if c.name == name), None)
 
 
 # ---------- permissions / overwrites ----------
