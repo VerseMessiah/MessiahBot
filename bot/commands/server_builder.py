@@ -919,17 +919,21 @@ class ServerBuilder(commands.Cog):
                         logs.append(f"❌ Missing permission to create category: **{catname}**")
 
             existing = None
-            if chtype in ("text", "announcement"):
+            if chtype == "text":
                 existing = _find_text(guild, chname)
+            elif chtype == "announcement":
+                # Announcement/news channels are still found through _find_text
+                cand = _find_text(guild, chname)
+                if cand and getattr(cand, "type", None) == discord.ChannelType.news:
+                    existing = cand
             elif chtype == "voice":
                 existing = _find_voice(guild, chname)
+            elif chtype == "stage":
+                cand = _find_voice(guild, chname)
+                if cand and getattr(cand, "type", None) == discord.ChannelType.stage_voice:
+                    existing = cand
             elif chtype == "forum":
                 existing = _find_forum(guild, chname)
-            elif chtype == "stage":
-                existing = _find_voice(guild, chname)
-            else:
-                existing = _find_text(guild, chname)
-                chtype = "text"
 
             ch_overwrites = _build_overwrites(guild, ch.get("overwrites") or {})
             if not isinstance(ch_overwrites, dict) or len(ch_overwrites) == 0:
@@ -1122,10 +1126,22 @@ class ServerBuilder(commands.Cog):
                             continue
                         # Find the existing channel of the right type
                         target = None
-                        if typ in ("text", "announcement"):
-                            target = _find_text(guild, nm)
-                        elif typ in ("voice", "stage"):
-                            target = _find_voice(guild, nm)
+                        if typ == "text":
+                            cand = _find_text(guild, nm)
+                            if cand and getattr(cand, "type", None) == discord.ChannelType.text:
+                                target = cand
+                        elif typ == "announcement":
+                            cand = _find_text(guild, nm)
+                            if cand and getattr(cand, "type", None) == discord.ChannelType.news:
+                                target = cand
+                        elif typ == "voice":
+                            cand = _find_voice(guild, nm)
+                            if cand and getattr(cand, "type", None) == discord.ChannelType.voice:
+                                target = cand
+                        elif typ == "stage":
+                            cand = _find_voice(guild, nm)
+                            if cand and getattr(cand, "type", None) == discord.ChannelType.stage_voice:
+                                target = cand
                         elif typ == "forum":
                             target = _find_forum(guild, nm)
                         if not target:
