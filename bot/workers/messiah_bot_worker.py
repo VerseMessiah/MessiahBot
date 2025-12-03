@@ -86,6 +86,10 @@ async def snapshot_guild(guild_id: str):
 
         # categories (Discord type 4)
         cats = [c for c in chans if c.get("type") == 4]
+        cats.sort(key=lambda c: c.get("position", 0))
+
+        # categories (Discord type 4)
+        cats = [c for c in chans if c.get("type") == 4]
         categories_payload = []
         for c in cats:
             cat_id = str(c["id"])
