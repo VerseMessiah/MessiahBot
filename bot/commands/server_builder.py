@@ -43,6 +43,35 @@ def _get(url: str, headers: Dict[str, str]):
     r.raise_for_status()
     return r
 
+def merged_category_channels(cat: dict) -> list[dict]:
+    """
+    Normalize a category's channels into a single list, regardless of whether
+    the source layout uses:
+      - channels[] (old format)
+      - channels_text[] + channels_voice[] (new dashboard format)
+    """
+    if not isinstance(cat, dict):
+        return []
+
+    # If unified channels[] exists & is non-empty, just use it
+    chans = cat.get("channels") or []
+    if isinstance(chans, list) and chans:
+        return chans
+
+    # Otherwise, merge text + voice arrays coming from the dashboard
+    text_sub = cat.get("channels_text") or []
+    voice_sub = cat.get("channels_voice") or []
+
+    merged = []
+    for ch in list(text_sub) + list(voice_sub):
+        if not isinstance(ch, dict):
+            continue
+        merged.append(ch)
+
+    # Sort by position if present
+    merged.sort(key=lambda c: c.get("position", 0))
+    return merged
+
 # --- Config / DB & Token ---
 DATABASE_URL = os.getenv("DATABASE_URL")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # used for REST snapshot fallback
@@ -817,6 +846,16 @@ class ServerBuilder(commands.Cog):
         update_only: bool,
         progress: Optional[Progress] = None
     ):
+        # Support both "flat" layouts and the dashboard wrapper:
+        #   { "guild_id": "...", "layout": { ... }, "roles": [...] }
+        # If a top-level "layout" dict exists, treat that as canonical and
+        # merge top-level roles into it if needed.
+        if isinstance(layout, dict) and isinstance(layout.get("layout"), dict):
+            inner = dict(layout["layout"])  # shallow copy
+            if "roles" in layout and "roles" not in inner:
+                inner["roles"] = layout["roles"]
+            layout = inner
+
         logs: List[str] = []
         ren_spec = (layout.get("renames") or {})
         prune_spec = (layout.get("prune") or {})
@@ -1143,9 +1182,10 @@ class ServerBuilder(commands.Cog):
             if desired_cats and isinstance(desired_cats[0], dict):
                 for c_idx, c in enumerate(desired_cats):
                     cname = _norm(c.get("name"))
-                    desired_chs = c.get("channels") or []
-                    # order by given position if present
-                    desired_chs_sorted = list(desired_chs)
+                    # Use merged_category_channels to support either:
+                    #   - legacy `channels[]`
+                    #   - new `channels_text[]` / `channels_voice[]`
+                    desired_chs_sorted = merged_category_channels(c)
                     
                     parent = _find_category(guild, cname) if cname else None
                     for ch_idx, ch in enumerate(desired_chs_sorted):
