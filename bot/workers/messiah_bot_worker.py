@@ -84,6 +84,8 @@ async def snapshot_guild(guild_id: str):
         # channels
         chans = await _dget(http, f"/guilds/{guild_id}/channels")
 
+        # categories (Discord type 4)
+        cats = [c for c in chans if c.get("type") == 4]
         categories_payload = []
         for c in cats:
             cat_id = str(c["id"])
