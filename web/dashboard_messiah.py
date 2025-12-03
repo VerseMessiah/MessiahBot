@@ -72,6 +72,34 @@ def submit_server_layout():
     # Attach roles from the dashboard as the source of truth
     layout["roles"] = roles
 
+    # Merge dashboard-specific channels_text/channels_voice into a unified 'channels' list
+    categories = layout.get("categories") or []
+    normalized_categories = []
+    for cat in categories:
+        if not isinstance(cat, dict):
+            # Skip anything weird; keep it as-is
+            normalized_categories.append(cat)
+            continue
+
+        # Pull out any split channel lists from the dashboard
+        text_list = cat.pop("channels_text", []) or []
+        voice_list = cat.pop("channels_voice", []) or []
+        existing_channels = cat.get("channels") or []
+
+        merged_channels = []
+        for lst in (existing_channels, text_list, voice_list):
+            for ch in lst:
+                if isinstance(ch, dict):
+                    merged_channels.append(ch)
+
+        # Keep ordering stable by position if provided
+        merged_channels.sort(key=lambda c: c.get("position", 0))
+
+        cat["channels"] = merged_channels
+        normalized_categories.append(cat)
+
+    layout["categories"] = normalized_categories
+
     # Ensure the minimal fields server_builder._apply_layout expects exist
     layout.setdefault("mode", "update")
     layout.setdefault("channels", [])
