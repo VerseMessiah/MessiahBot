@@ -144,14 +144,21 @@ def _find_text(guild: discord.Guild, name: str) -> Optional[discord.TextChannel]
     return next((c for c in text_channels if c.name == name), None)
 
 def _find_voice(guild: discord.Guild, name: str) -> Optional[discord.VoiceChannel]:
-    """Find a voice or stage channel by exact name (case‑sensitive).
-    Stage channels are subclasses of VoiceChannel and are included in guild.voice_channels.
-    """
+    """Find a **voice** channel by exact name (case-sensitive)."""
     try:
         voice_channels = list(guild.voice_channels)
     except Exception:
         voice_channels = []
     return next((c for c in voice_channels if c.name == name), None)
+
+def _find_stage(guild: discord.Guild, name: str) -> Optional[discord.VoiceChannel]:
+    """Find a **stage** channel by exact name (case-sensitive)."""
+    try:
+        # discord.py exposes stage channels via guild.stage_channels
+        stages = list(getattr(guild, "stage_channels", []))
+    except Exception:
+        stages = []
+    return next((c for c in stages if c.name == name), None)
 
 def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChannel]:
     """Find a forum channel by exact name (case‑sensitive)."""
@@ -160,6 +167,27 @@ def _find_forum(guild: discord.Guild, name: str) -> Optional[discord.ForumChanne
     except Exception:
         forums = []
     return next((c for c in forums if c.name == name), None)
+
+# --- Helper: map raw_type to canonical kind string ---
+from typing import Optional
+def _kind_from_raw_type(raw_type: Optional[int], fallback: str) -> str:
+    """Map Discord raw_type ints to our canonical kind strings.
+    0=text, 2=voice, 5=news/announcement, 13=stage, 15=forum.
+    If raw_type is None or unknown, return the provided fallback.
+    """
+    try:
+        rt = int(raw_type) if raw_type is not None else None
+    except Exception:
+        rt = None
+    if rt is None:
+        return (fallback or "text").lower()
+    return {
+        0: "text",
+        2: "voice",
+        5: "announcement",
+        13: "stage",
+        15: "forum",
+    }.get(rt, (fallback or "text").lower())
 
 
 # ---------- permissions / overwrites ----------
@@ -811,6 +839,7 @@ class ServerBuilder(commands.Cog):
                     channels_spec.append({
                         "name": ch.get("name"),
                         "type": (ch.get("type") or "text").lower(),
+                        "raw_type": ch.get("raw_type"),
                         "category": cname,
                         "topic": ch.get("topic") or (ch.get("options") or {}).get("topic"),
                         "options": ch.get("options") or {},
@@ -900,7 +929,9 @@ class ServerBuilder(commands.Cog):
         if progress: await progress.set("ensuring channels…")
         for ch in channels_spec:
             chname = _norm(ch.get("name"))
-            chtype = (ch.get("type") or "text").lower()
+            raw_type = ch.get("raw_type")
+            # Prefer raw_type from Discord over the human-readable type string
+            chtype = _kind_from_raw_type(raw_type, (ch.get("type") or "text"))
             catname = _norm(ch.get("category"))
             if not chname:
                 continue
@@ -929,9 +960,7 @@ class ServerBuilder(commands.Cog):
             elif chtype == "voice":
                 existing = _find_voice(guild, chname)
             elif chtype == "stage":
-                cand = _find_voice(guild, chname)
-                if cand and getattr(cand, "type", None) == discord.ChannelType.stage_voice:
-                    existing = cand
+                existing = _find_stage(guild, chname)
             elif chtype == "forum":
                 existing = _find_forum(guild, chname)
 
@@ -1121,7 +1150,8 @@ class ServerBuilder(commands.Cog):
                     parent = _find_category(guild, cname) if cname else None
                     for ch_idx, ch in enumerate(desired_chs_sorted):
                         nm = _norm(ch.get("name"))
-                        typ = (ch.get("type") or "text").lower()
+                        raw_type = ch.get("raw_type")
+                        typ = _kind_from_raw_type(raw_type, (ch.get("type") or "text"))
                         if not nm:
                             continue
                         # Find the existing channel of the right type
@@ -1139,7 +1169,7 @@ class ServerBuilder(commands.Cog):
                             if cand and getattr(cand, "type", None) == discord.ChannelType.voice:
                                 target = cand
                         elif typ == "stage":
-                            cand = _find_voice(guild, nm)
+                            cand = _find_stage(guild, nm)
                             if cand and getattr(cand, "type", None) == discord.ChannelType.stage_voice:
                                 target = cand
                         elif typ == "forum":

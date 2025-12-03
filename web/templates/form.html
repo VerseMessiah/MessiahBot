@@ -140,30 +140,41 @@ const rawJsonBlock = document.querySelector(".json-raw");
 function el(id){ return document.getElementById(id); }
 
 function normalizeCategory(cat) {
-  // Case A: old snapshots that only had cat.channels
-  if (!cat.channels_text && !cat.channels_voice && Array.isArray(cat.channels)) {
-    const textLike = cat.channels.filter(ch => ![2, 13].includes(ch.raw_type ?? ch.type));
-    const voiceLike = cat.channels.filter(ch => [2, 13].includes(ch.raw_type ?? ch.type));
 
-    cat.channels_text = textLike.map((ch, i) => ({
-      type: (ch.type === "announcement" ? "announcement" :
-        ch.type === "forum" ? "forum" : "text"),
-      raw_type: ch.raw_type ?? (ch.type === "voice" ? 2 : 0),
-      name: ch.name,
-      options: ch.options || {},
-      position: i
-    }));
+  // Worker payload returns unified channels[]; split here
+  if (Array.isArray(cat.channels) && (!cat.channels_text && !cat.channels_voice)) {
+    const textLike = cat.channels.filter(ch =>
+      ![2, 13].includes(ch.raw_type ?? ch.type)
+    );
+    const voiceLike = cat.channels.filter(ch =>
+      [2, 13].includes(ch.raw_type ?? ch.type)
+    );
 
-    cat.channels_voice = voiceLike.map((ch, i) => ({
-      type: (ch.type === "stage" ? "stage" : "voice"),
-      raw_type: ch.raw_type ?? 2,
-      name: ch.name,
-      options: ch.options || {},
-      position: i
-    }));
+    cat.channels_text = textLike
+      .sort((a,b) => (a.position ?? 0) - (b.position ?? 0))
+      .map(ch => ({
+        type:
+          ch.type === "announcement" ? "announcement" :
+          ch.type === "forum" ? "forum" :
+          "text",
+        raw_type: ch.raw_type ?? 0,
+        name: ch.name,
+        options: ch.options || {},
+        position: ch.position ?? 0
+      }));
+
+    cat.channels_voice = voiceLike
+      .sort((a,b) => (a.position ?? 0) - (b.position ?? 0))
+      .map(ch => ({
+        type: ch.type === "stage" ? "stage" : "voice",
+        raw_type: ch.raw_type ?? 2,
+        name: ch.name,
+        options: ch.options || {},
+        position: ch.position ?? 0
+      }));
   }
 
-  // Case B: New schema (already split)
+  // Support new snapshots
   cat.channels_text = cat.channels_text || [];
   cat.channels_voice = cat.channels_voice || [];
 
@@ -741,7 +752,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const payload = snap.payload;
-      const categories = (payload.categories || payload.categories_channels || []).map(normalizeCategory);
+      const categories = (payload.categories || []).map(normalizeCategory);
       const roles = payload.roles || [];
 
       renderLayout(categories);

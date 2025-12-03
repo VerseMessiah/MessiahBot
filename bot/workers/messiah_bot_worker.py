@@ -83,15 +83,6 @@ async def snapshot_guild(guild_id: str):
 
         # channels
         chans = await _dget(http, f"/guilds/{guild_id}/channels")
-        cats = [c for c in chans if c["type"] == 4]
-        cats.sort(key=lambda c: c.get("position", 0))
-        # Preserve API order for channels; do not pre-sort non-category channels
-        text = [c for c in chans if c["type"] in [0, 5, 15]]
-        voice = [c for c in chans if c["type"] in [2, 13]]
-
-        # Ensure categories and channels remain in true Discord UI order (top → bottom).
-        # Categories: ascending position
-        # Channels inside each category: ascending position
 
         categories_payload = []
         for c in cats:
@@ -145,9 +136,6 @@ async def snapshot_guild(guild_id: str):
             categories_payload.append({
                 "name": c["name"],
                 "position": c["position"],
-                # Used by the dashboard UI (two separate boxes)
-                "channels_text": text_sub,
-                "channels_voice": voice_sub,
                 # Used by ServerBuilder (single merged list)
                 "channels": combined
             })
