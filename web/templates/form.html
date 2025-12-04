@@ -72,7 +72,7 @@
           <button class="btn" id="btnLoadLive" disabled>Load from Live</button>
           <button class="btn" id="btnLoadSnapshot" disabled>Load Snapshot</button>
           <button class="btn btn--primary" id="btnSave" disabled>Save Layout</button>
-          <button class="btn" id="btnSnapshot" disabled>Save Snapshot</button>
+          <button class="btn" id="btnLoadLayout" disabled>Load Layout</button>
         </div>
       </div>
 
@@ -550,7 +550,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnLoadLive = document.getElementById("btnLoadLive");
   const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
   const btnSave = document.getElementById("btnSave");
-  const btnSnapshot = document.getElementById("btnSnapshot");
   const builderActions = document.getElementById("builderActions");
 
   guildSelect.addEventListener("change", () => {
@@ -558,7 +557,6 @@ document.addEventListener("DOMContentLoaded", () => {
     btnLoadLive.disabled = !has;
     btnLoadSnapshot.disabled = !has;
     btnSave.disabled = !has;
-    btnSnapshot.disabled = !has;
     if (builderActions) {
       builderActions.style.display = has ? "flex" : "none";
     }
@@ -620,7 +618,6 @@ document.addEventListener("DOMContentLoaded", () => {
         btnLoadLive.disabled = true;
         btnLoadSnapshot.disabled = true;
         btnSave.disabled = true;
-        btnSnapshot.disabled = true;
 
         // Force the change handler to run once to sync button disabled state
         guildSelect.dispatchEvent(new Event("change"));
@@ -635,7 +632,6 @@ document.addEventListener("DOMContentLoaded", () => {
         btnLoadLive.disabled = true;
         btnLoadSnapshot.disabled = true;
         btnSave.disabled = true;
-        btnSnapshot.disabled = true;
       }
 
       // Twitch status
@@ -793,37 +789,39 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-    // Save Snapshot (equivalent to Save Layout, but marks snapshot=true)
-  el("btnSnapshot").addEventListener("click", async () => {
+ // Load last layout
+  el("btnLoadLayout").addEventListener("click", async () => {
     const gid = guildSelect.value.trim();
-    if (!gid){ alert("Select a server first"); return; }
+    if (!gid) { 
+      alert("Select a server first"); 
+      return; 
+    }
 
-    const categories = collectLayoutFromUI();
-    const layout = {
-      mode: "update",
-      categories: categories,
-      channels: []
-    };
-    const roles = rolesState.slice();
+    try {
+      const resp = await fetch(`/api/layout/${gid}`);
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error("HTTP " + resp.status + " — " + text.slice(0, 200));
+      }
 
-    const payload = {
-      guild_id: gid,
-      layout,
-      roles,
-      snapshot: true   // <— the worker uses this to mark this as a snapshot
-    };
+      const ct = resp.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        const text = await resp.text();
+        throw new Error("Non-JSON response: " + text.slice(0, 200));
+      }
 
-    const resp = await fetch("/submit-server-layout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+      const payload = await resp.json();
+      const categories = (payload.categories || []).map(normalizeCategory);
+      const roles = payload.roles || [];
 
-    if (resp.ok){
-      el("builderNote").textContent = "Snapshot saved for guild " + gid;
-    } else {
-      const t = await resp.text();
-      el("builderNote").textContent = "Snapshot failed: " + t;
+      renderLayout(categories);
+      renderRoles(roles);
+
+      el("builderNote").textContent = "Loaded last saved layout for guild " + gid;
+
+    } catch (e) {
+      console.error(e);
+      el("builderNote").textContent = "Failed to load last layout: " + e.message;
     }
   });
 

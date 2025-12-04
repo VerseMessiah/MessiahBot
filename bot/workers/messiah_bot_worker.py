@@ -206,6 +206,30 @@ def ping():
     return jsonify({"ok": True, "worker": "messiah_worker", "time": dt.utcnow().isoformat()})
 
 # ------------------------------------------------------------
+#   HELPER: NORMALIZE LAYOUT
+# ------------------------------------------------------------
+
+def normalize_layout(layout: Dict[str, Any]) -> Dict[str, Any]:
+    cats = layout.get("categories") or []
+    if isinstance(cats, list):
+        for cat in cats:
+            if not isinstance(cat, dict):
+                continue
+            existing_channels = cat.get("channels") or []
+            if existing_channels:
+                continue
+            text_sub = cat.get("channels_text") or []
+            voice_sub = cat.get("channels_voice") or []
+            merged = []
+            for ch in list(text_sub) + list(voice_sub):
+                if isinstance(ch, dict):
+                    merged.append(ch)
+            if merged:
+                merged.sort(key=lambda ch: ch.get("position", 0))
+                cat["channels"] = merged
+    return layout
+
+# ------------------------------------------------------------
 #   HELPER: STORE LAYOUT VERSION
 # ------------------------------------------------------------
 
@@ -265,25 +289,7 @@ def api_save_layout():
         return jsonify({"ok": False, "error": "Missing or invalid guild_id/layout"}), 400
 
     # 🔁 Normalize categories for ServerBuilder:
-    # If a category has channels_text / channels_voice but no unified channels list,
-    # merge them into a single channels[] array ordered by position.
-    cats = layout.get("categories") or []
-    if isinstance(cats, list):
-        for cat in cats:
-            if not isinstance(cat, dict):
-                continue
-            existing_channels = cat.get("channels") or []
-            if existing_channels:
-                continue
-            text_sub = cat.get("channels_text") or []
-            voice_sub = cat.get("channels_voice") or []
-            merged = []
-            for ch in list(text_sub) + list(voice_sub):
-                if isinstance(ch, dict):
-                    merged.append(ch)
-            if merged:
-                merged.sort(key=lambda ch: ch.get("position", 0))
-                cat["channels"] = merged
+    layout = normalize_layout(layout)
 
     try:
         meta = _store_layout_version(gid, layout)
@@ -309,23 +315,7 @@ def api_snapshot_layout():
     if not gid or not isinstance(layout, dict):
         return jsonify({"ok": False, "error": "Missing or invalid guild_id/layout"}), 400
 
-    cats = layout.get("categories") or []
-    if isinstance(cats, list):
-        for cat in cats:
-            if not isinstance(cat, dict):
-                continue
-            existing_channels = cat.get("channels") or []
-            if existing_channels:
-                continue
-            text_sub = cat.get("channels_text") or []
-            voice_sub = cat.get("channels_voice") or []
-            merged = []
-            for ch in list(text_sub) + list(voice_sub):
-                if isinstance(ch, dict):
-                    merged.append(ch)
-            if merged:
-                merged.sort(key=lambda ch: ch.get("position", 0))
-                cat["channels"] = merged
+    layout = normalize_layout(layout)
 
     try:
         meta = _store_layout_version(gid, layout)
@@ -351,23 +341,7 @@ def api_build_server(guild_id):
         return jsonify({"ok": False, "error": "Missing or invalid layout"}), 400
 
     # Normalize as with save_layout/snapshot_layout
-    cats = layout.get("categories") or []
-    if isinstance(cats, list):
-        for cat in cats:
-            if not isinstance(cat, dict):
-                continue
-            existing_channels = cat.get("channels") or []
-            if existing_channels:
-                continue
-            text_sub = cat.get("channels_text") or []
-            voice_sub = cat.get("channels_voice") or []
-            merged = []
-            for ch in list(text_sub) + list(voice_sub):
-                if isinstance(ch, dict):
-                    merged.append(ch)
-            if merged:
-                merged.sort(key=lambda ch: ch.get("position", 0))
-                cat["channels"] = merged
+    layout = normalize_layout(layout)
 
     try:
         meta = _store_layout_version(str(guild_id), layout)
@@ -396,23 +370,7 @@ def api_update_server(guild_id):
     if not isinstance(layout, dict):
         return jsonify({"ok": False, "error": "Missing or invalid layout"}), 400
 
-    cats = layout.get("categories") or []
-    if isinstance(cats, list):
-        for cat in cats:
-            if not isinstance(cat, dict):
-                continue
-            existing_channels = cat.get("channels") or []
-            if existing_channels:
-                continue
-            text_sub = cat.get("channels_text") or []
-            voice_sub = cat.get("channels_voice") or []
-            merged = []
-            for ch in list(text_sub) + list(voice_sub):
-                if isinstance(ch, dict):
-                    merged.append(ch)
-            if merged:
-                merged.sort(key=lambda ch: ch.get("position", 0))
-                cat["channels"] = merged
+    layout = normalize_layout(layout)
 
     try:
         meta = _store_layout_version(str(guild_id), layout)

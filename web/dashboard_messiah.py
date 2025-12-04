@@ -363,21 +363,51 @@ def api_snapshot(gid):
     except Exception as e:
         return {"error": str(e)}, 500
 
-@app.post("/api/save_snapshot/<gid>")
-def api_save_snapshot(gid):
-    """Forward a snapshot save request to the worker and store it as active."""
-    try:
-        import requests
-        WORKER_URL = os.getenv("WORKER_URL")
-        if not WORKER_URL:
-            return {"error": "WORKER_URL missing"}, 500
+@app.get("/api/layout/latest/<gid>")
+def api_latest_layout(gid):
+    """
+    Return the most recent **active** layout for this guild.
 
-        r = requests.post(f"{WORKER_URL}/api/save_snapshot/{gid}", timeout=15)
-        if r.status_code != 200:
-            return (r.text, r.status_code)
-        return r.json()
+    This is used by the dashboard "Load Last Layout" button.
+    It does NOT hit Discord and does NOT touch snapshots.
+    """
+    if not DATABASE_URL:
+        return {"error": "DATABASE_URL not configured"}, 500
+
+    # Ensure the logged-in user actually owns this guild; aborts with 401/403 as needed
+    get_owned_guilds_or_403(gid)
+
+    try:
+        with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT payload
+                    FROM builder_layouts
+                    WHERE guild_id = %s
+                      AND layout_type = 'active'
+                    ORDER BY version DESC
+                    LIMIT 1
+                    """,
+                    (gid,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {"error": "No saved layouts found for this guild"}, 404
+
+                payload = row.get("payload")
+
+        if isinstance(payload, dict):
+            return jsonify({
+                "guild_id": gid,
+                "layout": payload,
+                "roles": payload.get("roles", []),
+            })
+        else:
+            return jsonify(payload)
+
     except Exception as e:
-        return {"error": str(e)}, 500
+        return {"error": f"DB read failed: {e}"}, 500
 
 @app.post("/api/build_server/<gid>")
 def api_build_server(gid):
