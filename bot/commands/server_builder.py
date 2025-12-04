@@ -108,12 +108,13 @@ class Progress:
 # ---------- DB / layout helpers ----------
 #
 # NOTE:
-# builder_layouts now has a `type` column:
-#   - 'snapshot' rows are saved via the dashboard or /snapshot_layout
-#   - exactly one 'active' row (if present) is what build/update_server will apply
-# This helper always prefers the active row, falling back to the latest snapshot.
+# builder_layouts has a `type` column, but for build/update we always want the
+# *latest* saved layout for this guild, regardless of whether it came from
+# /snapshot_layout or the dashboard "Save Layout" button. The dashboard and
+# commands can still use `type` for history/metadata, but the applier only
+# cares about "most recent version".
 def _load_layout_for_guild(guild_id: int):
-    """Load the latest saved layout for this guild from DB, or local file as fallback."""
+    """Load the latest saved layout (highest version) for this guild from DB, or local file as fallback."""
     if _psyco_ok and DATABASE_URL:
         with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -122,16 +123,23 @@ def _load_layout_for_guild(guild_id: int):
                     SELECT payload
                     FROM builder_layouts
                     WHERE guild_id=%s
-                    ORDER BY
-                      CASE WHEN type = 'active' THEN 0 ELSE 1 END,
-                      version DESC
+                    ORDER BY version DESC
                     LIMIT 1
                     """,
                     (str(guild_id),),
                 )
                 row = cur.fetchone()
-                if row and row.get("payload"):
-                    return row["payload"]
+                if row and row.get("payload") is not None:
+                    payload = row["payload"]
+                    # psycopg may return jsonb as either dict or str depending on config;
+                    # be defensive and json‑decode strings.
+                    if isinstance(payload, str):
+                        try:
+                            return json.loads(payload)
+                        except Exception:
+                            # fall through and return the raw string if decode fails
+                            pass
+                    return payload
 
     # Local fallback for dev
     path = os.getenv("LOCAL_LATEST_CONFIG", "latest_config.json")

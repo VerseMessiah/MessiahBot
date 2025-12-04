@@ -550,6 +550,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnLoadLive = document.getElementById("btnLoadLive");
   const btnLoadSnapshot = document.getElementById("btnLoadSnapshot");
   const btnSave = document.getElementById("btnSave");
+  const btnLoadLayout = document.getElementByID("btnLoadLayout");
   const builderActions = document.getElementById("builderActions");
 
   guildSelect.addEventListener("change", () => {
@@ -557,6 +558,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnLoadLive.disabled = !has;
     btnLoadSnapshot.disabled = !has;
     btnSave.disabled = !has;
+    if (btnLoadLayout) btnLoadLayout.disabled = !has;
     if (builderActions) {
       builderActions.style.display = has ? "flex" : "none";
     }
