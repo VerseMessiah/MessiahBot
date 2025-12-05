@@ -621,6 +621,85 @@ async def _apply_community(guild: discord.Guild, community_payload: Dict[str, An
             print(f"[Messiah] community settings edit failed: {e}")
 
 
+def _normalize_categories_and_channels(layout: Dict[str, Any]) -> Tuple[List[Tuple[str, Dict[str, Dict[str, str]]]], List[Dict[str, Any]]]:
+    """
+    Normalize the layout's categories + channels into a consistent internal shape.
+
+    Returns:
+        desired_categories: list of (category_name, overwrites_dict)
+        channels_spec: list of per-channel dicts with keys:
+          - name
+          - type (canonical: text / announcement / voice / stage / forum)
+          - raw_type
+          - category (category name)
+          - topic
+          - options
+          - overwrites
+          - position
+    """
+    desired_categories: List[Tuple[str, Dict[str, Dict[str, str]]]] = []
+    channels_spec: List[Dict[str, Any]] = []
+
+    cats_payload = layout.get("categories", []) or []
+
+    # New / nested format: categories is a list of dicts
+    if cats_payload and isinstance(cats_payload[0], dict):
+        for c in cats_payload:
+            cname = c.get("name", "") or ""
+            desired_categories.append((cname, c.get("overwrites") or {}))
+
+            # Use the canonical merged view to support:
+            #  - legacy `channels[]`
+            #  - new `channels_text[]` / `channels_voice[]`
+            merged = merged_category_channels(c)
+
+            for ch in merged:
+                if not isinstance(ch, dict):
+                    continue
+                raw_type = ch.get("raw_type")
+                kind = _kind_from_raw_type(raw_type, (ch.get("type") or "text"))
+                options = ch.get("options") or {}
+                channels_spec.append({
+                    "name": ch.get("name"),
+                    "type": kind,
+                    "raw_type": raw_type,
+                    "category": cname,
+                    "topic": ch.get("topic") or options.get("topic"),
+                    "options": options,
+                    "overwrites": ch.get("overwrites") or {},
+                    "position": ch.get("position"),
+                })
+    else:
+        # Legacy flat format:
+        #   categories: [ "Cat Name", ... ] or [{ "name": "Cat", "overwrites": {...}}, ...]
+        #   channels:   [ { name, type, category, ... }, ... ]
+        for c in cats_payload:
+            if isinstance(c, dict):
+                cname = c.get("name", "") or ""
+                desired_categories.append((cname, c.get("overwrites") or {}))
+            else:
+                desired_categories.append((str(c) if c is not None else "", {}))
+
+        for ch in (layout.get("channels") or []):
+            if not isinstance(ch, dict):
+                continue
+            cname = ch.get("category") or ""
+            raw_type = ch.get("raw_type")
+            kind = _kind_from_raw_type(raw_type, (ch.get("type") or "text"))
+            options = ch.get("options") or {}
+            channels_spec.append({
+                "name": ch.get("name"),
+                "type": kind,
+                "raw_type": raw_type,
+                "category": cname,
+                "topic": ch.get("topic") or options.get("topic"),
+                "options": options,
+                "overwrites": ch.get("overwrites") or {},
+                "position": ch.get("position"),
+            })
+
+    return desired_categories, channels_spec
+
 # ---------- renames ----------
 async def _apply_role_renames(guild: discord.Guild, renames: List[Dict[str, str]]):
     by_name = { _norm(r.name): r for r in guild.roles }
@@ -653,11 +732,17 @@ async def _apply_category_renames(guild: discord.Guild, renames: List[Dict[str, 
                 print(f"[Messiah] category rename failed {cat.name} -> {dst}: {e}")
 
 async def _apply_channel_renames(guild: discord.Guild, renames: List[Dict[str, str]]):
+    # Include text, voice, forum, and stage channels in rename pass
     all_chans: List[discord.abc.GuildChannel] = list(guild.text_channels) + list(guild.voice_channels)
     try:
         all_chans += list(guild.forums)
     except Exception:
         pass
+    try:
+        all_chans += list(getattr(guild, "stage_channels", []))
+    except Exception:
+        pass
+
     by_name = { _norm(c.name): c for c in all_chans }
     for m in renames or []:
         src, dst = _norm(m.get("from")), (m.get("to") or "").strip()
@@ -869,34 +954,7 @@ class ServerBuilder(commands.Cog):
         prune_spec = (layout.get("prune") or {})
 
         # Normalize categories + channels (support nested and legacy)
-        desired_categories: List[Tuple[str, Dict[str, Dict[str, str]]]] = []
-        channels_spec: List[Dict[str, Any]] = []
-
-        cats_payload = layout.get("categories", []) or []
-        if cats_payload and isinstance(cats_payload[0], dict):
-            for c in cats_payload:
-                cname = c.get("name", "")
-                desired_categories.append((cname, c.get("overwrites") or {}))
-
-                text_list = c.get("channels_text") or []
-                voice_list = c.get("channels_voice") or []
-                merged = (c.get("channels") or []) + text_list + voice_list
-
-                for ch in merged:
-                    channels_spec.append({
-                        "name": ch.get("name"),
-                        "type": (ch.get("type") or "text").lower(),
-                        "raw_type": ch.get("raw_type"),
-                        "category": cname,
-                        "topic": ch.get("topic") or (ch.get("options") or {}).get("topic"),
-                        "options": ch.get("options") or {},
-                        "overwrites": ch.get("overwrites") or {}
-                    })
-        else:
-            for c in cats_payload:
-                desired_categories.append((c, {}))
-            for ch in (layout.get("channels") or []):
-                channels_spec.append(ch)
+        desired_categories, channels_spec = _normalize_categories_and_channels(layout)
 
         # Renames first
         if progress: await progress.set("applying renames…")
