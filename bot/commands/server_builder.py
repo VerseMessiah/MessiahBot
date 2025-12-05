@@ -1069,9 +1069,13 @@ class ServerBuilder(commands.Cog):
             elif chtype == "forum":
                 existing = _find_forum(guild, chname)
 
-            ch_overwrites = _build_overwrites(guild, ch.get("overwrites") or {})
-            if not isinstance(ch_overwrites, dict) or len(ch_overwrites) == 0:
-                ch_overwrites = None  # avoid "overwrites expects a dict"
+            ow_raw = ch.get("overwrites")
+            if isinstance(ow_raw, dict) and len(ow_raw) > 0:
+                ch_overwrites = _build_overwrites(guild, ow_raw)
+                if not isinstance(ch_overwrites, dict):
+                    ch_overwrites = {}
+            else:
+                ch_overwrites = {}
             opts = ch.get("options") or {}
             topic = ch.get("topic") or opts.get("topic") or None
             nsfw = bool(opts.get("nsfw") or opts.get("age_restricted"))
@@ -1083,7 +1087,7 @@ class ServerBuilder(commands.Cog):
                     created = None
                     if chtype in ("text", "announcement"):
                         created = await guild.create_text_channel(
-                            chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
+                            chname, category=parent, overwrites=(ch_overwrites or {}), reason="MessiahBot builder"
                         )
                         # CHANGE: throttle after create
                         await _throttle()
@@ -1097,7 +1101,7 @@ class ServerBuilder(commands.Cog):
                             pass
                     elif chtype == "voice":
                         created = await guild.create_voice_channel(
-                            chname, category=parent, overwrites=ch_overwrites, reason="MessiahBot builder"
+                            chname, category=parent, overwrites=(ch_overwrites or {}), reason="MessiahBot builder"
                         )
                         # CHANGE: throttle after create
                         await _throttle()
