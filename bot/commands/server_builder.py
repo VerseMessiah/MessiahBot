@@ -341,12 +341,16 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
             if hasattr(ch, "type"):
                 if str(ch.type) == "ChannelType.voice":
                     ctype = "voice"
+                    raw_type = 2
                 elif str(ch.type) == "ChannelType.forum":
                     ctype = "forum"
+                    raw_type = 15
                 elif str(ch.type) == "ChannelType.stage_voice":
                     ctype = "stage"
+                    raw_type = 13
                 else:
                     ctype = "announcement" if _is_announcement(ch) else "text"
+                    raw_type = 0
 
             # Channel options
             options = {}
@@ -369,6 +373,7 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
             ch_items.append({
                 "name": ch.name,
                 "type": ctype,
+                "raw type": raw_type,
                 "position": _safe_pos(ch, 0),
                 "options": options,
                 # NOTE: We do not include overwrites unless the dashboard toggle is used to send them back.
@@ -588,7 +593,7 @@ async def _apply_community(guild: discord.Guild, community_payload: Dict[str, An
         "low": discord.VerificationLevel.low,
         "medium": discord.VerificationLevel.medium,
         "high": discord.VerificationLevel.high,
-        "very_high": discord.VerificationLevel.very_high,
+        "very_high": discord.VerificationLevel.highest,
     }
     notif_map = {
         "all_messages": discord.NotificationLevel.all_messages,
@@ -657,7 +662,19 @@ def _normalize_categories_and_channels(layout: Dict[str, Any]) -> Tuple[List[Tup
                 if not isinstance(ch, dict):
                     continue
                 raw_type = ch.get("raw_type")
-                kind = _kind_from_raw_type(raw_type, (ch.get("type") or "text"))
+                declared = (ch.get("type") or "").lower()
+                # Auto-correct legacy/bad raw_type values
+                if declared == "stage":
+                    raw_type = 13
+                elif declared == "announcement":
+                    raw_type = 5
+                elif declared == "forum":
+                    raw_type = 15
+                elif declared == "voice":
+                    raw_type = 2
+                elif declared == "text":
+                    raw_type = 0
+                kind = declared or _kind_from_raw_type(raw_type, "text")
                 options = ch.get("options") or {}
                 channels_spec.append({
                     "name": ch.get("name"),
