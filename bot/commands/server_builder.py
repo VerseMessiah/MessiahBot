@@ -338,7 +338,14 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
         for ch in chans_sorted:
             # Normalize type string
             ctype = "text"
+            raw_type = 0
             if hasattr(ch, "type"):
+                if str(ch.type) == "ChannelType.forum":
+                    ctype = "forum"
+                    raw_type = 15
+                if str(ch.type) == "ChannelType.announcement":
+                    ctype = "announcement"
+                    raw_type = 5
                 if str(ch.type) == "ChannelType.voice":
                     ctype = "voice"
                     raw_type = 2
