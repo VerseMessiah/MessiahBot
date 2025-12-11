@@ -122,16 +122,25 @@ async def snapshot_guild(guild_id: str):
                 for ch in text_like
             ]
 
-            voice_sub = [
-                {
+            voice_sub = []
+            for ch in voice_like:
+                if ch["type"] == 2:
+                    subtype = "voice"
+                    raw = 2
+                elif ch["type"] == 13:
+                    subtype = "stage"
+                    raw = 13
+                else:
+                    subtype = "voice"
+                    raw = ch["type"]
+                
+                voice_sub.append({
                     "name": ch["name"],
-                    "type": "voice" if ch["type"] == 2 else "stage",
-                    "raw_type": ch["type"],
+                    "type": subtype,
+                    "raw_type": raw,
                     "position": ch["position"],
                     "options": {}
-                }
-                for ch in voice_like
-            ]
+                })
 
             # Merge text + voice into a single channels list for ServerBuilder compatibility
             combined = sorted(
