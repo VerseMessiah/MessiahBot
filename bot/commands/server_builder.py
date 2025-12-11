@@ -352,7 +352,7 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
                 elif str(ch.type) == "ChannelType.forum":
                     ctype = "forum"
                     raw_type = 15
-                elif str(ch.type) == "ChannelType.stage_voice":
+                elif str(ch.type) == "ChannelType.stage":
                     ctype = "stage"
                     raw_type = 13
                 else:
