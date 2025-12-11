@@ -106,21 +106,28 @@ async def snapshot_guild(guild_id: str):
             voice_like.sort(key=lambda ch: ch["position"])
 
             # Convert to unified format
-            text_sub = [
-                {
+            text_sub = []
+            for ch in text_like:
+                if ch["type"] == 0:
+                    subtype = "text"
+                    raw = 0
+                elif ch["type"] == 5:
+                    subtype = "announcement"
+                    raw = 5
+                elif ch ["type"] == 15:
+                    subtype = "forum"
+                    raw = 15
+                else:
+                    subtype = "text"
+                    raw = ch["type:"]
+                
+                text_sub.append({
                     "name": ch["name"],
-                    "type": (
-                        "text" if ch["type"] == 0 else
-                        "announcement" if ch["type"] == 5 else
-                        "forum" if ch["type"] == 15 else
-                        "text"
-                    ),
-                    "raw_type": ch["type"],
+                    "type": subtype,
+                    "raw_type": raw,
                     "position": ch["position"],
                     "options": {}
-                }
-                for ch in text_like
-            ]
+                })
 
             voice_sub = []
             for ch in voice_like:
