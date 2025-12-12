@@ -200,12 +200,23 @@ function collectLayoutFromUI() {
     // Text-like channels
     Array.from(textRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
-      
-      const typeSelect = row.querySelector(".channel-type-select");
-      const typeVal = typeSelect ? typeSelect.value : "text";
-      const rawType = typeSelect
-        ? parseInt(typeSelect.selectedOptions[0].dataset.raw, 10)
-        : 0;
+
+      const select = row.querySelector(".channel-type-select");
+      const span = row.querySelector(".channel-type");
+
+      let typeVal = "text";
+      let rawType = 0;
+
+      if (select) {
+        typeVal = select.value;
+        rawType = parseInt(select.selectedOptions[0].dataset.raw, 10);
+      } else if (span) {
+        typeVal = span.dataset.type || span.textContent.trim();
+        rawType =
+          typeVal === "forum" ? 15 :
+          typeVal === "announcement" ? 5 :
+          0;
+      }
 
       channels_text.push({
         type: typeVal,
@@ -219,12 +230,20 @@ function collectLayoutFromUI() {
     // Voice-like channels
     Array.from(voiceRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
-      
-      const typeSelect = row.querySelector(".channel-type-select");
-      const typeVal = typeSelect ? typeSelect.value : "voice";
-      const rawType = typeSelect
-        ? parseInt(typeSelect.selectedOptions[0].dataset.raw, 10)
-        : 2;
+
+      const select = row.querySelector(".channel-type-select");
+      const span = row.querySelector(".channel-type");
+
+      let typeVal = "voice";
+      let rawType = 2;
+
+      if (select) {
+        typeVal = select.value;
+        rawType = parseInt(select.selectedOptions[0].dataset.raw, 10);
+      } else if (span) {
+        typeVal = span.dataset.type || span.textContent.trim();
+        rawType = typeVal === "stage" ? 13 : 2;
+      }
 
       channels_voice.push({
         type: typeVal,
@@ -334,7 +353,7 @@ function renderLayout(layout) {
       row.className = "channel-row";
       row.innerHTML = `
         <span class="channel-type" data-type="${ch.type || 'voice'}">
-          &${ch.type || 'voice'}
+          ${ch.type || 'voice'}
         </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="voice-channel">
       `;
