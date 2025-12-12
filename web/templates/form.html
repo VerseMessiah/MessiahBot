@@ -201,26 +201,33 @@ function collectLayoutFromUI() {
     Array.from(textRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
 
-      const select = row.querySelector(".channel-type-select");
-      const span = row.querySelector(".channel-type");
+      const typeEl =
+        row.querySelector(".channel-type-select") ||
+        row.querySelector(".channel-type");
 
-      let typeVal = "text";
-      let rawType = 0;
+      if (!typeEl) {
+        throw new Error("Channel type missing for text-like channel");
+      }
 
-      if (select) {
-        typeVal = select.value;
-        rawType = parseInt(select.selectedOptions[0].dataset.raw, 10);
-      } else if (span) {
-        typeVal = span.dataset.type || span.textContent.trim();
-        rawType =
-          typeVal === "forum" ? 15 :
-          typeVal === "announcement" ? 5 :
-          0;
+      const raw = typeEl.value || typeEl.dataset.type || typeEl.textContent;
+      const clean = raw.replace("&", "").trim();
+
+      let type, raw_type;
+
+      switch (clean) {
+        case "text":
+          type = "text"; raw_type = 0; break;
+        case "forum":
+          type = "forum"; raw_type = 15; break;
+        case "announcement":
+          type = "announcement"; raw_type = 5; break;
+        default:
+          throw new Error(`Unsupported text channel type: ${clean}`);
       }
 
       channels_text.push({
-        type: typeVal,
-        raw_type: rawType,
+        type,
+        raw_type,
         name: nameVal,
         options: {},
         position: textPos++
@@ -231,28 +238,36 @@ function collectLayoutFromUI() {
     Array.from(voiceRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
 
-      const select = row.querySelector(".channel-type-select");
-      const span = row.querySelector(".channel-type");
+      const typeEl =
+        row.querySelector(".channel-type-select") ||
+        row.querySelector(".channel-type");
 
-      let typeVal = "voice";
-      let rawType = 2;
+      if (!typeEl) {
+        throw new Error("Channel type missing for voice-like channel");
+      }
 
-      if (select) {
-        typeVal = select.value;
-        rawType = parseInt(select.selectedOptions[0].dataset.raw, 10);
-      } else if (span) {
-        typeVal = span.dataset.type || span.textContent.trim();
-        rawType = typeVal === "stage" ? 13 : 2;
+      const raw = typeEl.value || typeEl.dataset.type || typeEl.textContent;
+      const clean = raw.replace("&", "").trim();
+
+      let type, raw_type;
+
+      switch (clean) {
+        case "voice":
+          type = "voice"; raw_type = 2; break;
+        case "stage":
+          type = "stage"; raw_type = 13; break;
+        default:
+          throw new Error(`Unsupported voice channel type: ${clean}`);
       }
 
       channels_voice.push({
-        type: typeVal,
-        raw_type: rawType,
+        type,
+        raw_type,
         name: nameVal,
         options: {},
         position: voicePos++
       });
-    });
+      });
 
     categories.push({
       name,
