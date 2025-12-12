@@ -340,9 +340,9 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
             ctype = "text"
             raw_type = 0
             if hasattr(ch, "type"):
-                if str(ch.type) == "ChannelType.forum":
-                    ctype = "forum"
-                    raw_type = 15
+                if str(ch.type) == "ChannelType.text":
+                    ctype = "text"
+                    raw_type = 0
                 if str(ch.type) == "ChannelType.announcement":
                     ctype = "announcement"
                     raw_type = 5
@@ -356,7 +356,7 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
                     ctype = "stage"
                     raw_type = 13
                 else:
-                    ctype = "announcement" if _is_announcement(ch) else "text"
+                    ctype = "text"
                     raw_type = 0
 
             # Channel options
