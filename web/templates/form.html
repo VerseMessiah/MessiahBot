@@ -200,9 +200,16 @@ function collectLayoutFromUI() {
     // Text-like channels
     Array.from(textRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
+      
+      const typeSelect = row.querySelector(".channel-type-select");
+      const typeVal = typeSelect ? typeSelect.value : "text";
+      const rawType = typeSelect
+        ? parseInt(typeSelect.selectedOptions[0].dataset.raw, 10)
+        : 0;
+
       channels_text.push({
-        type: "text",
-        raw_type: 0,
+        type: typeVal,
+        raw_type: rawType,
         name: nameVal,
         options: {},
         position: textPos++
@@ -212,9 +219,16 @@ function collectLayoutFromUI() {
     // Voice-like channels
     Array.from(voiceRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
+      
+      const typeSelect = row.querySelector(".channel-type-select");
+      const typeVal = typeSelect ? typeSelect.value : "voice";
+      const rawType = typeSelect
+        ? parseInt(typeSelect.selectedOptions[0].dataset.raw, 10)
+        : 2;
+
       channels_voice.push({
-        type: "voice",
-        raw_type: 2,
+        type: typeVal,
+        raw_type: rawType,
         name: nameVal,
         options: {},
         position: voicePos++
@@ -306,7 +320,9 @@ function renderLayout(layout) {
       const row = document.createElement("div");
       row.className = "channel-row";
       row.innerHTML = `
-        <span class="channel-type" data-type="text">text</span>
+        <span class="channel-type" data-type"${ch.type || 'text'}">
+          ${ch.type || 'text'}
+        </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="text-channel">
       `;
       textList.appendChild(row);
@@ -317,7 +333,9 @@ function renderLayout(layout) {
       const row = document.createElement("div");
       row.className = "channel-row";
       row.innerHTML = `
-        <span class="channel-type" data-type="voice">voice</span>
+        <span class="channel-type" data-type="${ch.type || 'voice'}">
+          &${ch.type || 'voice'}
+        </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="voice-channel">
       `;
       voiceList.appendChild(row);
@@ -534,12 +552,26 @@ function addChannel(catIndex, kind = "text") {
   const row = document.createElement("div");
   row.className = "channel-row";
   row.innerHTML = `
-    <span class="channel-type" data-type="${normalizedType}">${normalizedType}</span>
+    <select class="channel-type-select">
+      ${
+        kind === "text"
+          ? `
+            <option value="text" data-raw="0">text</option>
+            <option value="forum" data-raw="15">forum</option>
+            <option value="announcement" data-raw="5">announcement</option>
+          `
+          : `
+            <option value="voice" data-raw="2">voice</option>
+            <option value="stage" data-raw="13">stage</option>
+          `
+      }
+    </select>
+
     <input class="channel-name"
-           value=""
-           placeholder="${normalizedType === "voice" ? "new-voice-channel" : "new-channel"}"
-           data-raw-type="${normalizedType === "voice" ? 2 : 0}">
+          value=""
+          placeholder="${kind === "voice" ? "new-voice-channel" : "new-channel"}">
   `;
+  
   list.appendChild(row);
 
   saveVisualToJson();
