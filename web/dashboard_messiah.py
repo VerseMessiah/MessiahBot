@@ -90,6 +90,9 @@ def submit_server_layout():
         for lst in (existing_channels, text_list, voice_list):
             for ch in lst:
                 if isinstance(ch, dict):
+                    # Normalize channel type keys
+                    if "raw type" in ch and "raw_type" not in ch:
+                        ch["raw_type"] = ch.pop("raw type")
                     merged_channels.append(ch)
 
         # Keep ordering stable by position if provided
