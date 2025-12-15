@@ -603,12 +603,12 @@ function addChannel(catIndex, kind = "text") {
           `
       }
     </select>
-    <input class="${kind === "text" ? "channel-topic" : ""}
-          value=""
-          placeholder="channel topic / description">
     <input class="channel-name"
           value=""
           placeholder="${kind === "voice" ? "new-voice-channel" : "new-channel"}">
+    ${
+        kind === "text"
+        }
   `;
   
   list.appendChild(row);
