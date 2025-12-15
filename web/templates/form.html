@@ -606,10 +606,15 @@ function addChannel(catIndex, kind = "text") {
     <input class="channel-name"
           value=""
           placeholder="${kind === "voice" ? "new-voice-channel" : "new-channel"}">
-    ${
+
+      ${
         kind === "text"
+          ? `<input class="channel-topic"
+                value=""
+                placeholder="channel topic / description">`
+          : ""
         }
-  `;
+      `;
   
   list.appendChild(row);
 
