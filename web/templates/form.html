@@ -159,7 +159,7 @@ function normalizeCategory(cat) {
           "text",
         raw_type: ch.raw_type ?? 0,
         name: ch.name,
-        topic: ch.topic,
+        topic: ch.topic || undedfined,
         options: ch.options || {},
         position: ch.position ?? 0
       }));
@@ -201,7 +201,7 @@ function collectLayoutFromUI() {
     // Text-like channels
     Array.from(textRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
-      const topicVal = row.querySelector(".channel-topic")?.value || "";
+      const topicVal = row.querySelector(".channel-topic")?.value || undefined;
 
       const typeEl =
         row.querySelector(".channel-type-select") ||
@@ -361,7 +361,7 @@ function renderLayout(layout) {
           ${ch.type || 'text'}
         </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="text-channel">
-        <input class=$channel-topic" value=${ch.topic || undefined}" placeholder="channel topic / description (optional)"
+        <input class=$channel-topic" value=${ch.topic || ""}" placeholder="channel topic / description (optional)"
         `;
       textList.appendChild(row);
     });
