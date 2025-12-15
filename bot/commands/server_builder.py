@@ -501,6 +501,7 @@ def _snapshot_guild_rest(guild_id: int, token: Optional[str]) -> Dict[str, Any]:
         cat_channels[str(parent_id)].append({
             "name": ch.get("name", ""),
             "type": ch_type_name(t),
+            "topic": ch.get("topic", ""),
             "position": int(ch.get("position", 0) or 0),
             "options": options
         })
