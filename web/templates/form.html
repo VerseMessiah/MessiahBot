@@ -81,11 +81,7 @@
       <div class="formRow">
         <label for="guildSelect">Select Server</label>
         <select id="guildSelect">
-          {% for g in session.guilds %}
-            <option value="{{ g.id }}">
-              {{ g.name }}
-            </option>
-          {% endfor %}
+          <option value="">- Select a Server -</option>
         </select>
 
         <!-- hidden field used by JS -->
