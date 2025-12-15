@@ -159,7 +159,7 @@ function normalizeCategory(cat) {
           "text",
         raw_type: ch.raw_type ?? 0,
         name: ch.name,
-        topic: ch.topic || undedfined,
+        topic: ch.topic || undefined,
         options: ch.options || {},
         position: ch.position ?? 0
       }));
@@ -361,7 +361,7 @@ function renderLayout(layout) {
           ${ch.type || 'text'}
         </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="text-channel">
-        <input class=$channel-topic" value=${ch.topic || ""}" placeholder="channel topic / description (optional)"
+        <input class="channel-topic" value=${ch.topic || ""}" placeholder="channel topic / description (optional)"
         `;
       textList.appendChild(row);
     });
