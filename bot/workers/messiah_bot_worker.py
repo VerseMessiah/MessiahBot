@@ -125,6 +125,7 @@ async def snapshot_guild(guild_id: str):
                     "name": ch["name"],
                     "type": subtype,
                     "raw_type": raw,
+                    "topic": ch["topic", ""],
                     "position": ch["position"],
                     "options": {}
                 })
