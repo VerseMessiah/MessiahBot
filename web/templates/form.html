@@ -357,11 +357,11 @@ function renderLayout(layout) {
       const row = document.createElement("div");
       row.className = "channel-row";
       row.innerHTML = `
-        <span class="channel-type" data-type"${ch.type || 'text'}">
+        <span class="channel-type" data-type="${ch.type || 'text'}">
           ${ch.type || 'text'}
         </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="text-channel">
-        <input class="channel-topic" value=${ch.topic || ""}" placeholder="channel topic / description (optional)"
+        <input class="channel-topic" value="${ch.topic || ""}" placeholder="channel topic / description (optional)"
         `;
       textList.appendChild(row);
     });
