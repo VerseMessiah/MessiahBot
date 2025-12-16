@@ -197,7 +197,7 @@ function collectLayoutFromUI() {
     // Text-like channels
     Array.from(textRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
-      const topicVal = row.querySelector(".channel-topic")?.value || "";
+      const topicVal = topic_row.querySelector(".channel-topic")?.value || "";
 
       const typeEl =
         row.querySelector(".channel-type-select") ||
