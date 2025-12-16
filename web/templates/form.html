@@ -359,7 +359,7 @@ function renderLayout(layout) {
         <input class="channel-name" value="${ch.name || ""}" placeholder="text-channel">
         `;
       textList.appendChild(row);
-      const topic_row = document.createelement("div");
+      const topic_row = document.createElement("div");
         topic_row.className = "channel-topic";
         topic_row.innerHTML = `
         <input class="channel-topic" value="${ch.topic || ""}" placeholder="channel topic / description (optional)">
