@@ -86,10 +86,6 @@ async def snapshot_guild(guild_id: str):
 
         # categories (Discord type 4)
         cats = [c for c in chans if c.get("type") == 4]
-        cats.sort(key=lambda c: c.get("position", 0))
-
-        # categories (Discord type 4)
-        cats = [c for c in chans if c.get("type") == 4]
         categories_payload = []
         for c in cats:
             cat_id = str(c["id"])
@@ -119,13 +115,13 @@ async def snapshot_guild(guild_id: str):
                     raw = 15
                 else:
                     subtype = "text"
-                    raw = ch["type:"]
+                    raw = ch["type"]
                 
                 text_sub.append({
                     "name": ch["name"],
                     "type": subtype,
                     "raw_type": raw,
-                    "topic": ch["topic", ""],
+                    "topic": ch.get["topic", ""],
                     "position": ch["position"],
                     "options": {}
                 })
