@@ -197,7 +197,7 @@ function collectLayoutFromUI() {
     // Text-like channels
     Array.from(textRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
-      const topicVal = row.querySelector(".channel-topic")?.value || undefined;
+      const topicVal = row.querySelector(".channel-topic")?.value || "";
 
       const typeEl =
         row.querySelector(".channel-type-select") ||
@@ -357,9 +357,14 @@ function renderLayout(layout) {
           ${ch.type || 'text'}
         </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="text-channel">
-        <input class="channel-topic" value="${ch.topic || ""}" placeholder="channel topic / description (optional)">
         `;
       textList.appendChild(row);
+      const topic_row = document.createelement("div");
+        topic_row.className = "channel-topic";
+        topic_row.innerHTML = `
+        <input class="channel-topic" value="${ch.topic || ""}" placeholder="channel topic / description (optional)">
+        `;
+      textList.appendChild(topic_row);
     });
 
     voiceLike.forEach(ch => {
