@@ -356,12 +356,14 @@ function renderLayout(layout) {
         <span class="channel-type" data-type="${ch.type || 'text'}">
           ${ch.type || 'text'}
         </span>
-        <input class="channel-name"
-          value="${ch.name || ""}"
-          placeholder="text-channel">
-        <input class="channel-topic"
-          value="${ch.topic || ""}"
-          placeholder="channel topic / description (optional)">
+        <div class="channel-text-fields">
+          <input class="channel-name"
+                 value="${ch.name || ""}"
+                 placeholder="text-channel">
+          <input class="channel-topic"
+                 value="${ch.topic || ""}"
+                  placeholder="channel topic / description (optional)">
+        </div>
       `;
       textList.appendChild(row);
     });
