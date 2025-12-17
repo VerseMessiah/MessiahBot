@@ -189,7 +189,7 @@ textarea{ resize: vertical; }
 .category-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: left;
   margin-bottom: 8px;
 }
 
@@ -217,7 +217,8 @@ textarea{ resize: vertical; }
   margin-bottom: 6px;
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .channel-type {
@@ -226,8 +227,12 @@ textarea{ resize: vertical; }
   margin-right: 10px;
 }
 
-.channel-name {
+.channel- text-fields {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  gap: 4px;
+  width: 100%;
   background: #090d18;
   border: 1px solid var(--line);
   color: var(--ink);
