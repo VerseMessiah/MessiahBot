@@ -227,7 +227,7 @@ textarea{ resize: vertical; }
   margin-right: 10px;
 }
 
-.channel- text-fields {
+.channel-text-fields {
   display: flex;
   flex-direction: column;
   flex: 1;
