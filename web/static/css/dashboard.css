@@ -194,7 +194,7 @@ textarea{ resize: vertical; }
 }
 
 .category-name {
-  width: 70%;
+  width: 100%;
   background: #090d18;
   border: 1px solid var(--line);
   color: var(--ink);
