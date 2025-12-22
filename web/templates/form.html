@@ -229,7 +229,8 @@ function collectLayoutFromUI() {
         name: nameVal,
         topic: topicVal,
         options: {},
-        position: textPos++
+        position: textPos++,
+        _delete: true | false
       });
     });
 
@@ -264,7 +265,8 @@ function collectLayoutFromUI() {
         raw_type,
         name: nameVal,
         options: {},
-        position: voicePos++
+        position: voicePos++,
+        _deleted: true | false
       });
       });
 
@@ -360,6 +362,7 @@ function renderLayout(layout) {
           <input class="channel-name"
                  value="${ch.name || ""}"
                  placeholder="text-channel">
+          <button type="button" class="btn-small delete-toggle-btn" data-cat-index="${catIndex}">Delete?</button>
           <input class="channel-topic"
                  value="${ch.topic || ""}"
                   placeholder="channel topic / description (optional)">
@@ -377,6 +380,7 @@ function renderLayout(layout) {
           ${ch.type || 'voice'}
         </span>
         <input class="channel-name" value="${ch.name || ""}" placeholder="voice-channel">
+        <button type="button" class="btn-small delete-toggle-btn" data-cat-index="${catIndex}">Delete?</button>
       `;
       voiceList.appendChild(row);
     });
