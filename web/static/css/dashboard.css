@@ -221,6 +221,11 @@ textarea{ resize: vertical; }
   gap: 8px;
 }
 
+.channel-row.is-deleted {
+  opacity: 0.5;
+  text-decoration: line-throuh;
+}
+
 .channel-type {
   font-size: 12px;
   color: var(--muted);
