@@ -361,7 +361,8 @@ function renderLayout(layout) {
         <div class="channel-text-fields">
           <input class="channel-name"
                  value="${ch.name || ""}"
-                 placeholder="text-channel"><button type="button" class="btn-small delete-toggle-btn" data-cat-index="${catIndex}">Delete?</button>
+                 placeholder="text-channel
+                 "><button type="button" class="btn-small delete-toggle-btn" data-cat-index="${catIndex}">Delete?</button>
           <input class="channel-topic"
                  value="${ch.topic || ""}"
                   placeholder="channel topic / description (optional)">
@@ -420,6 +421,13 @@ function renderLayout(layout) {
     btn.addEventListener("click", () => {
       const idx = parseInt(btn.getAttribute("data-cat-index") || "0", 10);
       addChannel(idx, "voice");
+    });
+  });
+
+  container.querySelectorAll(".delete-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.getAttribute("data-cat-index") || "O", 10);
+      toggleDelete(idx, 1);
     });
   });
 
