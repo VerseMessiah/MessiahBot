@@ -424,10 +424,12 @@ function renderLayout(layout) {
     });
   });
 
-  container.querySelectorAll(".delete-toggle-btn").addEventListener("click", (e) => {
+  container.querySelectorAll(".delete-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
       const row = e.target.closest(".channel-row");
       row.classList.toggle("is-deleted");
     });
+  });
 
   // Sync JSON after an initial render
   saveVisualToJson();
