@@ -224,17 +224,19 @@ function collectLayoutFromUI() {
           throw new Error(`Unsupported text channel type: ${clean}`);
       }
 
-      channels_text.push({
+      const channel_text = {
         type,
         raw_type,
         name: nameVal,
         topic: topicVal,
         options: {},
         position: textPos++,
-        if (isDeleted) {
-            channel._deleted = true;
-          }
-      });
+      };
+
+      if (isDeleted) {
+        channel._deleted = true;
+      }
+      channels_text.push(channel_text);
     });
 
     // Voice-like channels
@@ -263,15 +265,19 @@ function collectLayoutFromUI() {
           throw new Error(`Unsupported voice channel type: ${clean}`);
       }
 
-      channels_voice.push({
+      channel_voice = {
         type,
         raw_type,
         name: nameVal,
         options: {},
         position: voicePos++,
-        _delete: true | false
-      });
-      });
+      };
+
+      if (isDeleted) {
+        channel._deleted = true;
+      }
+      channels_voice.push(channel_voice);
+    });
 
     categories.push({
       name,
