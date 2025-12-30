@@ -224,7 +224,7 @@ function collectLayoutFromUI() {
           throw new Error(`Unsupported text channel type: ${clean}`);
       }
 
-      const channel = {
+      const channel_text = {
         type,
         raw_type,
         name: nameVal,
@@ -234,9 +234,9 @@ function collectLayoutFromUI() {
       };
 
       if (isDeleted) {
-        channel._deleted = true;
+        channel_text._deleted = true;
       }
-      channels_text.push(channel);
+      channels_text.push(channel_text);
     });
 
     // Voice-like channels
@@ -265,7 +265,7 @@ function collectLayoutFromUI() {
           throw new Error(`Unsupported voice channel type: ${clean}`);
       }
 
-      const channel = {
+      const channel_voice = {
         type,
         raw_type,
         name: nameVal,
@@ -274,9 +274,9 @@ function collectLayoutFromUI() {
       };
 
       if (isDeleted) {
-        channel._deleted = true;
+        channel_voice._deleted = true;
       }
-      channels_voice.push(channel);
+      channels_voice.push(channel_voice);
     });
 
     categories.push({
