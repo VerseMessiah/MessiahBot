@@ -266,7 +266,7 @@ function collectLayoutFromUI() {
         name: nameVal,
         options: {},
         position: voicePos++,
-        _deleted: true | false
+        _delete: true | false
       });
       });
 
@@ -361,12 +361,12 @@ function renderLayout(layout) {
         <div class="channel-text-fields">
           <input class="channel-name"
                  value="${ch.name || ""}"
-                 placeholder="text-channel
-                 "><button type="button" class="delete-toggle-btn"">❌</button>
+                 placeholder="text-channel">
           <input class="channel-topic"
                  value="${ch.topic || ""}"
                   placeholder="channel topic / description (optional)">
         </div>
+        <button type="button" class="delete-toggle-btn"">❌</button>
       `;
       textList.appendChild(row);
     });
