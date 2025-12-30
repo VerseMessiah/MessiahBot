@@ -224,7 +224,7 @@ function collectLayoutFromUI() {
           throw new Error(`Unsupported text channel type: ${clean}`);
       }
 
-      const channel_text = {
+      const channel = {
         type,
         raw_type,
         name: nameVal,
@@ -236,7 +236,7 @@ function collectLayoutFromUI() {
       if (isDeleted) {
         channel._deleted = true;
       }
-      channels_text.push(channel_text);
+      channels_text.push(channel);
     });
 
     // Voice-like channels
@@ -265,7 +265,7 @@ function collectLayoutFromUI() {
           throw new Error(`Unsupported voice channel type: ${clean}`);
       }
 
-      channel_voice = {
+      const channel = {
         type,
         raw_type,
         name: nameVal,
@@ -276,7 +276,7 @@ function collectLayoutFromUI() {
       if (isDeleted) {
         channel._deleted = true;
       }
-      channels_voice.push(channel_voice);
+      channels_voice.push(channel);
     });
 
     categories.push({
@@ -375,7 +375,7 @@ function renderLayout(layout) {
                  value="${ch.topic || ""}"
                   placeholder="channel topic / description (optional)">
         </div>
-        <button type="button" class="delete-toggle-btn"">❌</button>
+        <button type="button" class="delete-toggle-btn">❌</button>
       `;
       textList.appendChild(row);
     });
@@ -437,6 +437,7 @@ function renderLayout(layout) {
     btn.addEventListener("click", (e) => {
       const row = e.target.closest(".channel-row");
       row.classList.toggle("is-deleted");
+      saveVisualToJson();
     });
   });
 
