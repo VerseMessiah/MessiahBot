@@ -223,7 +223,7 @@ textarea{ resize: vertical; }
 
 .channel-row.is-deleted {
   opacity: 0.5;
-  text-decoration: line-throuh;
+  text-decoration: line-through;
 }
 
 .channel-type {

@@ -198,6 +198,7 @@ function collectLayoutFromUI() {
     Array.from(textRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
       const topicVal = row.querySelector(".channel-topic")?.value || "";
+      const isDeleted = row.classList.contains("is-deleted");
 
       const typeEl =
         row.querySelector(".channel-type-select") ||
@@ -230,7 +231,9 @@ function collectLayoutFromUI() {
         topic: topicVal,
         options: {},
         position: textPos++,
-        _delete: true | false
+        if (isDeleted) {
+            channel._deleted = true
+        }
       });
     });
 
