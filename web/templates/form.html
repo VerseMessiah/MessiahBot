@@ -242,6 +242,7 @@ function collectLayoutFromUI() {
     // Voice-like channels
     Array.from(voiceRows).forEach(row => {
       const nameVal = row.querySelector(".channel-name")?.value || "";
+      const isDeleted = row.classList.contains("is-deleted");
 
       const typeEl =
         row.querySelector(".channel-type-select") ||
