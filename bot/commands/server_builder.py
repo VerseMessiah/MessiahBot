@@ -383,6 +383,7 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
                 "raw type": raw_type,
                 "position": _safe_pos(ch, 0),
                 "options": options,
+                "_deleted": bool(ch.get("_deleted")),
                 # NOTE: We do not include overwrites unless the dashboard toggle is used to send them back.
                 # "overwrites": {},
             })
@@ -1093,6 +1094,16 @@ class ServerBuilder(commands.Cog):
                 existing = _find_stage(guild, chname)
             elif chtype == "forum":
                 existing = _find_forum(guild, chname)
+
+            if ch.get("_deleted"):
+                if existing:
+                    try:
+                        await existing.delete(reason="MessiahBot explicit delete from layout")
+                        await _throttle()
+                        logs.appent(f"🗑️ Deleted channel: **#{chname}**")
+                    except Exception as e:
+                        logs.append(f"❌ Failed to delete channel **#{chname}**: {e}")
+                continue
 
             ow_raw = ch.get("overwrites")
             if isinstance(ow_raw, dict) and len(ow_raw) > 0:
