@@ -1100,7 +1100,7 @@ class ServerBuilder(commands.Cog):
                     try:
                         await existing.delete(reason="MessiahBot explicit delete from layout")
                         await _throttle()
-                        logs.appent(f"🗑️ Deleted channel: **#{chname}**")
+                        logs.append(f"🗑️ Deleted channel: **#{chname}**")
                     except Exception as e:
                         logs.append(f"❌ Failed to delete channel **#{chname}**: {e}")
                 continue
