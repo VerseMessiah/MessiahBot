@@ -380,7 +380,7 @@ def _snapshot_guild_discordpy(guild: discord.Guild) -> Dict[str, Any]:
             ch_items.append({
                 "name": ch.name,
                 "type": ctype,
-                "raw type": raw_type,
+                "raw_type": raw_type,
                 "position": _safe_pos(ch, 0),
                 "options": options,
                 "_deleted": bool(ch.get("_deleted")),
@@ -694,6 +694,7 @@ def _normalize_categories_and_channels(layout: Dict[str, Any]) -> Tuple[List[Tup
                     "options": options,
                     "overwrites": ch.get("overwrites") or {},
                     "position": ch.get("position"),
+                    "_deleted": bool(ch.get("_deleted")),
                 })
     else:
         # Legacy flat format:
@@ -722,6 +723,7 @@ def _normalize_categories_and_channels(layout: Dict[str, Any]) -> Tuple[List[Tup
                 "options": options,
                 "overwrites": ch.get("overwrites") or {},
                 "position": ch.get("position"),
+                "_deleted": bool(ch.get("_deleted")),
             })
 
     return desired_categories, channels_spec
