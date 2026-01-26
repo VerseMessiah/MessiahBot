@@ -1,9 +1,8 @@
 twitch_event = {
     "id": str,
-    "title": str | None,
-    "category": { 
-        "name": str } | None,
-    "starts_time": str,
+    "title": str,
+    "category": str,
+    "start_time": str,
     "is_recurring": bool
 }
 
