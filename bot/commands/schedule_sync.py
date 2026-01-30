@@ -1,3 +1,6 @@
+from discord import GuildPreview
+
+
 twitch_event = {
     "id": str,
     "title": str,
@@ -101,5 +104,7 @@ for te in twitch_events:
 
     else:
         print(f"CREATE Discord event for Twitch ID {twitch_id}")
+
+GuildPreview
 
         
