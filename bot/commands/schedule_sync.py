@@ -43,9 +43,9 @@ def twitch_to_discord(evt: dict) -> dict:
         "scheduled_start_time": evt["starts_at"],
         "entity_type": "external",
         "entity_metadata": {
-            "location": f"https://twitch.tv/versemessiah?eventid={evt["id"]}"
+            "location": f"https://twitch.tv/versemessiah?event_id={evt["id"]}"
         }
-    }
+    } 
 
 raw_twitch = [
     {
@@ -73,12 +73,33 @@ def get_event_id(location: str) -> str | None:
         discord_event_id = location.split("event_id=")[1]
         return discord_event_id
 
-normalized_twitch = []
+twitch_events = []
+discord_events = []
 
 for raw in raw_twitch:
-    normalized_twitch.append(normalize_twitch(raw))
+    twitch_events.append(normalize_twitch(raw))
+print(twitch_events)
 
-for event in normalized_twitch:
-    print(event)
-    mapped = twitch_to_discord(event)
-    print(mapped)
+for event in twitch_events:
+    discord_events.append(twitch_to_discord(event))
+print(discord_events)
+
+discord_by_twitch_id = {}
+for de in discord_events:
+    twitch_id = get_event_id(de["entity_metadata"]["location"])
+
+    if twitch_id:
+        discord_by_twitch_id[twitch_id] = de
+
+print(discord_by_twitch_id)
+
+for te in twitch_events:
+    twitch_id = te["id"]
+
+    if twitch_id in discord_by_twitch_id:
+        print(f"UPDATE Discord event for Twitch ID {twitch_id}")
+
+    else:
+        print(f"CREATE Discord event for Twitch ID {twitch_id}")
+
+        
