@@ -1,0 +1,5 @@
+Compare         Twitch value        Discord value                               If different…
+Title           title               name                                        update name
+Start time      starts_at           scheduled_start_time                        update time
+Game            game                parse from description OR just regenerate   update description
+Link            location            entity_metadata.location                    usually keep, but ensure event_id still present
