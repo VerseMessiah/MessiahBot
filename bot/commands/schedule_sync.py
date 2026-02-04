@@ -1,4 +1,8 @@
 from discord import GuildPreview
+from discord import Guild, ScheduledEvent
+
+async def sync_events(guild: Guild):
+    events: list[ScheduledEvent] = await guild.fetch_scheduled_events()
 
 
 twitch_event = {
@@ -105,6 +109,3 @@ for te in twitch_events:
     else:
         print(f"CREATE Discord event for Twitch ID {twitch_id}")
 
-GuildPreview
-
-        
