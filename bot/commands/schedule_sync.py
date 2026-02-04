@@ -32,16 +32,6 @@ def normalize_twitch(raw):
         "recurring": raw.get("is_recurring")
     }
 
-def normalize_discord(raw):
-    return {
-        "name": str,
-        "description": str,
-        "scheduled_start_time": str,
-        "entity_shape": "external",
-        "entity_metadata": {
-            "location": str
-        }
-    }
 
 def twitch_to_discord(evt: dict) -> dict:
     return {
@@ -80,6 +70,17 @@ def get_event_id(location: str) -> str | None:
         discord_event_id = location.split("event_id=")[1]
         return discord_event_id
 
+def needs_update(twitch_evt, discord_evt) -> bool:
+    if twitch_evt["title"] != discord_evt["name"]:
+        return True
+    if twitch_evt["starts_at"] != discord_evt["scheduled_start_time"]:
+        return True
+    expected_description = f"Playing {twitch_evt['game']} on Twitch"
+    if expected_description != discord_evt["description"]:
+        return True
+    
+    return False
+
 twitch_events = []
 discord_events = []
 
@@ -104,7 +105,12 @@ for te in twitch_events:
     twitch_id = te["id"]
 
     if twitch_id in discord_by_twitch_id:
-        print(f"UPDATE Discord event for Twitch ID {twitch_id}")
+        de = discord_by_twitch_id[twitch_id]
+
+        if needs_update(te, de):
+            print(f"UPDATE Discord event for Twitch ID {twitch_id}")
+        else: 
+            print(f"No Change for Twitch ID {twitch_id}")
 
     else:
         print(f"CREATE Discord event for Twitch ID {twitch_id}")
