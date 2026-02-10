@@ -12,6 +12,7 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from discord import ScheduledEvent, EntityType, Guild
 
 print("🧠 MessiahBot module loaded")
 
@@ -60,6 +61,15 @@ class MessiahBot(commands.Bot):
             print("✅ Slash commands synced globally")
         except Exception as e:
             print(f"❌ Slash sync error: {e}")
+    
+    async def debug_events(guild: Guild):
+        events = await guild.fetch_scheduled_events()
+
+        for ev in events:
+            print("EVENT:", ev.name)
+        print("  entity_type:", ev.entity_type)
+        print("  has location attr:", hasattr(ev, "location"))
+        print("  location value:", ev.location)
 
 # Instantiate bot
 bot = MessiahBot()
