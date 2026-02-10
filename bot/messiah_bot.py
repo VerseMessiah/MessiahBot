@@ -62,7 +62,11 @@ class MessiahBot(commands.Bot):
         except Exception as e:
             print(f"❌ Slash sync error: {e}")
     
-    async def debug_events(guild: Guild):
+    
+# Instantiate bot
+bot = MessiahBot()
+
+async def debug_events(guild):
         events = await guild.fetch_scheduled_events()
 
         for ev in events:
@@ -70,9 +74,6 @@ class MessiahBot(commands.Bot):
             print("  entity_type:", ev.entity_type)
             print("  has location attr:", hasattr(ev, "location"))
             print("  location value:", ev.location)
-
-# Instantiate bot
-bot = MessiahBot()
 
 # Global error handler for slash/app commands
 @bot.tree.error
@@ -89,6 +90,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: Exceptio
 @bot.event
 async def on_ready():
     print(f"✨ MessiahBot is online as {bot.user} (ID: {bot.user.id})")
+
+    guild = bot.get_guild(1408900348671824024)
+    await debug_events(guild)
 
 # Entrypoint
 if __name__ == "__main__":
