@@ -1,9 +1,15 @@
 from discord import GuildPreview
 from discord import Guild, ScheduledEvent, EntityType
 
+
 async def sync_events(guild: Guild):
     events: list[ScheduledEvent] = await guild.fetch_scheduled_events()
-
+    
+    for ev in events:
+        print("EVENT:", ev.name)
+        print(" entity_type:", ev.entity_type)
+        print(" has location attr:", hasattr(ev, "location"))
+        print(" location value:", ev.location)
 
 twitch_event = {
     "id": str,
@@ -124,4 +130,5 @@ for te in twitch_events:
 
     else:
         print(f"CREATE Discord event for Twitch ID {twitch_id}")
+
 
