@@ -1,5 +1,7 @@
 from discord import GuildPreview
 from discord import Guild, ScheduledEvent, EntityType
+from discord.ext import commands
+
 
 
 async def sync_events(guild: Guild):
@@ -131,4 +133,32 @@ for te in twitch_events:
     else:
         print(f"CREATE Discord event for Twitch ID {twitch_id}")
 
+from discord.ext import commands
+
+class ScheduleSync(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(name="debug_events")
+    async def debug_events(self, ctx):
+        guild = ctx.guild
+        if not guild:
+            await ctx.send("❌ No guild context.")
+            return
+
+        events = await guild.fetch_scheduled_events()
+
+        if not events:
+            await ctx.send("ℹ️ No scheduled events found.")
+            return
+
+        for ev in events:
+            await ctx.send(
+                f"**{ev.name}**\n"
+                f"type: {ev.entity_type}\n"
+                f"location: {ev.location}"
+            )
+
+async def setup(bot):
+    await bot.add_cog(ScheduleSync(bot))
 
