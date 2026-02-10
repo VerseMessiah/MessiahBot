@@ -1,5 +1,5 @@
 from discord import GuildPreview
-from discord import Guild, ScheduledEvent
+from discord import Guild, ScheduledEvent, EntityType
 
 async def sync_events(guild: Guild):
     events: list[ScheduledEvent] = await guild.fetch_scheduled_events()
@@ -18,7 +18,7 @@ discord_event = {
     "description": str,
     "scheduled_start_time": str,
     "entity_type": "external",
-    "entity_metadata": {
+    "location": {
         "location": str
     }
 }
@@ -32,6 +32,16 @@ def normalize_twitch(raw):
         "recurring": raw.get("is_recurring")
     }
 
+def normalize_discord(ev: ScheduledEvent) -> dict:
+    
+    return {
+        "id": str(ev.id),
+        "name": ev.name,
+        "description": ev.description or "",
+        "starts_at": ev.start_time.isoformat() if ev.start_time else None,
+        "location": ev.location if ev.location else None,
+    }
+
 
 def twitch_to_discord(evt: dict) -> dict:
     return {
@@ -39,7 +49,7 @@ def twitch_to_discord(evt: dict) -> dict:
         "description": f"Playing {evt["game"]} on Twitch",
         "scheduled_start_time": evt["starts_at"],
         "entity_type": "external",
-        "entity_metadata": {
+        "location": {
             "location": f"https://twitch.tv/versemessiah?event_id={evt["id"]}"
         }
     } 
@@ -94,7 +104,7 @@ print(discord_events)
 
 discord_by_twitch_id = {}
 for de in discord_events:
-    twitch_id = get_event_id(de["entity_metadata"]["location"])
+    twitch_id = get_event_id(de["location"])
 
     if twitch_id:
         discord_by_twitch_id[twitch_id] = de
