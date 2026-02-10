@@ -94,6 +94,26 @@ async def on_ready():
     guild = bot.get_guild(1408900348671824024)
     await debug_events(guild)
 
+@bot.command()
+async def debut_events_cmd(ctx):
+    guild = ctx.guild
+    if not guild:
+        await ctx.send("No guild context")
+        return
+
+    events = await guild.fetch_scheduled_events()
+
+    if not events:
+        await ctx.send("No events found")
+        return
+    
+    for ev in events:
+        await ctx.send(
+            f"**{ev.name}**\n"
+            f"type: {ev.entity_type}\n"
+            f"locaton: {ev.location}"
+        )
+
 # Entrypoint
 if __name__ == "__main__":
     print("🔑 Starting MessiahBot worker...")
