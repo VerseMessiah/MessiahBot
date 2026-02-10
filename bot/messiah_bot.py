@@ -67,9 +67,9 @@ class MessiahBot(commands.Bot):
 
         for ev in events:
             print("EVENT:", ev.name)
-        print("  entity_type:", ev.entity_type)
-        print("  has location attr:", hasattr(ev, "location"))
-        print("  location value:", ev.location)
+            print("  entity_type:", ev.entity_type)
+            print("  has location attr:", hasattr(ev, "location"))
+            print("  location value:", ev.location)
 
 # Instantiate bot
 bot = MessiahBot()
