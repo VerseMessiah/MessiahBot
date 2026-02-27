@@ -15,7 +15,7 @@ TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 TWITCH_REDIRECT_URI = os.getenv("TWITCH_REDIRECT_URI")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-TWITCH_SCOPE = "user:read:email"
+TWITCH_SCOPE = "channel:manage:schedule user:read:email"
 
 # -----------------------------
 # OAuth Start
