@@ -52,7 +52,7 @@
         <h2>Twitch</h2>
         <p id="twitchStatus" class="muted">Loading…</p>
         <div class="actions">
-          <a class="btn" href="/connect_twitch">Connect Twitch</a>
+          <a id="connectTwitchBtn" href="#" class="btn">Connect Twitch</a>
         </div>
       </div>
 
@@ -941,6 +941,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadStatuses();
 });
+</script>
+<script>
+  const select = document.getElementById("guildSelect");
+  const btn = document.getElementById("connectTwitchBtn");
+
+  function updateLink() {
+    const guildID = select.value;
+    if(guildID) {
+      btn.href = "/connect/twitch/" + guildId;
+      btn.style.pointerEvents = "auto";
+      btn.style.opacity = "1";
+    } else {
+      btn.href = "#";
+      btn.style.pointerEvents = "none";
+      bnt.style.opacity = "0.6";
+    }
+  }
+
+  select.addEventListener("change", updateLink);
+  updateLink();
 </script>
 
 </body>
