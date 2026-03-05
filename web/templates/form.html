@@ -949,13 +949,13 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateLink() {
     const guildID = select.value;
     if(guildID) {
-      btn.href = "/connect/twitch/" + guildId;
+      btn.href = "/connect/twitch/" + document.getElementById("guildSelect").value;
       btn.style.pointerEvents = "auto";
       btn.style.opacity = "1";
     } else {
       btn.href = "#";
       btn.style.pointerEvents = "none";
-      bnt.style.opacity = "0.6";
+      btn.style.opacity = "0.6";
     }
   }
 
