@@ -48,11 +48,20 @@ class MessiahBot(commands.Bot):
         """Load all Cogs and sync slash commands."""
         print("🚀 setup_hook triggered (loading extensions)")
 
+        # Initialize shared DB pool once at startup
+        try:
+            await init_db_pool()
+            print("✅ DB pool initialized")
+        except Exception as e:
+            print(f"❌ DB pool init failed: {type(e).__name__}: {e}")
+            raise
+
         # All Discord-side Cogs go here
         extensions = [
             "bot.commands.server_builder",
             "bot.commands.plex_commands",
-            "bot.commands.schedule_sync",        ]
+            "bot.commands.schedule_sync",
+        ]
 
         for ext in extensions:
             try:
