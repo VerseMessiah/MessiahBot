@@ -1,4 +1,4 @@
-# bot/db.py
+# bot/integrations/db.py
 """
 Shared database utilities (Neon/Postgres) for MessiahBot.
 
