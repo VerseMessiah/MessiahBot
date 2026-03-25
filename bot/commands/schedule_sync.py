@@ -13,23 +13,23 @@ async def sync_events(guild: Guild):
         print(" has location attr:", hasattr(ev, "location"))
         print(" location value:", ev.location)
 
-twitch_event = {
-    "id": str,
-    "title": str,
-    "game": str,
-    "starts_at": str,
-    "recurring": bool
-}
+#twitch_event = {
+    #"id": str,
+    #"title": str,
+    #"game": str,
+    #"starts_at": str,
+    #"recurring": bool
+#}
 
-discord_event = {
-    "name": str,
-    "description": str,
-    "scheduled_start_time": str,
-    "entity_type": "external",
-    "location": {
-        "location": str
-    }
-}
+#discord_event = {
+    #"name": str,
+    #"description": str,
+    #"scheduled_start_time": str,
+    #"entity_type": "external",
+    #"location": {
+        #"location": str
+    #}
+#}
 
 def normalize_twitch(raw):
     return {
@@ -62,22 +62,22 @@ def twitch_to_discord(evt: dict) -> dict:
         }
     } 
 
-raw_twitch = [
-    {
-        "id": "abc123",
-        "title": None,
-        "category": None, 
-        "start_time": "2026-02-01T02:00:00Z",
-        "is_recurring": False
-    },
-    {
-        "id": "def456",
-        "title": "Late Night Stream",
-        "category": {"name": "Fortnite"},
-        "start_time": "2026-02-02T03:00:00Z",
-        "is_recurring": True
-    }
-]
+#raw_twitch = [
+    #{
+        #"id": "abc123",
+        #"title": None,
+        #"category": None, 
+        #"start_time": "2026-02-01T02:00:00Z",
+        #"is_recurring": False
+    #},
+    #{
+        #"id": "def456",
+        #"title": "Late Night Stream",
+        #"category": {"name": "Fortnite"},
+        #"start_time": "2026-02-02T03:00:00Z",
+        #"is_recurring": True
+    #}
+#]
 
 def get_event_id(location: str) -> str | None:
     if not location:
@@ -102,39 +102,6 @@ def needs_update(twitch_evt, discord_evt) -> bool:
 twitch_events = []
 discord_events = []
 
-for raw in raw_twitch:
-    twitch_events.append(normalize_twitch(raw))
-print(twitch_events)
-
-for event in twitch_events:
-    discord_events.append(twitch_to_discord(event))
-print(discord_events)
-
-discord_by_twitch_id = {}
-for de in discord_events:
-    twitch_id = get_event_id(de["location"])
-
-    if twitch_id:
-        discord_by_twitch_id[twitch_id] = de
-
-print(discord_by_twitch_id)
-
-for te in twitch_events:
-    twitch_id = te["id"]
-
-    if twitch_id in discord_by_twitch_id:
-        de = discord_by_twitch_id[twitch_id]
-
-        if needs_update(te, de):
-            print(f"UPDATE Discord event for Twitch ID {twitch_id}")
-        else: 
-            print(f"No Change for Twitch ID {twitch_id}")
-
-    else:
-        print(f"CREATE Discord event for Twitch ID {twitch_id}")
-
-from discord.ext import commands
-
 class ScheduleSync(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -158,6 +125,9 @@ class ScheduleSync(commands.Cog):
                 f"type: {ev.entity_type}\n"
                 f"location: {ev.location}"
             )
+    
+    @commands.command(name="debug_twitch")
+    async def debug_twitch(self, ctx):
 
 async def setup(bot):
     await bot.add_cog(ScheduleSync(bot))

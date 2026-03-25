@@ -1,4 +1,4 @@
-# bot/messiahbot_dc.py
+# bot/messiah_bot.py
 """
 MessiahBot main Discord service
 --------------------------------
@@ -13,6 +13,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from discord import ScheduledEvent, EntityType, Guild
+from bot.integrations.twitch_api import TwitchAPI
+from bot.integrations.db import init_db_pool
 
 print("🧠 MessiahBot module loaded")
 
@@ -39,6 +41,10 @@ class MessiahBot(commands.Bot):
         )
 
     async def setup_hook(self):
+        
+        await init_db_pool()
+        print("✅ DB pool initialized")
+
         """Load all Cogs and sync slash commands."""
         print("🚀 setup_hook triggered (loading extensions)")
 
@@ -74,6 +80,7 @@ async def debug_events(guild):
             print("  entity_type:", ev.entity_type)
             print("  has location attr:", hasattr(ev, "location"))
             print("  location value:", ev.location)
+
 
 # Global error handler for slash/app commands
 @bot.tree.error

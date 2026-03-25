@@ -8,6 +8,7 @@ requests==2.32.5
 python-dotenv==1.2.1
 redis==5.2.0
 psycopg[binary]>=3.2
+psycopg-pool
 
 # === Discord / Twitch ===
 discord.py==2.5.2
