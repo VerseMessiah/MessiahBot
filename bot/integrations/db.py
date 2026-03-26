@@ -1,6 +1,5 @@
 # bot/integrations/db.py
-"""
-Shared database utilities (Neon/Postgres) for MessiahBot.
+"""Shared database utilities (Neon/Postgres) for MessiahBot.
 
 Goals:
 - Create ONE async connection pool per process
@@ -9,9 +8,9 @@ Goals:
 
 import os
 from typing import Any, Iterable, Optional, cast
-
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+
 
 _pool: Optional[AsyncConnectionPool] = None
 

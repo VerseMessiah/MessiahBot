@@ -2,7 +2,7 @@ import os
 import discord
 from discord import app_commands
 from discord.ext import commands
-from bot.utils.plex_utils import get_plex_client
+from utils.plex_utils import get_plex_client
 
 class PlexCommands(commands.Cog):
     def __init__(self, bot):

@@ -1,6 +1,10 @@
-from discord import GuildPreview
-from discord import Guild, ScheduledEvent, EntityType
+import aiohttp
+
+from discord import Guild, ScheduledEvent
 from discord.ext import commands
+
+from bot.integrations.db import fetch_one, execute
+from bot.integrations.twitch_api import TwitchAPI
 
 
 
@@ -54,11 +58,11 @@ def normalize_discord(ev: ScheduledEvent) -> dict:
 def twitch_to_discord(evt: dict) -> dict:
     return {
         "name": evt["title"],
-        "description": f"Playing {evt["game"]} on Twitch",
+        "description": f"Playing {evt['game']} on Twitch",
         "scheduled_start_time": evt["starts_at"],
         "entity_type": "external",
         "location": {
-            "location": f"https://twitch.tv/versemessiah?event_id={evt["id"]}"
+            "location": f"https://twitch.tv/versemessiah?event_id={evt['id']}"
         }
     } 
 
@@ -99,8 +103,6 @@ def needs_update(twitch_evt, discord_evt) -> bool:
     
     return False
 
-twitch_events = []
-discord_events = []
 
 class ScheduleSync(commands.Cog):
     def __init__(self, bot):
@@ -127,8 +129,63 @@ class ScheduleSync(commands.Cog):
             )
     
     @commands.command(name="debug_twitch")
+    @commands.guild_only()
     async def debug_twitch(self, ctx):
+        row = await fetch_one(
+            """
+            SELECT twitch_user_id, access_token, refresh_token
+            FROM twitch_tokens
+            WHERE guild_id = %s
+            """,
+            (str(ctx.guild.id),),
+        )
+
+        if not row:
+            await ctx.send("❌ No Twitch connection found for this server. Connect Twitch first.")
+            return
+        
+        broadcaster_id = row["twitch_user_id"]
+        access_token = row["access_token"]
+        refresh_token = row["refresh_token"]
+
+        async with aiohttp.ClientSession() as session:
+            api = TwitchAPI(session)
+            try:
+                raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
+            except Exception as e:
+                msg = str(e).lower()
+                if "401" in msg or "unauthorized" in msg or "oauth" in msg:
+                    new = await api.refresh_user_token(refresh_token)
+                    access_token = new["access_token"]
+                    refresh_token = new.get("refresh_token") or refresh_token
+
+                    await execute(
+                        """
+                        UPDATE twitch_tokens
+                        SET access_token = %s, refresh_token = %s
+                        WHERE guild_id = %s AND twitch_user_id = %s
+                        """,
+                        (access_token, refresh_token, str(ctx.guild.id), broadcaster_id),
+                    )
+
+                    raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
+                else:
+                    raise
+            
+            if not raw_segments:
+                await ctx.send("ℹ️ Twitch schedule is empty (no segments found)")
+                return
+            
+            lines = []
+            for s in raw_segments:
+                seg_id = (s.get("id") or "")
+                seg_short = seg_id[:18] + "…" if len(seg_id) > 18 else seg_id
+                title = s.get("title") or "(no title)"
+                start = s.get("start_time") or ""
+                end = s.get("end_time") or ""
+                lines.append(f"• {start} -> {end} | {title} | id: {seg_short}")
+
+            await ctx.send("**Twitch schedule (next 10):**\n" + "\n".join(lines))
 
 async def setup(bot):
     await bot.add_cog(ScheduleSync(bot))
-

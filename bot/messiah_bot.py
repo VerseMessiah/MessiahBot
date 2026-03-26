@@ -13,8 +13,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from discord import ScheduledEvent, EntityType, Guild
-from bot.integrations.twitch_api import TwitchAPI
-from bot.integrations.db import init_db_pool
+from integrations.twitch_api import TwitchAPI
+from integrations.db import init_db_pool
 
 print("🧠 MessiahBot module loaded")
 
@@ -58,9 +58,9 @@ class MessiahBot(commands.Bot):
 
         # All Discord-side Cogs go here
         extensions = [
-            "bot.commands.server_builder",
-            "bot.commands.plex_commands",
-            "bot.commands.schedule_sync",
+            "commands.server_builder",
+            "commands.plex_commands",
+            "commands.schedule_sync",
         ]
 
         for ext in extensions:
