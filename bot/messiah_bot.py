@@ -99,6 +99,15 @@ async def on_app_command_error(interaction: discord.Interaction, error: Exceptio
     except Exception:
         pass
 
+# Global error handler for prefix commands (e.g., !debug_twitch)
+@bot.event
+async def on_command_error(ctx: commands.Context, error: Exception):
+    print(f"[MessiahBot] command error: {type(error).__name__}: {error}")
+    try:
+        await ctx.send(f"❌ Command error: {type(error).__name__}: {error}")
+    except Exception:
+        pass
+
 @bot.event
 async def on_ready():
     user = bot.user
