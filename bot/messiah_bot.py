@@ -13,8 +13,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from discord import ScheduledEvent, EntityType, Guild
-from integrations.twitch_api import TwitchAPI
-from integrations.db import init_db_pool
+from bot.integrations.twitch_api import TwitchAPI
+from bot.integrations.db import init_db_pool
 
 print("🧠 MessiahBot module loaded")
 
@@ -41,10 +41,6 @@ class MessiahBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        
-        await init_db_pool()
-        print("✅ DB pool initialized")
-
         """Load all Cogs and sync slash commands."""
         print("🚀 setup_hook triggered (loading extensions)")
 
@@ -58,9 +54,9 @@ class MessiahBot(commands.Bot):
 
         # All Discord-side Cogs go here
         extensions = [
-            "commands.server_builder",
-            "commands.plex_commands",
-            "commands.schedule_sync",
+            "bot.commands.server_builder",
+            "bot.commands.plex_commands",
+            "bot.commands.schedule_sync",
         ]
 
         for ext in extensions:
@@ -81,14 +77,14 @@ class MessiahBot(commands.Bot):
 # Instantiate bot
 bot = MessiahBot()
 
-async def debug_events(guild):
-        events = await guild.fetch_scheduled_events()
+async def debug_events(guild: Guild):
+    events = await guild.fetch_scheduled_events()
 
-        for ev in events:
-            print("EVENT:", ev.name)
-            print("  entity_type:", ev.entity_type)
-            print("  has location attr:", hasattr(ev, "location"))
-            print("  location value:", ev.location)
+    for ev in events:
+        print("EVENT:", ev.name)
+        print("  entity_type:", ev.entity_type)
+        print("  has location attr:", hasattr(ev, "location"))
+        print("  location value:", ev.location)
 
 
 # Global error handler for slash/app commands
@@ -105,12 +101,19 @@ async def on_app_command_error(interaction: discord.Interaction, error: Exceptio
 
 @bot.event
 async def on_ready():
-    print(f"✨ MessiahBot is online as {bot.user} (ID: {bot.user.id})")
+    user = bot.user
+    if user is None:
+        print("✨ MessiahBot is online (bot.user is not available yet)")
+    else:
+        print(f"✨ MessiahBot is online as {user} (ID: {user.id})")
 
     guild = bot.get_guild(1408900348671824024)
+    if guild is None:
+        print("⚠️ Test guild not found in cache; skipping debug_events.")
+        return
     await debug_events(guild)
 
-# Entrypoint
+# Entrypoint (run from repo root: python -m bot.messiah_bot)
 if __name__ == "__main__":
     print("🔑 Starting MessiahBot worker...")
     if not DISCORD_BOT_TOKEN:

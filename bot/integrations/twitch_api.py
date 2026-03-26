@@ -1,11 +1,14 @@
-import os, hashlib, datetime as dt
-from typing import Dict, Any, List, Optional
-import aiohttp
+import os
+import hashlib
 import datetime as dt
+from typing import Dict, Any, List, Optional
+
+import aiohttp
 
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 TW_BASE = "https://api.twitch.tv/helix"
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 def _rfc3339(dt_obj: dt.datetime) -> str:
     if dt_obj.tzinfo is None:
@@ -13,10 +16,23 @@ def _rfc3339(dt_obj: dt.datetime) -> str:
     return dt_obj.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 class TwitchAPI:
-    def __init__(self, session: aiohttp.ClientSession, client_id: Optional[str]=None, client_secret: Optional[str]=None):
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+    ):
         self.session = session
-        self.client_id = client_id or TWITCH_CLIENT_ID
-        self.client_secret = client_secret or TWITCH_CLIENT_SECRET
+
+        cid = client_id or TWITCH_CLIENT_ID
+        cs = client_secret or TWITCH_CLIENT_SECRET
+        if not cid:
+            raise RuntimeError("TWITCH_CLIENT_ID is not set")
+        if not cs:
+            raise RuntimeError("TWITCH_CLIENT_SECRET is not set")
+
+        self.client_id: str = cid
+        self.client_secret: str = cs
 
     def _h(self, payload: Dict[str, Any]) -> str:
         s = f"{payload.get('title','')}|{payload.get('start')}|{payload.get('end')}|{payload.get('desc','')}|{payload.get('category','')}"
@@ -33,7 +49,7 @@ class TwitchAPI:
             "client_id": self.client_id,
             "client_secret": self.client_secret,
         }
-        async with self.session.post(url, params=params, timeout=30) as r:
+        async with self.session.post(url, params=params, timeout=HTTP_TIMEOUT) as r:
             r.raise_for_status()
             return await r.json()
 
@@ -46,7 +62,7 @@ class TwitchAPI:
         while True:
             if cursor:
                 params["after"] = cursor
-            async with self.session.get(f"{TW_BASE}/schedule", headers=self._headers(access_token), params=params, timeout=30) as r:
+            async with self.session.get(f"{TW_BASE}/schedule", headers=self._headers(access_token), params=params, timeout=HTTP_TIMEOUT) as r:
                 if r.status != 200:
                     body = await r.text()
                     raise RuntimeError(f"Twitch schedule GET {r.status}: {body}")
@@ -71,7 +87,7 @@ class TwitchAPI:
         if category_id:
             json_payload["category_id"] = category_id
 
-        async with self.session.post(f"{TW_BASE}/schedule/segment", headers=self._headers(access_token), params=params, json=json_payload, timeout=30) as r:
+        async with self.session.post(f"{TW_BASE}/schedule/segment", headers=self._headers(access_token), params=params, json=json_payload, timeout=HTTP_TIMEOUT) as r:
             if r.status not in (200, 201):
                 body = await r.text()
                 raise RuntimeError(f"Twitch create segment {r.status}: {body}")
@@ -92,7 +108,7 @@ class TwitchAPI:
         if is_canceled is not None:
             json_payload["is_canceled"] = bool(is_canceled)
 
-        async with self.session.patch(f"{TW_BASE}/schedule/segment", headers=self._headers(access_token), params=params, json=json_payload, timeout=30) as r:
+        async with self.session.patch(f"{TW_BASE}/schedule/segment", headers=self._headers(access_token), params=params, json=json_payload, timeout=HTTP_TIMEOUT) as r:
             if r.status not in (200, 204):
                 body = await r.text()
                 raise RuntimeError(f"Twitch update segment {r.status}: {body}")
@@ -102,7 +118,7 @@ class TwitchAPI:
     async def delete_segment(self, broadcaster_id: str, access_token: str, segment_id: str) -> None:
         # DELETE /schedule/segment
         params = {"broadcaster_id": broadcaster_id, "id": segment_id}
-        async with self.session.delete(f"{TW_BASE}/schedule/segment", headers=self._headers(access_token), params=params, timeout=30) as r:
+        async with self.session.delete(f"{TW_BASE}/schedule/segment", headers=self._headers(access_token), params=params, timeout=HTTP_TIMEOUT) as r:
             if r.status not in (200, 204):
                 body = await r.text()
                 raise RuntimeError(f"Twitch delete segment {r.status}: {body}")
