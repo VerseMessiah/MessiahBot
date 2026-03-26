@@ -12,8 +12,8 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from discord import ScheduledEvent, EntityType, Guild
-from bot.integrations.twitch_api import TwitchAPI
+from discord import Guild
+
 from bot.integrations.db import init_db_pool
 
 print("🧠 MessiahBot module loaded")
@@ -44,20 +44,26 @@ class MessiahBot(commands.Bot):
         """Load all Cogs and sync slash commands."""
         print("🚀 setup_hook triggered (loading extensions)")
 
-        # Initialize shared DB pool once at startup
+        # Initialize shared DB pool once at startup.
+        # If DB isn't configured in this environment, we still let the bot start,
+        # but we'll skip DB-dependent cogs.
+        db_ready = True
         try:
             await init_db_pool()
             print("✅ DB pool initialized")
         except Exception as e:
-            print(f"❌ DB pool init failed: {type(e).__name__}: {e}")
-            raise
+            db_ready = False
+            print(f"❌ DB pool init failed (DB-dependent features disabled): {type(e).__name__}: {e}")
 
         # All Discord-side Cogs go here
         extensions = [
             "bot.commands.server_builder",
             "bot.commands.plex_commands",
-            "bot.commands.schedule_sync",
         ]
+        if db_ready:
+            extensions.append("bot.commands.schedule_sync")
+        else:
+            print("⚠️ Skipping bot.commands.schedule_sync because DB is not initialized")
 
         for ext in extensions:
             try:
