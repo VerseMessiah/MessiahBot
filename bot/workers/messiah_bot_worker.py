@@ -17,11 +17,19 @@ from datetime import datetime as dt
 # ------------------------------------------------------------
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set for messiah_bot_worker")
+
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+if not DISCORD_BOT_TOKEN:
+    raise RuntimeError("DISCORD_BOT_TOKEN is not set for messiah_bot_worker")
+
 DISCORD_API = "https://discord.com/api/v10"
+
 
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
+
 
 # ------------------------------------------------------------
 #   FLASK WORKER APP
@@ -36,19 +44,51 @@ CORS(app,
 #   HELPER: Discord REST GET
 # ------------------------------------------------------------
 
-async def _dget(session, route: str):
+async def _dget(session, route: str, *, _attempt: int = 0):
+    """Discord REST GET with basic retry/backoff for rate limits."""
     url = f"{DISCORD_API}{route}"
-    async with session.get(url, headers={
-        "Authorization": f"Bot {DISCORD_BOT_TOKEN}"
-    }) as r:
+    async with session.get(
+        url,
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+    ) as r:
+        # Handle Discord rate limit. Sometimes the body is JSON, sometimes (rarely)
+        # a text/html error page, so we can't assume JSON.
         if r.status == 429:
-            data = await r.json()
-            await asyncio.sleep(data.get("retry_after", 1))
-            return await _dget(session, route)
+            retry_after = None
+
+            # 1) Prefer Retry-After header when present
+            ra = r.headers.get("Retry-After")
+            if ra:
+                try:
+                    retry_after = float(ra)
+                except Exception:
+                    retry_after = None
+
+            # 2) If no header, try JSON body (Discord's normal rate limit shape)
+            if retry_after is None:
+                try:
+                    data = await r.json(content_type=None)
+                    retry_after = float(data.get("retry_after", 1))
+                except Exception:
+                    retry_after = None
+
+            # 3) Fallback: wait a conservative amount
+            if retry_after is None:
+                retry_after = 2.0
+
+            # Avoid infinite recursion
+            if _attempt >= 5:
+                body = await r.text()
+                raise RuntimeError(f"Discord REST 429 after retries. Last body: {body[:300]}")
+
+            await asyncio.sleep(retry_after)
+            return await _dget(session, route, _attempt=_attempt + 1)
+
         if r.status >= 400:
             text = await r.text()
             raise RuntimeError(f"Discord REST error {r.status}: {text}")
-        return await r.json()
+
+        return await r.json(content_type=None)
 
 # ------------------------------------------------------------
 #   SNAPSHOT HELPERS
@@ -175,8 +215,11 @@ async def snapshot_guild(guild_id: str):
 @app.get("/api/live_layout/<guild_id>")
 def api_live_layout(guild_id):
     async def go():
-        snap = await snapshot_guild(str(guild_id))
-        return jsonify(snap)
+        try:
+            snap = await snapshot_guild(str(guild_id))
+            return jsonify(snap)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
 
     return asyncio.run(go())
 
