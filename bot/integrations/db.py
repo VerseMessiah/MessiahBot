@@ -7,12 +7,25 @@ Goals:
 """
 
 import os
+import asyncio
 from typing import Any, Iterable, Optional, cast
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 
 _pool: Optional[AsyncConnectionPool] = None
+
+def _is_transient_db_error(e: Exception) -> bool:
+    msg = str(e).lower()
+    needles = [
+        "ssl connection has been closed unexpectedly",
+        "server closed the connection unexpectedly",
+        "connection is closed",
+        "connection reset by peer",
+        "broken pipe",
+        "terminating connection",
+    ]
+    return any(n in msg for n in needles)
 
 
 def _db_url() -> str:
@@ -33,6 +46,7 @@ async def init_db_pool() -> AsyncConnectionPool:
         min_size=1,
         max_size=5,
         kwargs={"sslmode": "require"},
+        open=False,
     )
     await _pool.open()
     return _pool
@@ -46,25 +60,45 @@ def pool() -> AsyncConnectionPool:
 
 async def fetch_one(sql: str, params: Iterable[Any] = ()) -> Optional[dict]:
     """Run a SELECT that returns a single row (or None)."""
-    async with pool().connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(cast(Any, sql), tuple(params))
-            return await cur.fetchone()
+    for attempt in range(2):
+        try:
+            async with pool().connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(cast(Any, sql), tuple(params))
+                    return await cur.fetchone()
+        except Exception as e:
+            if attempt == 0 and _is_transient_db_error(e):
+                await asyncio.sleep(0.5)
+                continue
+            raise
 
 
 async def fetch_all(sql: str, params: Iterable[Any] = ()) -> list[dict]:
     """Run a SELECT that returns multiple rows (possibly empty)."""
-    async with pool().connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(cast(Any, sql), tuple(params))
-            rows = await cur.fetchall()
-            return list(rows or [])
+    for attempt in range(2):
+        try:
+            async with pool().connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(cast(Any, sql), tuple(params))
+                    rows = await cur.fetchall()
+                    return list(rows or [])
+        except Exception as e:
+            if attempt == 0 and _is_transient_db_error(e):
+                await asyncio.sleep(0.5)
+                continue
+            raise
 
 
 async def execute(sql: str, params: Iterable[Any] = ()) -> int:
     """Run an INSERT/UPDATE/DELETE. Returns the cursor rowcount when available."""
-    async with pool().connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(cast(Any, sql), tuple(params))
-            # rowcount is -1 for some statements; still useful when it is set.
-            return cur.rowcount
+    for attempt in range(2):
+        try:
+            async with pool().connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(cast(Any, sql), tuple(params))
+                    return cur.rowcount
+        except Exception as e:
+            if attempt == 0 and _is_transient_db_error(e):
+                await asyncio.sleep(0.5)
+                continue
+            raise
