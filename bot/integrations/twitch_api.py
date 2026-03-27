@@ -53,13 +53,15 @@ class TwitchAPI:
             r.raise_for_status()
             return await r.json()
 
-    async def get_schedule_segments(self, broadcaster_id: str, access_token: str, start: Optional[str]=None, first: int=25) -> List[Dict[str, Any]]:
+    async def get_schedule_segments(self, broadcaster_id: str, access_token: str, start: Optional[str]=None, first: int=25, max_pages: int | None = None) -> List[Dict[str, Any]]:
         params = {"broadcaster_id": broadcaster_id, "first": str(first)}
         if start:
             params["start_time"] = start
         out: List[Dict[str, Any]] = []
         cursor = None
+        pages = 0
         while True:
+            pages += 1
             if cursor:
                 params["after"] = cursor
             async with self.session.get(f"{TW_BASE}/schedule", headers=self._headers(access_token), params=params, timeout=HTTP_TIMEOUT) as r:
@@ -71,7 +73,7 @@ class TwitchAPI:
                 segs = data.get("segments") or []
                 out.extend(segs)
                 cursor = (body.get("pagination") or {}).get("cursor")
-                if not cursor:
+                if max_pages and pages >= max_pages:
                     break
         return out
 

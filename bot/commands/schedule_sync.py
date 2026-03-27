@@ -1,5 +1,5 @@
 import aiohttp
-
+import time
 from discord import Guild, ScheduledEvent
 from discord.ext import commands
 
@@ -130,7 +130,19 @@ class ScheduleSync(commands.Cog):
     
     @commands.command(name="debug_twitch")
     @commands.guild_only()
+    @commands.cooldown(1, 60, commands.BucketType.guild)
     async def debug_twitch(self, ctx):
+        guild_key = str(ctx.guild.id)
+        now = time.time()
+
+        # In-memory cache stored on the bot instance to avoid hitting Twitch too often.
+        schedule_cache = getattr(self.bot, "_twitch_schedule_cache", {})
+        cached = schedule_cache.get(guild_key)
+
+        if cached and (now - cached.get("ts", 0) < 60):
+            await ctx.send(cached.get("msg", ""))
+            return
+
         row = await fetch_one(
             """
             SELECT twitch_user_id, access_token, refresh_token
@@ -151,9 +163,13 @@ class ScheduleSync(commands.Cog):
         async with aiohttp.ClientSession() as session:
             api = TwitchAPI(session)
             try:
-                raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
+                raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10, max_pages=1)
             except Exception as e:
                 msg = str(e).lower()
+                if "429" in msg or "too many requests" in msg:
+                    await ctx.send(" Twitch rate limited us (429). Wait ~1-2 minutes and try again.")
+                    return
+                
                 if "401" in msg or "unauthorized" in msg or "oauth" in msg:
                     new = await api.refresh_user_token(refresh_token)
                     access_token = new["access_token"]
@@ -168,7 +184,7 @@ class ScheduleSync(commands.Cog):
                         (access_token, refresh_token, str(ctx.guild.id), broadcaster_id),
                     )
 
-                    raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
+                    raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10, max_pages=1)
                 else:
                     raise
             
@@ -185,7 +201,10 @@ class ScheduleSync(commands.Cog):
                 end = s.get("end_time") or ""
                 lines.append(f"• {start} -> {end} | {title} | id: {seg_short}")
 
-            await ctx.send("**Twitch schedule (next 10):**\n" + "\n".join(lines))
+            msg_out = "**Twitch schedule (next 10):**\n" + "\n".join(lines)
+            schedule_cache[guild_key] = {"ts": now, "msg": msg_out}
+            self.bot._twitch_schedule_cache = schedule_cache
+            await ctx.send(msg_out)
 
 async def setup(bot):
     await bot.add_cog(ScheduleSync(bot))
