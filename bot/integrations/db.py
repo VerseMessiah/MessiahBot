@@ -73,7 +73,7 @@ async def fetch_one(sql: str, params: Iterable[Any] = ()) -> Optional[dict]:
             raise
 
 
-async def fetch_all(sql: str, params: Iterable[Any] = ()) -> list[dict]:
+async def fetch_all(sql: str, params: Iterable[Any] = ()) -> list[dict]: # pyright: ignore[reportReturnType]
     """Run a SELECT that returns multiple rows (possibly empty)."""
     for attempt in range(2):
         try:
@@ -89,7 +89,7 @@ async def fetch_all(sql: str, params: Iterable[Any] = ()) -> list[dict]:
             raise
 
 
-async def execute(sql: str, params: Iterable[Any] = ()) -> int:
+async def execute(sql: str, params: Iterable[Any] = ()) -> int: # pyright: ignore[reportReturnType]
     """Run an INSERT/UPDATE/DELETE. Returns the cursor rowcount when available."""
     for attempt in range(2):
         try:

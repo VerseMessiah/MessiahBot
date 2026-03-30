@@ -232,7 +232,7 @@ def api_snapshot(guild_id):
     async def go():
         try:
             async with await psycopg.AsyncConnection.connect(
-                DATABASE_URL, sslmode="require"
+                DATABASE_URL, sslmode="require" # pyright: ignore[reportArgumentType]
             ) as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute("""
