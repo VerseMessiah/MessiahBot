@@ -9,6 +9,7 @@ Responsible for:
 """
 
 import os
+import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -128,9 +129,39 @@ async def on_ready():
         return
     await debug_events(guild)
 
+
 # Entrypoint (run from repo root: python -m bot.messiah_bot)
-if __name__ == "__main__":
-    print("🔑 Starting MessiahBot worker...")
-    if not DISCORD_BOT_TOKEN:
+async def _run_bot_with_backoff():
+    token = DISCORD_BOT_TOKEN
+    if not token:
         raise SystemExit("❌ Missing DISCORD_BOT_TOKEN")
-    bot.run(DISCORD_BOT_TOKEN)
+
+    backoff = 60  # seconds
+    while True:
+        try:
+            print("[MessiahBot] Starting Discord client…")
+            await bot.start(token)
+            print("[MessiahBot] bot.start() returned; exiting.")
+            return
+        except discord.HTTPException as e:
+            status = getattr(e, "status", None)
+            if status == 429:
+                print(f"[MessiahBot] Login rate limited (HTTP 429). Sleeping {backoff}s before retry…")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 900)  # cap at 15 minutes
+                continue
+            raise
+        except Exception as e:
+            print(f"[MessiahBot] Startup error: {type(e).__name__}: {e}. Sleeping 30s before retry…")
+            await asyncio.sleep(30)
+            backoff = min(backoff * 2, 900)
+            continue
+        finally:
+            try:
+                await bot.close()
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    asyncio.run(_run_bot_with_backoff())
