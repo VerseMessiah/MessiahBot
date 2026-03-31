@@ -14,8 +14,9 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from discord import Guild
-
-from bot.integrations.db import init_db_pool
+import json
+import hashlib
+from bot.integrations.db import init_db_pool, fetch_one, execute
 
 print("🧠 MessiahBot module loaded")
 
@@ -29,6 +30,37 @@ INTENTS.guilds = True
 INTENTS.members = True
 INTENTS.guild_scheduled_events = True
 INTENTS.message_content = True
+
+def _slash_signature(bot: commands.Bot) -> str:
+    """
+    Build a stable JSON signature of the app commands currently registered.
+    We only include fields that reflect actual command structure.
+    """
+    def cmd_to_dict(c: discord.app_commands.Command) -> dict:
+        return {
+            "name": c.name,
+            "description": getattr(c, "description", "") or "",
+            "type": int(getattr(c, "type", 1)),
+            "options": [
+                {
+                    "name": o.name,
+                    "description": getattr(o, "description", "") or "",
+                    "required": getattr(o, "required", False),
+                    "type": int(getattr(o, "type", 3)),
+                    "choices": [getattr(ch, "name", str(ch)) for ch in (getattr(o, "choices", None) or [])],
+                }
+                for o in (getattr(c, "parameters", None) or [])
+            ],
+        }
+
+    cmds = bot.tree.get_commands()
+    payload = {"commands": sorted([cmd_to_dict(c) for c in cmds], key=lambda x: x["name"])}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _slash_hash(bot: commands.Bot) -> str:
+    sig = _slash_signature(bot).encode("utf-8")
+    return hashlib.sha256(sig).hexdigest()
 
 class MessiahBot(commands.Bot):
     """Primary bot instance for Discord service"""
@@ -128,6 +160,30 @@ async def on_ready():
         print("⚠️ Test guild not found in cache; skipping debug_events.")
         return
     await debug_events(guild)
+
+@bot.command(name="syncslash")
+@commands.guild_only()
+async def syncslash(ctx: commands.Context):
+    owner_id = os.getenv("ADMIN_DISCORD_ID")
+    if not owner_id or str(ctx.author.id) != str(owner_id):
+        await ctx.send("❌ Not authorized.")
+        return
+
+    await ctx.send("⏳ Syncing slash commands…")
+    try:
+        await bot.tree.sync()
+        h = _slash_hash(bot)
+
+        await execute(
+            """
+            INSERT INTO app_kv (key, value) VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()
+            """,
+            ("slash_hash", h),
+        )
+        await ctx.send("✅ Slash commands synced.")
+    except Exception as e:
+        await ctx.send(f"❌ Sync failed: {type(e).__name__}: {e}")
 
 
 # Entrypoint (run from repo root: python -m bot.messiah_bot)
