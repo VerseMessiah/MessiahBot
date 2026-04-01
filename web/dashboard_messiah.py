@@ -6,8 +6,6 @@ from flask import Flask, Blueprint, current_app, redirect, request, session, url
 from dotenv import load_dotenv
 from datetime import timedelta
 from flask import abort
-import discord
-from bot.messiah_bot import bot
 
 load_dotenv()
 
