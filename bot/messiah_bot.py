@@ -252,12 +252,6 @@ async def _run_bot_with_backoff():
             await asyncio.sleep(30)
             backoff = min(backoff * 2, 900)
             continue
-        finally:
-            try:
-                await bot.close()
-            except Exception:
-                pass
-
 
 if __name__ == "__main__":
     asyncio.run(_run_bot_with_backoff())
