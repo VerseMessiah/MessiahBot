@@ -105,13 +105,40 @@ class MessiahBot(commands.Bot):
             except Exception as e:
                 print(f"❌ Failed to load {ext}: {type(e).__name__}: {e}")
 
-        # Sync slash commands (global)
-        try:
-            await self.tree.sync()
-            print("✅ Slash commands synced globally")
-        except Exception as e:
-            print(f"❌ Slash sync error: {e}")
-    
+        # Sync slash commands ONLY when command set changed
+        if db_ready:
+            try:
+                # ensure kv table exists (idempotent)
+                await execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS app_kv (
+                      key TEXT PRIMARY KEY,
+                      value TEXT NOT NULL,
+                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+
+                current = _slash_hash(self)
+                row = await fetch_one("SELECT value FROM app_kv WHERE key=%s", ("slash_hash",))
+                last = row["value"] if row else None
+
+                if last == current:
+                    print("ℹ️ Slash commands unchanged; skipping sync")
+                else:
+                    await self.tree.sync()
+                    await execute(
+                        """
+                        INSERT INTO app_kv (key, value) VALUES (%s, %s)
+                        ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()
+                        """,
+                        ("slash_hash", current),
+                    )
+                    print("✅ Slash commands synced (hash changed)")
+            except Exception as e:
+                print(f"❌ Slash sync check error: {e}")
+        else:
+            print("⚠️ DB not ready; skipping slash sync hash check")
     
 # Instantiate bot
 bot = MessiahBot()
@@ -159,17 +186,30 @@ async def on_ready():
     if guild is None:
         print("⚠️ Test guild not found in cache; skipping debug_events.")
         return
-    await debug_events(guild)
+    if os.getenv("DEBUG_STARTUP_EVENTS") == "1":
+        await debug_events(guild)
+    else:
+        print("ℹ️ DEBUG_STARTUP_EVENTS not set; skipping debug_events on startup")
 
 @bot.command(name="syncslash")
 @commands.guild_only()
 async def syncslash(ctx: commands.Context):
-    owner_id = os.getenv("ADMIN_DISCORD_ID")
+    owner_id = os.getenv("BOT_OWNER_ID")
     if not owner_id or str(ctx.author.id) != str(owner_id):
         await ctx.send("❌ Not authorized.")
         return
 
     await ctx.send("⏳ Syncing slash commands…")
+    # Ensure kv table exists (idempotent)
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_kv (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
     try:
         await bot.tree.sync()
         h = _slash_hash(bot)
