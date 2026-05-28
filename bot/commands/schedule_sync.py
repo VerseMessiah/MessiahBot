@@ -36,6 +36,39 @@ def _extract_segment_id(location: str | None) -> str | None:
         return None
     return location.split("segment_id=", 1)[1].split("&", 1)[0].strip() or None
 
+async def get_valid_access_token(session: aiohttp.ClientSession, guild_id: str) -> tuple[str, str]:
+    row = await fetch_one(
+            """
+            SELECT twitch_user_id, access_token, refresh_token, expires_at
+            FROM twitch_tokens
+            WHERE guild_id = %s
+            """,
+            (guild_id,)
+        )
+    
+    if not row:
+        raise ValueError("❌ No Twitch connection found for this server")
+    
+    broadcaster_id = row["twitch_user_id"]
+    access_token = row["access_token"]
+    
+    api = TwitchAPI(session)
+
+    if row["expires_at"] <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5):
+        new_token_data = await api.refresh_user_token(row["refresh_token"])
+        access_token = new_token_data["access_token"]
+        await execute (
+            """
+            UPDATE twitch_tokens
+            SET access_token = %s,
+                refresh_token = %s,
+                expires_at = NOW() + interval '60 minutes'
+            WHERE guild_id = %s
+            """,
+            (new_token_data["access_token"], new_token_data["refresh_token"], guild_id)
+        )
+    return broadcaster_id, access_token
+        
 
 class ScheduleSync(commands.Cog):
     def __init__(self, bot):
@@ -55,22 +88,12 @@ class ScheduleSync(commands.Cog):
             await ctx.send(cached.get("msg", ""))
             return
 
-        row = await fetch_one(
-            """
-            SELECT twitch_user_id, access_token, refresh_token
-            FROM twitch_tokens
-            WHERE guild_id = %s
-            """,
-            (str(guild.id),),
-        )
-        if not row:
-            await ctx.send("❌ No Twitch connection found for this server.")
-            return
-
-        broadcaster_id = row["twitch_user_id"]
-        access_token = row["access_token"]
-
         async with aiohttp.ClientSession() as session:
+            try: 
+                broadcaster_id, access_token = await get_valid_access_token(session, str(guild.id))
+            except ValueError as e:
+                await ctx.send(f"❌ {e}")
+                return
             api = TwitchAPI(session)
             raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
 
@@ -78,6 +101,7 @@ class ScheduleSync(commands.Cog):
         if not segs:
             await ctx.send("ℹ️ Twitch schedule is empty.")
             return
+
 
         lines = []
         for s in segs:
@@ -96,24 +120,14 @@ class ScheduleSync(commands.Cog):
         guild: Guild = ctx.guild
         await ctx.send("⏳ Importing Twitch schedule into Discord…")
 
-        row = await fetch_one(
-            """
-            SELECT twitch_user_id, access_token, refresh_token
-            FROM twitch_tokens
-            WHERE guild_id = %s
-            """,
-            (str(guild.id),),
-        )
-        if not row:
-            await ctx.send("❌ No Twitch connection found for this server.")
-            return
-
-        broadcaster_id = row["twitch_user_id"]
-        access_token = row["access_token"]
-
         async with aiohttp.ClientSession() as session:
+            try: 
+                broadcaster_id, access_token = await get_valid_access_token(session, str(guild.id))
+            except ValueError as e:
+                await ctx.send(f"❌ {e}")
+                return
             api = TwitchAPI(session)
-            raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=25)
+            raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
 
         segments = [normalize_twitch_segment(s) for s in (raw_segments or [])]
         if not segments:

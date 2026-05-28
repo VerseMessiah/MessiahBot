@@ -73,6 +73,8 @@ class TwitchAPI:
                 segs = data.get("segments") or []
                 out.extend(segs)
                 cursor = (body.get("pagination") or {}).get("cursor")
+                if not cursor:
+                    break
                 if max_pages and pages >= max_pages:
                     break
         return out
