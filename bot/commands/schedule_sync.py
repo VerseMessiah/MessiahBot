@@ -127,7 +127,7 @@ class ScheduleSync(commands.Cog):
                 await ctx.send(f"❌ {e}")
                 return
             api = TwitchAPI(session)
-            raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
+            raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=25)
 
         segments = [normalize_twitch_segment(s) for s in (raw_segments or [])]
         if not segments:
