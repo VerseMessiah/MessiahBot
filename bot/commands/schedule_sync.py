@@ -52,12 +52,16 @@ async def get_valid_access_token(session: aiohttp.ClientSession, guild_id: str) 
     if not row:
         raise ValueError("❌ No Twitch connection found for this server")
     
+    logger.info(f"Token expires_at: {row['expires_at']}")
+    logger.info(f"Now UTC: {dt.datetime.now(dt.timezone.utc)}")
+    
     broadcaster_id = row["twitch_user_id"]
     access_token = row["access_token"]
     
     api = TwitchAPI(session)
 
     if row["expires_at"] <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5):
+        logger.info("Token expired, refreshing...")
         new_token_data = await api.refresh_user_token(row["refresh_token"])
         access_token = new_token_data["access_token"]
         await execute (
