@@ -61,8 +61,11 @@ async def get_valid_access_token(session: aiohttp.ClientSession, guild_id: str) 
     api = TwitchAPI(session)
 
     if row["expires_at"] <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5):
+        print(f"Token appears expired, refreshing. expires_at={row['expires_at']}")
         logger.info("Token expired, refreshing...")
         new_token_data = await api.refresh_user_token(row["refresh_token"])
+        print(f"Refresh response keys: {list(new_token_data.keys())}")
+        print(f"New access_token starts with: {str(new_token_data.get('access_token'))[:10]}")
         access_token = new_token_data["access_token"]
         await execute (
             """

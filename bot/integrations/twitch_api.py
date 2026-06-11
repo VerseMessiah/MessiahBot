@@ -64,6 +64,7 @@ class TwitchAPI:
             pages += 1
             if cursor:
                 params["after"] = cursor
+            print(f"🌐 Schedule call: token={access_token[:10]}..., bcid={params['broadcaster_id']}, page={pages}")
             async with self.session.get(f"{TW_BASE}/schedule", headers=self._headers(access_token), params=params, timeout=HTTP_TIMEOUT) as r:
                 if r.status != 200:
                     body = await r.text()
