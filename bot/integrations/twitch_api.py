@@ -67,7 +67,13 @@ class TwitchAPI:
             async with self.session.get(f"{TW_BASE}/schedule", headers=self._headers(access_token), params=params, timeout=HTTP_TIMEOUT) as r:
                 if r.status != 200:
                     body = await r.text()
-                    raise RuntimeError(f"Twitch schedule GET {r.status}: {body}")
+                    limit = r.headers.get("Ratelimit-Limit")
+                    remaining = r.headers.get("Ratelimit-Remaining")
+                    reset = r.headers.get("Ratelimit-Reset")
+                    raise RuntimeError(
+                        f"Twitch schedule GET {r.status}: {body}"
+                        f"[limit={limit}, remaining={remaining}, reset={reset}]"
+                        )
                 body = await r.json()
                 data = (body.get("data") or {})
                 segs = data.get("segments") or []
