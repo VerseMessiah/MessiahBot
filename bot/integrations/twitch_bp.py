@@ -16,7 +16,6 @@ TWITCH_REDIRECT_URI = os.getenv("TWITCH_REDIRECT_URI")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 TWITCH_SCOPE = "channel:manage:schedule user:read:email"
-logger = logging.getLogger(__name__)
 
 # -----------------------------
 # OAuth Start
