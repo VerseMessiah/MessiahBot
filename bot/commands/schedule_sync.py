@@ -1,5 +1,6 @@
 import datetime as dt
 import time
+import logging
 
 import aiohttp
 import discord
@@ -8,6 +9,8 @@ from discord.ext import commands
 
 from bot.integrations.db import fetch_one, execute
 from bot.integrations.twitch_api import TwitchAPI
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_twitch_segment(raw: dict) -> dict:
@@ -91,7 +94,8 @@ class ScheduleSync(commands.Cog):
         async with aiohttp.ClientSession() as session:
             try: 
                 broadcaster_id, access_token = await get_valid_access_token(session, str(guild.id))
-            except ValueError as e:
+            except Exception as e:
+                logger.error(f"Error getting token: {e}", exc_info=True)
                 await ctx.send(f"❌ {e}")
                 return
             api = TwitchAPI(session)
