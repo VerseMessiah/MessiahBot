@@ -127,7 +127,8 @@ class ScheduleSync(commands.Cog):
         async with aiohttp.ClientSession() as session:
             try: 
                 broadcaster_id, access_token = await get_valid_access_token(session, str(guild.id))
-            except ValueError as e:
+            except Exception as e:
+                logger.error(f"Error getting token: {e}", exc_info=True)
                 await ctx.send(f"❌ {e}")
                 return
             api = TwitchAPI(session)
