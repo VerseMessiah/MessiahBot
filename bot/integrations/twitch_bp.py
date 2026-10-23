@@ -17,6 +17,10 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 TWITCH_SCOPE = "channel:manage:schedule user:read:email"
 
+# Only used if Twitch omits expires_in, which it normally does not. Defined here
+# rather than imported from schedule_sync so the Flask app doesn't pull in discord.py.
+FALLBACK_TOKEN_TTL_SECONDS = 3600
+
 # -----------------------------
 # OAuth Start
 # -----------------------------
@@ -91,16 +95,25 @@ def twitch_oauth_callback():
     twitch_user = user_data["data"][0]
 
     # --- Save to DB ---
+    # Use the lifetime Twitch reports (expires_in, ~4h for user tokens) rather than
+    # hardcoding 60 minutes. Hardcoding low meant refreshing far more often than
+    # needed; hardcoding at all means trusting a number we don't control.
+    expires_in = int(token.get("expires_in") or FALLBACK_TOKEN_TTL_SECONDS)
+
     try:
         with psycopg.connect(DATABASE_URL, sslmode="require", autocommit=True) as conn:
             with conn.cursor(row_factory=dict_row) as cur:
-                print(f"💾 Saving token for guild {guild_id}, user {twitch_user['id']}")
+                print(
+                    f"💾 Saving token for guild {guild_id}, user {twitch_user['id']} "
+                    f"(valid {expires_in}s)"
+                )
                 cur.execute(
                     """
                     INSERT INTO twitch_tokens (
-                        guild_id, twitch_user_id, access_token, refresh_token, expires_at, scope
+                        guild_id, twitch_user_id, access_token, refresh_token,
+                        expires_at, scope, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, NOW() + interval '60 minutes', %s)
+                    VALUES (%s, %s, %s, %s, NOW() + (%s * INTERVAL '1 second'), %s, NOW())
                     ON CONFLICT (guild_id, twitch_user_id)
                     DO UPDATE SET
                         access_token = EXCLUDED.access_token,
@@ -114,6 +127,7 @@ def twitch_oauth_callback():
                         str(twitch_user["id"]),
                         str(token.get("access_token", "")),
                         str(token.get("refresh_token", "")),
+                        expires_in,
                         TWITCH_SCOPE,
                     ),
                 )

@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import time
 import logging
@@ -39,46 +40,98 @@ def _extract_segment_id(location: str | None) -> str | None:
         return None
     return location.split("segment_id=", 1)[1].split("&", 1)[0].strip() or None
 
+# Twitch rotates refresh tokens: a successful refresh immediately invalidates the
+# old one. If we then fail to persist the new one, the stored token is dead and the
+# only recovery is re-running OAuth — so retry the save, then fail loudly.
+REFRESH_SAVE_ATTEMPTS = 3
+
+# Only used if Twitch omits expires_in, which it normally does not.
+FALLBACK_TOKEN_TTL_SECONDS = 3600
+
+
+def _as_aware_utc(value: dt.datetime | None) -> dt.datetime | None:
+    """Normalize a Postgres timestamp to timezone-aware UTC.
+
+    TIMESTAMPTZ comes back timezone-aware, but a plain TIMESTAMP comes back naive,
+    and comparing naive to aware raises TypeError. Naive values are assumed UTC,
+    so this works regardless of how the column was declared.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=dt.timezone.utc)
+    return value
+
+
 async def get_valid_access_token(session: aiohttp.ClientSession, guild_id: str) -> tuple[str, str]:
     row = await fetch_one(
-            """
-            SELECT twitch_user_id, access_token, refresh_token, expires_at
-            FROM twitch_tokens
-            WHERE guild_id = %s
-            """,
-            (guild_id,)
-        )
-    
+        """
+        SELECT twitch_user_id, access_token, refresh_token, expires_at
+        FROM twitch_tokens
+        WHERE guild_id = %s
+        ORDER BY updated_at DESC NULLS LAST
+        LIMIT 1
+        """,
+        (guild_id,),
+    )
+
     if not row:
         raise ValueError("❌ No Twitch connection found for this server")
-    
-    logger.info(f"Token expires_at: {row['expires_at']}")
-    logger.info(f"Now UTC: {dt.datetime.now(dt.timezone.utc)}")
-    
+
     broadcaster_id = row["twitch_user_id"]
     access_token = row["access_token"]
-    
-    api = TwitchAPI(session)
+    expires_at = _as_aware_utc(row["expires_at"])
 
-    if row["expires_at"] <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5):
-        print(f"Token appears expired, refreshing. expires_at={row['expires_at']}")
-        logger.info("Token expired, refreshing...")
-        new_token_data = await api.refresh_user_token(row["refresh_token"])
-        print(f"Refresh response keys: {list(new_token_data.keys())}")
-        print(f"New access_token starts with: {str(new_token_data.get('access_token'))[:10]}")
-        access_token = new_token_data["access_token"]
-        await execute (
-            """
-            UPDATE twitch_tokens
-            SET access_token = %s,
-                refresh_token = %s,
-                expires_at = NOW() + interval '60 minutes'
-            WHERE guild_id = %s
-            """,
-            (new_token_data["access_token"], new_token_data["refresh_token"], guild_id)
-        )
-    return broadcaster_id, access_token
-        
+    logger.info(f"Twitch token for guild {guild_id} expires_at={expires_at}")
+
+    # Refresh within a 5-minute safety margin. A missing expiry counts as expired:
+    # one wasted refresh beats a surprise 401 partway through a command.
+    deadline = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)
+    if expires_at is not None and expires_at > deadline:
+        return broadcaster_id, access_token
+
+    logger.info("Twitch token expired or unknown; refreshing…")
+    api = TwitchAPI(session)
+    new_token_data = await api.refresh_user_token(row["refresh_token"])
+
+    # --- Past this point the OLD refresh token is dead. The new one MUST persist. ---
+    access_token = new_token_data["access_token"]
+    new_refresh_token = new_token_data["refresh_token"]
+
+    # Trust the lifetime Twitch reports (~4h for user tokens) instead of assuming
+    # 60 minutes; guessing low meant refreshing roughly 4x more often than needed.
+    ttl_seconds = int(new_token_data.get("expires_in") or FALLBACK_TOKEN_TTL_SECONDS)
+
+    last_error: Exception | None = None
+    for attempt in range(1, REFRESH_SAVE_ATTEMPTS + 1):
+        try:
+            await execute(
+                """
+                UPDATE twitch_tokens
+                SET access_token = %s,
+                    refresh_token = %s,
+                    expires_at = NOW() + (%s * INTERVAL '1 second'),
+                    updated_at = NOW()
+                WHERE guild_id = %s AND twitch_user_id = %s
+                """,
+                (access_token, new_refresh_token, ttl_seconds, guild_id, broadcaster_id),
+            )
+            logger.info(f"Saved refreshed Twitch token; valid for {ttl_seconds}s")
+            return broadcaster_id, access_token
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"Could not save refreshed Twitch token "
+                f"(attempt {attempt}/{REFRESH_SAVE_ATTEMPTS}): {e}"
+            )
+            if attempt < REFRESH_SAVE_ATTEMPTS:
+                await asyncio.sleep(0.5 * attempt)
+
+    raise RuntimeError(
+        "Refreshed the Twitch token but could not save it, so the stored refresh "
+        "token is now invalid. Re-link Twitch from the dashboard to restore access. "
+        f"Last database error: {last_error}"
+    )
 
 class ScheduleSync(commands.Cog):
     def __init__(self, bot):
@@ -106,7 +159,15 @@ class ScheduleSync(commands.Cog):
                 await ctx.send(f"❌ {e}")
                 return
             api = TwitchAPI(session)
-            raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=10)
+            try:
+                # This command only ever prints the next 10, so one page is enough.
+                raw_segments = await api.get_schedule_segments(
+                    broadcaster_id, access_token, first=10, max_pages=1
+                )
+            except Exception as e:
+                logger.error(f"Error fetching Twitch schedule: {e}", exc_info=True)
+                await ctx.send(f"❌ Could not read the Twitch schedule: {e}")
+                return
 
         segs = [normalize_twitch_segment(s) for s in (raw_segments or [])]
         if not segs:
@@ -139,7 +200,16 @@ class ScheduleSync(commands.Cog):
                 await ctx.send(f"❌ {e}")
                 return
             api = TwitchAPI(session)
-            raw_segments = await api.get_schedule_segments(broadcaster_id, access_token, first=25)
+            try:
+                # 4 pages x 25 = up to 100 segments, which is far more schedule than
+                # Discord events are useful for, and well inside the Helix budget.
+                raw_segments = await api.get_schedule_segments(
+                    broadcaster_id, access_token, first=25, max_pages=4
+                )
+            except Exception as e:
+                logger.error(f"Error fetching Twitch schedule: {e}", exc_info=True)
+                await ctx.send(f"❌ Could not read the Twitch schedule: {e}")
+                return
 
         segments = [normalize_twitch_segment(s) for s in (raw_segments or [])]
         if not segments:

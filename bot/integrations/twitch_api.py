@@ -1,7 +1,8 @@
 import os
+import asyncio
 import hashlib
 import datetime as dt
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Mapping
 
 import aiohttp
 
@@ -10,10 +11,49 @@ TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 TW_BASE = "https://api.twitch.tv/helix"
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
+# Helix allows 800 points/minute per client ID. At first=25 that is only ~32
+# pages, so an unbounded paginated read can exhaust the whole budget in seconds.
+# This is the hard ceiling used whenever a caller doesn't specify one.
+DEFAULT_MAX_PAGES = 4
+
+# How many times to wait-and-retry a single request that came back 429.
+MAX_RATE_LIMIT_RETRIES = 3
+
+# Never park a command for longer than this waiting on a bucket refill.
+MAX_RATE_LIMIT_WAIT = 60.0
+
+
 def _rfc3339(dt_obj: dt.datetime) -> str:
     if dt_obj.tzinfo is None:
         dt_obj = dt_obj.replace(tzinfo=dt.timezone.utc)
     return dt_obj.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _rate_limit_delay(headers: Mapping[str, str], attempt: int) -> float:
+    """Seconds to wait after a 429, preferring Twitch's own guidance.
+
+    Twitch signals throttling two different ways, so we check both:
+      - `Retry-After`: seconds to wait (sent on some endpoints)
+      - `Ratelimit-Reset`: a Unix timestamp for when the points bucket refills
+    If neither is present or parseable, fall back to exponential backoff.
+    """
+    retry_after = headers.get("Retry-After")
+    if retry_after:
+        try:
+            return min(max(float(retry_after), 1.0), MAX_RATE_LIMIT_WAIT)
+        except ValueError:
+            pass
+
+    reset = headers.get("Ratelimit-Reset")
+    if reset:
+        try:
+            # Clamp: a stale or clock-skewed reset value shouldn't stall us for minutes.
+            wait = float(reset) - dt.datetime.now(dt.timezone.utc).timestamp()
+            return min(max(wait, 1.0), MAX_RATE_LIMIT_WAIT)
+        except ValueError:
+            pass
+
+    return float(2 ** attempt)  # 1s, 2s, 4s
 
 class TwitchAPI:
     def __init__(
@@ -53,37 +93,123 @@ class TwitchAPI:
             r.raise_for_status()
             return await r.json()
 
-    async def get_schedule_segments(self, broadcaster_id: str, access_token: str, start: Optional[str]=None, first: int=25, max_pages: int | None = None) -> List[Dict[str, Any]]:
+    async def _get_json(
+        self,
+        url: str,
+        *,
+        access_token: str,
+        params: Dict[str, str],
+        max_retries: int = MAX_RATE_LIMIT_RETRIES,
+    ) -> Dict[str, Any]:
+        """GET a Helix endpoint, waiting out 429s instead of failing on them.
+
+        Previously a 429 raised immediately, which meant the only recovery was the
+        user re-running the command — straight back into the same throttled bucket.
+        """
+        attempt = 0
+        while True:
+            delay = 0.0
+
+            async with self.session.get(
+                url, headers=self._headers(access_token), params=params, timeout=HTTP_TIMEOUT
+            ) as r:
+                if r.status == 200:
+                    return await r.json()
+
+                if r.status == 429 and attempt < max_retries:
+                    # Work out the wait here (while the headers are in scope), but
+                    # sleep outside the block so the connection returns to the pool.
+                    delay = _rate_limit_delay(r.headers, attempt)
+                    print(
+                        f"⏳ Twitch 429 on {url} "
+                        f"(remaining={r.headers.get('Ratelimit-Remaining')}, "
+                        f"reset={r.headers.get('Ratelimit-Reset')}); "
+                        f"waiting {delay:.1f}s — retry {attempt + 1}/{max_retries}"
+                    )
+                else:
+                    # Either a non-429 error, or we're out of retries. Keep the
+                    # rate-limit headers in the message; they make 429s diagnosable.
+                    body = await r.text()
+                    raise RuntimeError(
+                        f"Twitch GET {url} -> {r.status}: {body} "
+                        f"[limit={r.headers.get('Ratelimit-Limit')}, "
+                        f"remaining={r.headers.get('Ratelimit-Remaining')}, "
+                        f"reset={r.headers.get('Ratelimit-Reset')}]"
+                    )
+
+            await asyncio.sleep(delay)
+            attempt += 1
+
+    async def get_schedule_segments(
+        self,
+        broadcaster_id: str,
+        access_token: str,
+        start: Optional[str] = None,
+        first: int = 25,
+        max_pages: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch schedule segments under a hard page bound.
+
+        /schedule projects *recurring* segments forward, so it can keep handing back
+        a pagination cursor with no natural end. Following that cursor unbounded is
+        what exhausts the Helix budget and produces the 429s. We stop on the first
+        of four conditions:
+          1. Twitch returns no cursor (a normal, finite schedule)
+          2. A page comes back with zero segments
+          3. The cursor repeats — Twitch is handing us the same page again
+          4. We reach `max_pages`
+
+        `max_pages=None` means DEFAULT_MAX_PAGES, *not* unlimited. That distinction
+        is the actual bug this replaces: the old default of None disabled the cap.
+        """
+        page_limit = max_pages if max_pages and max_pages > 0 else DEFAULT_MAX_PAGES
+
         params = {"broadcaster_id": broadcaster_id, "first": str(first)}
         if start:
             params["start_time"] = start
+
         out: List[Dict[str, Any]] = []
-        cursor = None
-        pages = 0
-        while True:
-            pages += 1
+        seen_ids: set[str] = set()       # segments can repeat across pages
+        seen_cursors: set[str] = set()   # catches a cursor that loops back on itself
+        cursor: Optional[str] = None
+
+        # A bounded for-loop rather than `while True` — condition 4 is now structural
+        # and can't be switched off by a bad argument.
+        for page in range(1, page_limit + 1):
             if cursor:
                 params["after"] = cursor
-            print(f"🌐 Schedule call: token={access_token[:10]}..., bcid={params['broadcaster_id']}, page={pages}")
-            async with self.session.get(f"{TW_BASE}/schedule", headers=self._headers(access_token), params=params, timeout=HTTP_TIMEOUT) as r:
-                if r.status != 200:
-                    body = await r.text()
-                    limit = r.headers.get("Ratelimit-Limit")
-                    remaining = r.headers.get("Ratelimit-Remaining")
-                    reset = r.headers.get("Ratelimit-Reset")
-                    raise RuntimeError(
-                        f"Twitch schedule GET {r.status}: {body}"
-                        f"[limit={limit}, remaining={remaining}, reset={reset}]"
-                        )
-                body = await r.json()
-                data = (body.get("data") or {})
-                segs = data.get("segments") or []
-                out.extend(segs)
-                cursor = (body.get("pagination") or {}).get("cursor")
-                if not cursor:
-                    break
-                if max_pages and pages >= max_pages:
-                    break
+
+            print(f"🌐 Schedule call: bcid={broadcaster_id}, page={page}/{page_limit}")
+            body = await self._get_json(
+                f"{TW_BASE}/schedule", access_token=access_token, params=params
+            )
+
+            segments = (body.get("data") or {}).get("segments") or []
+
+            # Condition 2: nothing left to collect, even if a cursor was still sent.
+            if not segments:
+                break
+
+            for seg in segments:
+                seg_id = seg.get("id")
+                if seg_id:
+                    if seg_id in seen_ids:
+                        continue
+                    seen_ids.add(seg_id)
+                out.append(seg)
+
+            cursor = (body.get("pagination") or {}).get("cursor")
+
+            # Condition 1: end of a finite schedule.
+            if not cursor:
+                break
+
+            # Condition 3: same cursor twice means we're going in circles.
+            if cursor in seen_cursors:
+                print(f"⚠️ Twitch returned a repeating pagination cursor; stopping at page {page}.")
+                break
+            seen_cursors.add(cursor)
+
         return out
 
     async def create_segment(self, broadcaster_id: str, access_token: str, *, title: str, start_time: dt.datetime, duration_mins: int, category_id: Optional[str]=None, is_canceled: bool=False) -> Dict[str, Any]:
